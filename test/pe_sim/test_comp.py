@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""
+Competition test case: A(32,317) × B(317,6), 30% sparsity.
+Loads TC1_RAW pattern 1, converts to compact row-desc, runs PE, collects stats.
+"""
+import os, random, cocotb
+from cocotb.clock import Clock
+from cocotb.triggers import RisingEdge, ClockCycles
+
+MAX_N=512; C_ROW_STRIDE=MAX_N
+
+#-------------------------------------------------------------------------
+# Load competition matrix files
+#-------------------------------------------------------------------------
+def load_comp_matrix(index_file, matrix_file, is_B=False):
+    """Load competition format matrices, return compact row-desc.
+
+    A (CSR): index_file rows = row indices, matrix_file = (row_weight, cols)
+    B (CSC): index_file rows = col entries, matrix_file = (col_weight, rows)
+
+    For B, we need to transpose from CSC to CSR (row-major) for the PE.
+    """
+    base = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        '..', 'test_case_for_reference', 'TC1_RAW')
+    idx_path = os.path.join(base, index_file)
+    mat_path = os.path.join(base, matrix_file)
+
+    with open(idx_path) as f:
+        idx_lines = [list(map(int, l.split())) for l in f if l.strip()]
+    with open(mat_path) as f:
+        mat_lines = [list(map(int, l.split())) for l in f if l.strip()]
+
+    if not is_B:
+        # A: CSR format → compact row-desc
+        rows = len(idx_lines)
+        K = mat_lines[0][1]  # total columns
+        row_desc = []; col_arr = []; val_arr = []; offset = 0
+        for r in range(rows):
+            nnz = mat_lines[r][0]
+            cols = idx_lines[r]
+            assert len(cols) == nnz, f"Row {r}: expected {nnz} cols, got {len(cols)}"
+            for c in cols:
+                v = (r * 37 + c * 13 + 1) % 7 + 1  # integer [1..7]
+                col_arr.append(c); val_arr.append(v)
+            desc = (offset << 32) | (nnz << 16) | r
+            row_desc.append(desc); offset += nnz
+        return row_desc, col_arr, val_arr, offset, rows, K
+
+    else:
+        # B: CSC format → transposed to CSR for PE
+        B_cols = len(idx_lines)  # number of B columns (N)
+        B_rows = mat_lines[0][1]  # number of B rows (K)
+        # Build COO then convert to CSR
+        coo = []
+        for col in range(B_cols):
+            rows_in_col = idx_lines[col]
+            for row in rows_in_col:
+                v = (row * 37 + col * 13 + 1) % 7 + 1
+                coo.append((row, col, v))
+        coo.sort()
+        # Build CSR from COO
+        row_desc = []; col_arr = []; val_arr = []; offset = 0
+        cur_row = 0; row_nnz = 0; row_cols = []
+        for (r, c, v) in coo:
+            while cur_row < r:
+                desc = (offset << 32) | (0 << 16) | row_nnz  # B descriptor
+                row_desc.append(desc); offset += row_nnz
+                cur_row += 1; row_nnz = 0
+            col_arr.append(c); val_arr.append(v); row_nnz += 1
+        while cur_row < B_rows:
+            desc = (offset << 32) | (0 << 16) | row_nnz
+            row_desc.append(desc); offset += row_nnz
+            cur_row += 1; row_nnz = 0
+        return row_desc, col_arr, val_arr, offset, B_rows, B_cols
+
+def compute_golden_c(A_desc, A_col, A_val, B_desc, B_col, B_val, M, N, K):
+    """Integer golden C = A × B."""
+    C = [[0] * MAX_N for _ in range(MAX_N)]
+    for ri in range(M):
+        gid = A_desc[ri] & 0xFFFF
+        nnza = (A_desc[ri] >> 16) & 0xFFFF
+        st = (A_desc[ri] >> 32) & 0xFFFFFFFF
+        for t in range(nnza):
+            k = A_col[st + t] & 0xFFFF
+            a = A_val[st + t]
+            bn = B_desc[k] & 0xFFFF
+            bs = (B_desc[k] >> 32) & 0xFFFFFFFF
+            for u in range(bn):
+                j = B_col[bs + u] & 0xFFFF
+                b = B_val[bs + u]
+                C[gid][j] += a * b
+    golden_f32 = [[0.0] * N for _ in range(M)]
+    golden = {}
+    for ri in range(M):
+        gid = A_desc[ri] & 0xFFFF
+        for j in range(N):
+            addr = gid * C_ROW_STRIDE + j
+            v = C[gid][j]
+            if v != 0: golden[addr] = v
+            golden_f32[gid][j] = float(v)
+    return golden, golden_f32
+
+#-------------------------------------------------------------------------
+# PE helpers
+#-------------------------------------------------------------------------
+async def LAd(dut, Ad, Ac, Av):
+    for i,d in enumerate(Ad): dut.a_desc_we.value=1;dut.a_desc_waddr.value=i;dut.a_desc_wdata.value=d;await RisingEdge(dut.aclk)
+    dut.a_desc_we.value=0
+    for i,v in enumerate(Ac): dut.a_col_we.value=1;dut.a_col_waddr.value=i;dut.a_col_wdata.value=v;await RisingEdge(dut.aclk)
+    dut.a_col_we.value=0
+    for i,v in enumerate(Av): dut.a_val_we.value=1;dut.a_val_waddr.value=i;dut.a_val_wdata.value=v;await RisingEdge(dut.aclk)
+    dut.a_val_we.value=0
+
+async def LBd(dut, Bd, Bc, Bv):
+    for i,d in enumerate(Bd): dut.b_desc_we.value=1;dut.b_desc_waddr.value=i;dut.b_desc_wdata.value=d;await RisingEdge(dut.aclk)
+    dut.b_desc_we.value=0
+    for i,v in enumerate(Bc): dut.b_col_we.value=1;dut.b_col_waddr.value=i;dut.b_col_wdata.value=v;await RisingEdge(dut.aclk)
+    dut.b_col_we.value=0
+    for i,v in enumerate(Bv): dut.b_val_we.value=1;dut.b_val_waddr.value=i;dut.b_val_wdata.value=v;await RisingEdge(dut.aclk)
+    dut.b_val_we.value=0
+
+async def rst(dut):
+    dut.aresetn.value=0; cocotb.start_soon(Clock(dut.aclk,10,units='ns').start())
+    await ClockCycles(dut.aclk,10); dut.aresetn.value=1; await ClockCycles(dut.aclk,5)
+    dut.start.value=0;dut.row_count.value=0;dut.cbuf_wr_ready.value=0
+    dut.a_desc_we.value=0;dut.a_col_we.value=0;dut.a_val_we.value=0
+    dut.b_desc_we.value=0;dut.b_col_we.value=0;dut.b_val_we.value=0
+
+async def run_pe(dut, rc, to=10000000):
+    dut.row_count.value=rc;dut.cbuf_wr_ready.value=1;dut.start.value=1;await RisingEdge(dut.aclk);dut.start.value=0
+    cp={};dc=0
+    for cy in range(to):
+        await RisingEdge(dut.aclk)
+        if dut.cbuf_wr_valid.value and dut.cbuf_wr_ready.value: cp[int(dut.cbuf_wr_addr.value)]=int(dut.cbuf_wr_data.value)
+        if int(dut.done.value): dc=cy;break
+    else: assert False,f"timeout {to}"
+    await ClockCycles(dut.aclk,50)
+    for _ in range(100):
+        await RisingEdge(dut.aclk)
+        if dut.cbuf_wr_valid.value and dut.cbuf_wr_ready.value: cp[int(dut.cbuf_wr_addr.value)]=int(dut.cbuf_wr_data.value)
+    return cp,dc
+
+def verify(dut, M, N, Ad, gf, cp):
+    e=0;nz_ok=0;z_ok=0
+    for ri in range(M):
+        gid=Ad[ri]&0xFFFF;b=gid*C_ROW_STRIDE
+        for j in range(N):
+            exp=int(gf[gid][j]);act=cp.get(b+j,0)
+            if act!=exp:
+                if e<5:dut._log.error("C[%d][%d]: got %d, exp %d",gid,j,act,exp);e+=1
+            else:
+                if exp!=0:nz_ok+=1
+                else:z_ok+=1
+    return e,nz_ok,z_ok
+
+#=========================================================================
+@cocotb.test()
+async def test_comp_case1_p1(dut):
+    """Competition Case1 Pattern1: A(32,317) × B(317,6)"""
+    # Load data
+    Ad, Ac, Av, An, M, K = load_comp_matrix('A_1_Index.txt', 'A_1_Matrix.txt', False)
+    Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_1_Index.txt', 'B_1_Matrix.txt', True)
+    assert K == K2, f"K mismatch: {K} vs {K2}"
+
+    gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc, Bv, M, N, K)
+
+    dut._log.info("=" * 70)
+    dut._log.info("COMPETITION TEST: A(%d,%d) × B(%d,%d) → C(%d,%d)", M, K, K2, N, M, N)
+    dut._log.info("A: %d rows, %d nnz (%.1f%% sparsity)", M, An, 100*An/(M*K))
+    dut._log.info("B: %d rows, %d nnz (%.1f%% sparsity)", K2, Bn, 100*Bn/(K2*N))
+    dut._log.info("Golden C: %d non-zero entries", len(gv))
+    for ri in range(min(3, M)):
+        gid = Ad[ri] & 0xFFFF
+        dut._log.info("  C[%d] samples: %s", gid,
+                      [int(gf[gid][j]) for j in range(min(6, N))])
+
+    # Run
+    await rst(dut)
+    await LAd(dut, Ad, Ac, Av)
+    await LBd(dut, Bd, Bc, Bv)
+
+    dut._log.info("Starting PE, row_count=%d...", M)
+    cp, cyc = await run_pe(dut, M, to=10000000)
+
+    dut._log.info("PE done at cycle %d, captured %d writes", cyc, len(cp))
+
+    # Verify
+    e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp)
+    total = M * N
+    dut._log.info("Verification: total=%d, nz_ok=%d, z_ok=%d, errors=%d", total, nz_ok, z_ok, e)
+    assert e == 0, f"{e} mismatches"
+
+    # Compute stats
+    # Clear cycles: M * 512
+    # Writeback: M * 512
+    # Compute: total - clear - writeback - overhead
+    clear_cyc = M * 512
+    wb_cyc = M * 512
+    overhead_cyc = M * 20  # estimated FSM overhead
+    compute_cyc = cyc - clear_cyc - wb_cyc - overhead_cyc
+    total_products = An * (Bn / K)  # rough estimate
+    mac_util_pct = total_products / (compute_cyc * 4) * 100 if compute_cyc > 0 else 0
+
+    dut._log.info("=" * 70)
+    dut._log.info("STATISTICS:")
+    dut._log.info("  Total cycles:        %d", cyc)
+    dut._log.info("  Clear cycles:        %d (%.1f%%)", clear_cyc, 100*clear_cyc/cyc)
+    dut._log.info("  Writeback cycles:    %d (%.1f%%)", wb_cyc, 100*wb_cyc/cyc)
+    dut._log.info("  Compute cycles:      %d (%.1f%%)", compute_cyc, 100*compute_cyc/cyc)
+    dut._log.info("  Estimated products:  %.0f", total_products)
+    dut._log.info("  MAC utilization:     %.1f%% (4 MACs)", mac_util_pct)
+    dut._log.info("=" * 70)
+    dut._log.info("COMPETITION TEST PASSED")
