@@ -108,11 +108,11 @@
 `define PRODUCT_WIDTH       32
 `define PRODUCT_GROUP_WIDTH (4 + 4 * `PRODUCT_WIDTH)  // 132
 
-`define TASK_FIFO_DEPTH     32
-`define TASK_FIFO_DEPTH_LOG 5
+`define TASK_FIFO_DEPTH     256
+`define TASK_FIFO_DEPTH_LOG 8
 
-`define PROD_FIFO_DEPTH     32
-`define PROD_FIFO_DEPTH_LOG  5
+`define PROD_FIFO_DEPTH     256
+`define PROD_FIFO_DEPTH_LOG  8
 
 //=============================================================================
 // C_dense_buffer

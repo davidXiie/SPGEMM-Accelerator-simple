@@ -16,6 +16,10 @@ module tb_pe_top;
     reg [15:0] row_count;
     wire       done;
 
+    reg [`MAX_DIM_BITS-1:0] M;
+    reg [`MAX_DIM_BITS-1:0] K;
+    reg [`MAX_DIM_BITS-1:0] N;
+
     // A buffer load ports
     reg        a_desc_we;
     reg [7:0]  a_desc_waddr;
@@ -54,6 +58,9 @@ module tb_pe_top;
         .start          (start),
         .row_count      (row_count),
         .done           (done),
+        .M              (M),
+        .K              (K),
+        .N              (N),
 
         .a_desc_we      (a_desc_we),
         .a_desc_waddr   (a_desc_waddr[`A_ROW_ADDR_BITS-1:0]),
@@ -90,7 +97,15 @@ module tb_pe_top;
 `endif
 
 `ifdef COCOTB_SIM
-    // VCD off for speed
+    initial begin
+        $dumpfile("sim_build/pe_dump.vcd");
+        $dumpvars(0, tb_pe_top.u_pe.state);
+        $dumpvars(0, tb_pe_top.u_pe.row_idx);
+        $dumpvars(0, tb_pe_top.u_pe.a_nnz_left);
+        $dumpvars(0, tb_pe_top.u_pe.b_nnz_left);
+        $dumpvars(0, tb_pe_top.u_pe.cbuf_wr_valid);
+        $dumpvars(0, tb_pe_top.u_pe.done);
+    end
 `endif
 
 endmodule

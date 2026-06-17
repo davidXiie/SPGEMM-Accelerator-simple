@@ -57,6 +57,7 @@ async def rst(dut):
     dut.aresetn.value=0; cocotb.start_soon(Clock(dut.aclk,10,units='ns').start())
     await ClockCycles(dut.aclk,10); dut.aresetn.value=1; await ClockCycles(dut.aclk,5)
     dut.start.value=0;dut.row_count.value=0;dut.cbuf_wr_ready.value=0
+    dut.M.value=0;dut.K.value=0;dut.N.value=0
     dut.a_desc_we.value=0;dut.a_col_we.value=0;dut.a_val_we.value=0
     dut.b_desc_we.value=0;dut.b_col_we.value=0;dut.b_val_we.value=0
 
@@ -92,7 +93,8 @@ async def test_pe_3x20(dut):
     Ad,Ac,Av,An=gen(M,K,SP,42,False); Bd,Bc,Bv,Bn=gen(K,N,SP,77,True)
     gv,gf=gold(Ad,Ac,Av,Bd,Bc,Bv,M,N)
     dut._log.info("3x20: A_nnz=%d B_nnz=%d golden_nnz=%d",An,Bn,len(gv))
-    await rst(dut); await LAd(dut,Ad,Ac,Av); await LBd(dut,Bd,Bc,Bv)
+    await rst(dut); dut.M.value=M; dut.K.value=K; dut.N.value=N
+    await LAd(dut,Ad,Ac,Av); await LBd(dut,Bd,Bc,Bv)
     cp,cy=await run(dut,M,to=500000)
     dut._log.info("Done cycle=%d",cy); e=vfy(dut,M,N,Ad,gf,cp); assert e==0,f"{e} mismatches"
     dut._log.info("3x20 PASSED")
@@ -104,7 +106,8 @@ async def test_pe_4x20(dut):
     Ad,Ac,Av,An=gen(M,K,SP,42,False); Bd,Bc,Bv,Bn=gen(K,N,SP,77,True)
     gv,gf=gold(Ad,Ac,Av,Bd,Bc,Bv,M,N)
     dut._log.info("4x20: A_nnz=%d B_nnz=%d golden_nnz=%d",An,Bn,len(gv))
-    await rst(dut); await LAd(dut,Ad,Ac,Av); await LBd(dut,Bd,Bc,Bv)
+    await rst(dut); dut.M.value=M; dut.K.value=K; dut.N.value=N
+    await LAd(dut,Ad,Ac,Av); await LBd(dut,Bd,Bc,Bv)
     cp,cy=await run(dut,M,to=1000000)
     dut._log.info("Done cycle=%d",cy); e=vfy(dut,M,N,Ad,gf,cp); assert e==0,f"{e} mismatches"
     dut._log.info("4x20 PASSED")
@@ -116,7 +119,8 @@ async def test_pe_20x20(dut):
     Ad,Ac,Av,An=gen(M,K,SP,42,False); Bd,Bc,Bv,Bn=gen(K,N,SP,77,True)
     gv,gf=gold(Ad,Ac,Av,Bd,Bc,Bv,M,N)
     dut._log.info("20x20: A_nnz=%d B_nnz=%d golden_nnz=%d",An,Bn,len(gv))
-    await rst(dut); await LAd(dut,Ad,Ac,Av); await LBd(dut,Bd,Bc,Bv)
+    await rst(dut); dut.M.value=M; dut.K.value=K; dut.N.value=N
+    await LAd(dut,Ad,Ac,Av); await LBd(dut,Bd,Bc,Bv)
     cp,cy=await run(dut,M,to=5000000)
     dut._log.info("Done cycle=%d",cy); e=vfy(dut,M,N,Ad,gf,cp); assert e==0,f"{e} mismatches"
     dut._log.info("20x20 PASSED")
@@ -128,7 +132,8 @@ async def test_pe_50x50(dut):
     Ad,Ac,Av,An=gen(M,K,SP,42,False); Bd,Bc,Bv,Bn=gen(K,N,SP,77,True)
     gv,gf=gold(Ad,Ac,Av,Bd,Bc,Bv,M,N)
     dut._log.info("50x50: A_nnz=%d B_nnz=%d golden_nnz=%d",An,Bn,len(gv))
-    await rst(dut); await LAd(dut,Ad,Ac,Av); await LBd(dut,Bd,Bc,Bv)
+    await rst(dut); dut.M.value=M; dut.K.value=K; dut.N.value=N
+    await LAd(dut,Ad,Ac,Av); await LBd(dut,Bd,Bc,Bv)
     cp,cy=await run(dut,M,to=10000000)
     dut._log.info("Done cycle=%d",cy); e=vfy(dut,M,N,Ad,gf,cp); assert e==0,f"{e} mismatches"
     dut._log.info("50x50 PASSED")

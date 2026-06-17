@@ -175,7 +175,7 @@ async def test_comp_case1_p1(dut):
                       [int(gf[gid][j]) for j in range(min(6, N))])
 
     # Run
-    await rst(dut)
+    await rst(dut); dut.M.value=M; dut.K.value=K; dut.N.value=N
     await LAd(dut, Ad, Ac, Av)
     await LBd(dut, Bd, Bc, Bv)
 

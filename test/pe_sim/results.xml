@@ -1,0 +1,6 @@
+<testsuites name="results">
+  <testsuite name="all" package="all">
+    <property name="random_seed" value="1781661163" />
+    <testcase name="test_pe_50x50" classname="test_pe" file="d:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\pe_sim\test_pe.py" lineno="128" time="4.448273420333862" sim_time_ns="437170.001" ratio_time="98278.5813033922" />
+  </testsuite>
+</testsuites>

@@ -24,6 +24,9 @@ module pe_accumulator (
     input  wire                     clear_en,
     output wire                     clear_done,
 
+    // Matrix dimension (for clear range)
+    input  wire [`MAX_DIM_BITS-1:0]  N,
+
     // Writeback read port (PE_WRITE_ROW reads acc_buf[col])
     input  wire [`PE_ACC_ADDR_BITS-1:0] wb_rd_addr,
     output wire [`DATA_WIDTH-1:0]   wb_rd_data,
@@ -63,7 +66,7 @@ module pe_accumulator (
     assign idle = (acc_state == ACC_IDLE) && !clear_active;
     assign all_drain_empty = idle;
 
-    assign clear_done = clear_active && (clear_idx == `PE_ACC_DEPTH - 1);
+    assign clear_done = clear_active && (clear_idx == N - 1);
 
     // Writeback read (combinational)
     assign wb_rd_data = acc_buf[wb_rd_addr];
@@ -78,14 +81,14 @@ module pe_accumulator (
             clear_idx    <= 0;
             clear_active <= 1'b0;
         end else begin
-            // Clear phase
+            // Clear phase (only clear 0..N-1, not full 512)
             if (clear_en && !clear_active) begin
                 clear_active <= 1'b1;
                 clear_idx   <= 0;
             end
             if (clear_active) begin
                 acc_buf[clear_idx] <= 16'd0;
-                if (clear_idx < `PE_ACC_DEPTH - 1)
+                if (clear_idx < N - 1)
                     clear_idx <= clear_idx + 1'b1;
                 else
                     clear_active <= 1'b0;

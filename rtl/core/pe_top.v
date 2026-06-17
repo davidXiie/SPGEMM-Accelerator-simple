@@ -28,6 +28,11 @@ module pe_top #(
     input  wire [15:0]              row_count,
     output reg                      done,
 
+    // Matrix dimensions
+    input  wire [`MAX_DIM_BITS-1:0]  M,
+    input  wire [`MAX_DIM_BITS-1:0]  K,
+    input  wire [`MAX_DIM_BITS-1:0]  N,
+
     // === A buffer load ports (from a_group_loader) ===
     input  wire                     a_desc_we,
     input  wire [`A_ROW_ADDR_BITS-1:0] a_desc_waddr,
@@ -128,7 +133,7 @@ module pe_top #(
     reg [63:0] b_row_desc_reg;
     reg [`OFFSET_WIDTH-1:0] b_ptr;
     reg [`DATA_WIDTH-1:0] b_nnz_left;
-    reg                     a_pending;  // set when B row done but more A elements remain
+    // a_pending removed — intermediate flushes eliminated for MAC throughput
 
     //=========================================================================
     // Task generation
@@ -139,7 +144,6 @@ module pe_top #(
     wire task_row_done;  // all tasks for this A row generated
 
     wire b_batch_done = (state == PE_STREAM_B_ROW) && (b_nnz_left == 0);
-    assign task_row_done = b_batch_done && (a_nnz_left == 0) && !a_pending;
 
     // Task data: {reserved, b_val, a_val, col}
     assign task_in_data = {
@@ -320,6 +324,7 @@ module pe_top #(
         .all_drain_empty (acc_drain_empty),
         .clear_en        (acc_clear_en),
         .clear_done      (acc_clear_done),
+        .N               (N),
         .wb_rd_addr      (wb_rd_addr),
         .wb_rd_data      (wb_rd_data),
         .aclk            (aclk),
@@ -377,7 +382,6 @@ module pe_top #(
             cur_k          <= 0;
             cur_a_val      <= 0;
             b_row_desc_reg <= 0;
-            a_pending      <= 1'b0;
             write_col      <= 0;
             write_global_row <= 0;
             done           <= 1'b0;
@@ -414,21 +418,18 @@ module pe_top #(
                     b_row_desc_reg <= B_row_desc_buf[cur_k[`B_ROW_ADDR_BITS-1:0]];
                     b_ptr          <= B_row_desc_buf[cur_k[`B_ROW_ADDR_BITS-1:0]][63:32];
                     b_nnz_left     <= B_row_desc_buf[cur_k[`B_ROW_ADDR_BITS-1:0]][15:0];
-                    a_pending      <= 1'b0;
                 end
 
                 PE_STREAM_B_ROW: begin
                     if (b_nnz_left == 0 && a_nnz_left > 0 && task_packer_ready) begin
-                        a_pending <= 1'b1;
+                        // Advance to next A element immediately (skip flush for throughput)
+                        a_ptr      <= a_ptr + 1;
+                        a_nnz_left <= a_nnz_left - 1;
                     end
                 end
 
                 PE_FLUSH_TASK_PACK: begin
-                    if (a_pending) begin
-                        a_ptr      <= a_ptr + 1;
-                        a_nnz_left <= a_nnz_left - 1;
-                        a_pending   <= 1'b0;
-                    end
+                    // Final flush at end of row only (intermediate flushes removed)
                 end
 
                 PE_WAIT_TASK_DRAIN: begin
@@ -500,7 +501,12 @@ module pe_top #(
                 if (b_batch_done) state_next = PE_FLUSH_TASK_PACK;
 
             PE_FLUSH_TASK_PACK:
-                if (task_flush_done && !a_pending) state_next = PE_WAIT_TASK_DRAIN;
+                if (task_flush_done) begin
+                    if (a_nnz_left == 0)  // last A element → full drain
+                        state_next = PE_WAIT_TASK_DRAIN;
+                    else  // intermediate: flush packer only, no drain
+                        state_next = PE_LOAD_A_ELEM;
+                end
 
             PE_WAIT_TASK_DRAIN:
                 if (task_drain_done) state_next = PE_WAIT_PRODUCT_DRAIN;
@@ -510,7 +516,7 @@ module pe_top #(
                     state_next = (a_nnz_left > 0) ? PE_LOAD_A_ELEM : PE_WRITE_ROW;
 
             PE_WRITE_ROW:
-                if (write_col == `MAX_N - 1 && cbuf_wr_ready)
+                if (write_col == N - 1 && cbuf_wr_ready)
                     state_next = PE_NEXT_ROW;
 
             PE_NEXT_ROW:
