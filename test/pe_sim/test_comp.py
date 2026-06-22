@@ -25,19 +25,22 @@ def load_comp_matrix(index_file, matrix_file, is_B=False):
     idx_path = os.path.join(base, index_file)
     mat_path = os.path.join(base, matrix_file)
 
-    with open(idx_path) as f:
-        idx_lines = [list(map(int, l.split())) for l in f if l.strip()]
     with open(mat_path) as f:
         mat_lines = [list(map(int, l.split())) for l in f if l.strip()]
+    with open(idx_path) as f:
+        # Keep ALL lines (empty B-cols are truly empty; empty A-rows use "0" sentinel).
+        # Slice to mat_lines count so trailing newlines don't inflate row count.
+        idx_lines_raw = [list(map(int, l.split())) for l in f]
 
     if not is_B:
         # A: CSR format → compact row-desc
-        rows = len(idx_lines)
+        rows = len(mat_lines)  # authoritative count from matrix file
+        idx_lines = idx_lines_raw[:rows]
         K = mat_lines[0][1]  # total columns
         row_desc = []; col_arr = []; val_arr = []; offset = 0
         for r in range(rows):
             nnz = mat_lines[r][0]
-            cols = idx_lines[r]
+            cols = idx_lines[r] if nnz > 0 else []  # A_0 uses "0" sentinel for empty rows
             assert len(cols) == nnz, f"Row {r}: expected {nnz} cols, got {len(cols)}"
             for c in cols:
                 v = (r * 37 + c * 13 + 1) % 7 + 1  # integer [1..7]
@@ -48,7 +51,8 @@ def load_comp_matrix(index_file, matrix_file, is_B=False):
 
     else:
         # B: CSC format → transposed to CSR for PE
-        B_cols = len(idx_lines)  # number of B columns (N)
+        B_cols = len(mat_lines)  # authoritative count from matrix file
+        idx_lines = idx_lines_raw[:B_cols]  # slice; empty lines preserved as []
         B_rows = mat_lines[0][1]  # number of B rows (K)
         # Build COO then convert to CSR
         coo = []
@@ -155,6 +159,62 @@ def verify(dut, M, N, Ad, gf, cp):
 
 #=========================================================================
 @cocotb.test()
+async def test_comp_case1_p0(dut):
+    """Competition Case1 Pattern0: A(250,257) × B(257,121)"""
+    # Load data
+    Ad, Ac, Av, An, M, K = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False)
+    Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True)
+    assert K == K2, f"K mismatch: {K} vs {K2}"
+
+    gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc, Bv, M, N, K)
+
+    dut._log.info("=" * 70)
+    dut._log.info("COMPETITION TEST: A(%d,%d) × B(%d,%d) → C(%d,%d)", M, K, K2, N, M, N)
+    dut._log.info("A: %d rows, %d nnz (%.1f%% density)", M, An, 100*An/(M*K))
+    dut._log.info("B: %d rows, %d nnz (%.1f%% density)", K2, Bn, 100*Bn/(K2*N))
+    dut._log.info("Golden C: %d non-zero entries", len(gv))
+    for ri in range(min(3, M)):
+        gid = Ad[ri] & 0xFFFF
+        dut._log.info("  C[%d] samples: %s", gid,
+                      [int(gf[gid][j]) for j in range(min(10, N))])
+
+    # Run
+    await rst(dut); dut.M.value=M; dut.K.value=K; dut.N.value=N
+    await LAd(dut, Ad, Ac, Av)
+    await LBd(dut, Bd, Bc, Bv)
+
+    dut._log.info("Starting PE, row_count=%d...", M)
+    cp, cyc = await run_pe(dut, M, to=50000000)
+
+    dut._log.info("PE done at cycle %d, captured %d writes", cyc, len(cp))
+
+    # Verify
+    e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp)
+    total = M * N
+    dut._log.info("Verification: total=%d, nz_ok=%d, z_ok=%d, errors=%d", total, nz_ok, z_ok, e)
+    assert e == 0, f"{e} mismatches"
+
+    # Stats
+    nz_C = len(gv)
+    overhead_cyc = M * 20
+    compute_cyc = max(0, cyc - overhead_cyc - nz_C)
+    total_products = An * (Bn / K)
+    mac_util_pct = total_products / (compute_cyc * 4) * 100 if compute_cyc > 0 else 0
+
+    dut._log.info("=" * 70)
+    dut._log.info("STATISTICS (4-bank accumulator):")
+    dut._log.info("  Total cycles:        %d", cyc)
+    dut._log.info("  FSM overhead (est):  %d (%.1f%%)", overhead_cyc, 100*overhead_cyc/cyc)
+    dut._log.info("  Writeback cycles:    %d (%.1f%%, sparse=%d entries)", nz_C, 100*nz_C/cyc, nz_C)
+    dut._log.info("  Compute cycles:      %d (%.1f%%)", compute_cyc, 100*compute_cyc/cyc)
+    dut._log.info("  Estimated products:  %.0f", total_products)
+    dut._log.info("  MAC utilization:     %.1f%% (4 MACs)", mac_util_pct)
+    dut._log.info("  (old design: M*512=%d clear + M*512=%d writeback)", M*512, M*512)
+    dut._log.info("=" * 70)
+    dut._log.info("COMPETITION TEST PASSED")
+
+#=========================================================================
+@cocotb.test()
 async def test_comp_case1_p1(dut):
     """Competition Case1 Pattern1: A(32,317) × B(317,6)"""
     # Load data
@@ -190,24 +250,21 @@ async def test_comp_case1_p1(dut):
     dut._log.info("Verification: total=%d, nz_ok=%d, z_ok=%d, errors=%d", total, nz_ok, z_ok, e)
     assert e == 0, f"{e} mismatches"
 
-    # Compute stats
-    # Clear cycles: M * 512
-    # Writeback: M * 512
-    # Compute: total - clear - writeback - overhead
-    clear_cyc = M * 512
-    wb_cyc = M * 512
-    overhead_cyc = M * 20  # estimated FSM overhead
-    compute_cyc = cyc - clear_cyc - wb_cyc - overhead_cyc
+    # Compute stats (new 4-bank accumulator: no per-row clear, sparse writeback)
+    nz_C = len(gv)          # non-zero C entries actually written
+    overhead_cyc = M * 20   # estimated FSM overhead (load/desc states)
+    compute_cyc = max(0, cyc - overhead_cyc - nz_C)
     total_products = An * (Bn / K)  # rough estimate
     mac_util_pct = total_products / (compute_cyc * 4) * 100 if compute_cyc > 0 else 0
 
     dut._log.info("=" * 70)
-    dut._log.info("STATISTICS:")
+    dut._log.info("STATISTICS (4-bank accumulator):")
     dut._log.info("  Total cycles:        %d", cyc)
-    dut._log.info("  Clear cycles:        %d (%.1f%%)", clear_cyc, 100*clear_cyc/cyc)
-    dut._log.info("  Writeback cycles:    %d (%.1f%%)", wb_cyc, 100*wb_cyc/cyc)
+    dut._log.info("  FSM overhead (est):  %d (%.1f%%)", overhead_cyc, 100*overhead_cyc/cyc)
+    dut._log.info("  Writeback cycles:    %d (%.1f%%, sparse=%d entries)", nz_C, 100*nz_C/cyc, nz_C)
     dut._log.info("  Compute cycles:      %d (%.1f%%)", compute_cyc, 100*compute_cyc/cyc)
     dut._log.info("  Estimated products:  %.0f", total_products)
     dut._log.info("  MAC utilization:     %.1f%% (4 MACs)", mac_util_pct)
+    dut._log.info("  (old design used M*512=%d clear + M*512=%d writeback cycles)", M*512, M*512)
     dut._log.info("=" * 70)
     dut._log.info("COMPETITION TEST PASSED")

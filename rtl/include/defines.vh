@@ -82,9 +82,9 @@
 //     B_val_buf:      78848 × 16-bit ≈ 154 KB
 //   acc_buf: 512 × 16-bit = 1 KB
 //=============================================================================
-`define A_ROW_SLOT_PER_PE  128
+`define A_ROW_SLOT_PER_PE  256
 `define A_NNZ_SLOT_PER_PE  16384
-`define A_ROW_ADDR_BITS    7       // log2(128)
+`define A_ROW_ADDR_BITS    8       // log2(256)
 `define A_NNZ_ADDR_BITS    14      // log2(16384)
 
 `define B_ROW_SLOT         512

@@ -1,0 +1,4 @@
+159480
+
+PE done at cycle 12013, captured 192 writes
+PE done at cycle 28253, captured 192 writes

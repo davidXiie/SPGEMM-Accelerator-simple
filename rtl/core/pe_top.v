@@ -284,51 +284,80 @@ module pe_top #(
     wire prod_fifo_empty;
 
     //=========================================================================
-    // Product Serializer
+    // 4-bank Row Accumulator (replaces pe_serializer + pe_accumulator)
+    //
+    // product format in prod_fifo: {lane_valid[3:0], prod3[31:0]..prod0[31:0]}
+    // each prod[31:0] = {col_id[15:0], product_val[15:0]}
     //=========================================================================
-    wire acc_in_valid;
-    wire acc_in_ready;
-    wire [`PRODUCT_WIDTH-1:0] acc_in_data;
-    wire serializer_idle;
+    wire        acc_issue_ready;
+    wire        acc_out_valid;
+    wire        acc_row_done;
+    wire [8:0]  acc_out_col_id;   // COL_W=9 (log2 of PE_ACC_DEPTH=512)
+    wire [31:0] acc_out_value;    // ACC_W=32
+    wire [15:0] acc_out_row_id;
 
-    pe_serializer u_serializer (
-        .prod_fifo_empty   (prod_fifo_empty),
-        .prod_fifo_rd_en   (prod_fifo_rd_en),
-        .prod_fifo_rd_data (prod_fifo_rd_data),
-        .acc_in_valid      (acc_in_valid),
-        .acc_in_ready      (acc_in_ready),
-        .acc_in_data       (acc_in_data),
-        .idle              (serializer_idle),
-        .aclk              (aclk),
-        .aresetn           (aresetn)
-    );
+    // row_start: 1-cycle pulse when entering PE_CLEAR_ACC (replaces acc clear)
+    wire acc_row_start   = (state == PE_CLEAR_ACC);
 
-    //=========================================================================
-    // Accumulator
-    //=========================================================================
-    wire acc_idle;
-    wire acc_drain_empty;
-    wire acc_clear_done;
-    wire acc_clear_en;
+    // mac_pipeline_idle: true when MAC pipeline has fully flushed.
+    // mac_lane_valid is registered from task_fifo_rd_en (1 cycle), then MUL_LAT=1
+    // more cycle to mul_valid. Must wait for both to be 0 before asserting
+    // row_input_done, otherwise the last product(s) arrive in prod_fifo AFTER
+    // the accumulator has already transitioned to S_WAIT_DRAIN and are lost.
+    wire mac_pipeline_idle = !(|mac_lane_valid) && !(|mul_valid);
 
-    wire [`PE_ACC_ADDR_BITS-1:0] wb_rd_addr;
-    wire [`DATA_WIDTH-1:0]       wb_rd_data;
+    // row_input_done: safe only when prod_fifo empty AND MAC pipeline flushed
+    wire acc_inp_done = (state == PE_WAIT_PRODUCT_DRAIN)
+                      && prod_fifo_empty
+                      && mac_pipeline_idle;
 
-    assign acc_clear_en = (state == PE_CLEAR_ACC);
+    wire acc_out_ready = (state == PE_WRITE_ROW) && cbuf_wr_ready;
 
-    pe_accumulator u_accumulator (
-        .acc_in_valid    (acc_in_valid),
-        .acc_in_ready    (acc_in_ready),
-        .acc_in_data     (acc_in_data),
-        .idle            (acc_idle),
-        .all_drain_empty (acc_drain_empty),
-        .clear_en        (acc_clear_en),
-        .clear_done      (acc_clear_done),
-        .N               (N),
-        .wb_rd_addr      (wb_rd_addr),
-        .wb_rd_data      (wb_rd_data),
-        .aclk            (aclk),
-        .aresetn         (aresetn)
+    // Consume from product FIFO when accumulator is ready
+    assign prod_fifo_rd_en = !prod_fifo_empty && acc_issue_ready;
+
+    // Extract 4-lane fields from product FIFO head
+    wire [3:0]  acc_lane_valid;
+    wire [35:0] acc_lane_col_id;   // 4 * 9 = 36 bits, {lane3..lane0}
+    wire [63:0] acc_lane_product;  // 4 * 16 = 64 bits, {lane3..lane0}
+
+    assign acc_lane_valid = prod_fifo_rd_data[3:0];
+    assign acc_lane_col_id  = {prod_fifo_rd_data[4+3*32+16 +: 9],
+                               prod_fifo_rd_data[4+2*32+16 +: 9],
+                               prod_fifo_rd_data[4+1*32+16 +: 9],
+                               prod_fifo_rd_data[4+0*32+16 +: 9]};
+    assign acc_lane_product = {prod_fifo_rd_data[4+3*32 +: 16],
+                               prod_fifo_rd_data[4+2*32 +: 16],
+                               prod_fifo_rd_data[4+1*32 +: 16],
+                               prod_fifo_rd_data[4+0*32 +: 16]};
+
+    row_accumulator_4bank #(
+        .OUT_COLS        (`PE_ACC_DEPTH),
+        .COL_W           (9),
+        .PROD_W          (`DATA_WIDTH),
+        .ACC_W           (32),
+        .EPOCH_W         (16),
+        .BANK_FIFO_DEPTH (8),
+        .BANK_FIFO_LOG   (3),
+        .ROW_W           (16)
+    ) u_row_acc (
+        .clk            (aclk),
+        .rst_n          (aresetn),
+        .row_start      (acc_row_start),
+        .row_id_in      (cur_global_row),
+        .row_input_done (acc_inp_done),
+        .busy           (),
+        .row_done       (acc_row_done),
+        .issue_valid    (!prod_fifo_empty),
+        .issue_ready    (acc_issue_ready),
+        .lane_valid     (acc_lane_valid),
+        .lane_col_id    (acc_lane_col_id),
+        .lane_product   (acc_lane_product),
+        .out_valid      (acc_out_valid),
+        .out_ready      (acc_out_ready),
+        .out_row_id     (acc_out_row_id),
+        .out_col_id     (acc_out_col_id),
+        .out_value      (acc_out_value)
     );
 
     //=========================================================================
@@ -339,22 +368,18 @@ module pe_top #(
     //=========================================================================
     // Pipeline drain detection
     //=========================================================================
-    wire task_drain_done;
-    wire product_drain_done;
-
-    assign task_drain_done    = task_fifo_empty;
-    assign product_drain_done = prod_fifo_empty && serializer_idle && acc_idle;
+    wire task_drain_done = task_fifo_empty;
+    // product drain: prod_fifo drained → accumulator receives row_input_done
+    // and handles remaining bank-FIFO RMW internally before row_done asserts.
 
     //=========================================================================
-    // Row writeback
+    // Row writeback (sparse drain from row_accumulator_4bank)
     //=========================================================================
-    reg [`MAX_DIM_BITS-1:0] write_col;
     reg [`MAX_DIM_BITS-1:0] write_global_row;
 
-    assign cbuf_wr_valid = (state == PE_WRITE_ROW);
-    assign cbuf_wr_addr  = (write_global_row * `C_ROW_STRIDE) + write_col;
-    assign cbuf_wr_data  = wb_rd_data;
-    assign wb_rd_addr    = write_col[`PE_ACC_ADDR_BITS-1:0];
+    assign cbuf_wr_valid = (state == PE_WRITE_ROW) && acc_out_valid;
+    assign cbuf_wr_addr  = (write_global_row * `C_ROW_STRIDE) + acc_out_col_id;
+    assign cbuf_wr_data  = acc_out_value[`DATA_WIDTH-1:0];
 
     // Debug (uncomment for troubleshooting)
     // reg [7:0] dbg_cnt;
@@ -372,19 +397,18 @@ module pe_top #(
 
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
-            row_idx        <= 0;
-            row_desc_reg   <= 0;
-            cur_global_row <= 0;
-            cur_a_row_nnz  <= 0;
-            cur_a_start    <= 0;
-            a_nnz_left     <= 0;
-            a_ptr          <= 0;
-            cur_k          <= 0;
-            cur_a_val      <= 0;
-            b_row_desc_reg <= 0;
-            write_col      <= 0;
+            row_idx          <= 0;
+            row_desc_reg     <= 0;
+            cur_global_row   <= 0;
+            cur_a_row_nnz    <= 0;
+            cur_a_start      <= 0;
+            a_nnz_left       <= 0;
+            a_ptr            <= 0;
+            cur_k            <= 0;
+            cur_a_val        <= 0;
+            b_row_desc_reg   <= 0;
             write_global_row <= 0;
-            done           <= 1'b0;
+            done             <= 1'b0;
         end else begin
             done <= 1'b0;
 
@@ -405,8 +429,7 @@ module pe_top #(
                 end
 
                 PE_CLEAR_ACC: begin
-                    // acc_clear_en drives accumulator clear
-                    // wait for clear_done
+                    // acc_row_start wire pulses high for this one cycle
                 end
 
                 PE_LOAD_A_ELEM: begin
@@ -421,8 +444,11 @@ module pe_top #(
                 end
 
                 PE_STREAM_B_ROW: begin
-                    if (b_nnz_left == 0 && a_nnz_left > 0 && task_packer_ready) begin
-                        // Advance to next A element immediately (skip flush for throughput)
+                    if (b_nnz_left == 0 && a_nnz_left > 0) begin
+                        // Advance to next A element immediately (skip flush for throughput).
+                        // Must NOT gate on task_packer_ready: when FIFO is full (ready=0),
+                        // b_batch_done still fires and we go to PE_FLUSH_TASK_PACK, but
+                        // a_ptr would not advance → same A element re-processed on return.
                         a_ptr      <= a_ptr + 1;
                         a_nnz_left <= a_nnz_left - 1;
                     end
@@ -437,18 +463,15 @@ module pe_top #(
                 end
 
                 PE_WAIT_PRODUCT_DRAIN: begin
-                    if (product_drain_done)
+                    if (prod_fifo_empty)
                         write_global_row <= cur_global_row;
                 end
 
                 PE_WRITE_ROW: begin
-                    if (cbuf_wr_valid && cbuf_wr_ready) begin
-                        write_col <= write_col + 1'b1;
-                    end
+                    // accumulator handles drain ordering; FSM waits for acc_row_done
                 end
 
                 PE_NEXT_ROW: begin
-                    write_col <= 0;
                     if (!state_stable)
                         row_idx <= row_idx + 1;
                 end
@@ -481,15 +504,15 @@ module pe_top #(
                 if (start) state_next = PE_LOAD_ROW_DESC;
 
             PE_LOAD_ROW_DESC:
-                if (state_stable) begin
-                    if (A_row_desc_buf[row_idx][31:16] == 0)
-                        state_next = PE_WRITE_ROW;  // empty row
-                    else
-                        state_next = PE_CLEAR_ACC;
-                end
+                // always pass through PE_CLEAR_ACC to issue row_start pulse
+                if (state_stable) state_next = PE_CLEAR_ACC;
 
             PE_CLEAR_ACC:
-                if (acc_clear_done) state_next = PE_LOAD_A_ELEM;
+                // row_start pulses for this cycle; immediately advance
+                if (cur_a_row_nnz == 0)
+                    state_next = PE_WAIT_PRODUCT_DRAIN;  // empty row
+                else
+                    state_next = PE_LOAD_A_ELEM;
 
             PE_LOAD_A_ELEM:
                 if (state_stable) state_next = PE_LOAD_B_DESC;
@@ -512,12 +535,10 @@ module pe_top #(
                 if (task_drain_done) state_next = PE_WAIT_PRODUCT_DRAIN;
 
             PE_WAIT_PRODUCT_DRAIN:
-                if (product_drain_done)
-                    state_next = (a_nnz_left > 0) ? PE_LOAD_A_ELEM : PE_WRITE_ROW;
+                if (prod_fifo_empty && mac_pipeline_idle) state_next = PE_WRITE_ROW;
 
             PE_WRITE_ROW:
-                if (write_col == N - 1 && cbuf_wr_ready)
-                    state_next = PE_NEXT_ROW;
+                if (acc_row_done) state_next = PE_NEXT_ROW;
 
             PE_NEXT_ROW:
                 if (state_stable) begin
