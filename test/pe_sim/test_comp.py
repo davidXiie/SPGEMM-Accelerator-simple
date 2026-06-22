@@ -291,3 +291,122 @@ async def test_comp_case1_p1(dut):
     dut._log.info("  Average RMW util:  %.2f%%", sum(rmw_utils) / 4)
     dut._log.info("=" * 70)
     dut._log.info("COMPETITION TEST PASSED")
+
+#=========================================================================
+# 4-PE cluster helpers
+#=========================================================================
+
+def partition_a(Ad, Ac, Av, M, n_pe=4):
+    """Distribute A rows round-robin to n_pe PEs.
+    Each PE gets its own compacted col/val arrays with local offsets but
+    the original global row ID in desc[15:0] so cbuf_wr_addr is correct.
+    """
+    pe_desc = [[] for _ in range(n_pe)]
+    pe_col  = [[] for _ in range(n_pe)]
+    pe_val  = [[] for _ in range(n_pe)]
+    for ri in range(M):
+        pid = ri % n_pe
+        global_row   = Ad[ri] & 0xFFFF
+        nnz          = (Ad[ri] >> 16) & 0xFFFF
+        global_start = (Ad[ri] >> 32) & 0xFFFFFFFF
+        local_off    = len(pe_col[pid])
+        for t in range(nnz):
+            pe_col[pid].append(Ac[global_start + t])
+            pe_val[pid].append(Av[global_start + t])
+        pe_desc[pid].append((local_off << 32) | (nnz << 16) | global_row)
+    return pe_desc, pe_col, pe_val
+
+async def LAd_pe(dut, pid, Ad, Ac, Av):
+    we_d = getattr(dut, f"a_desc_we_{pid}");  wa_d = getattr(dut, f"a_desc_waddr_{pid}"); wd_d = getattr(dut, f"a_desc_wdata_{pid}")
+    we_c = getattr(dut, f"a_col_we_{pid}");   wa_c = getattr(dut, f"a_col_waddr_{pid}");  wd_c = getattr(dut, f"a_col_wdata_{pid}")
+    we_v = getattr(dut, f"a_val_we_{pid}");   wa_v = getattr(dut, f"a_val_waddr_{pid}");  wd_v = getattr(dut, f"a_val_wdata_{pid}")
+    for i, d in enumerate(Ad): we_d.value=1; wa_d.value=i; wd_d.value=d; await RisingEdge(dut.aclk)
+    we_d.value = 0
+    for i, v in enumerate(Ac): we_c.value=1; wa_c.value=i; wd_c.value=v; await RisingEdge(dut.aclk)
+    we_c.value = 0
+    for i, v in enumerate(Av): we_v.value=1; wa_v.value=i; wd_v.value=v; await RisingEdge(dut.aclk)
+    we_v.value = 0
+
+async def LBd_cluster(dut, Bd, Bc, Bv):
+    for i, d in enumerate(Bd): dut.b_desc_we.value=1; dut.b_desc_waddr.value=i; dut.b_desc_wdata.value=d; await RisingEdge(dut.aclk)
+    dut.b_desc_we.value = 0
+    for i, v in enumerate(Bc): dut.b_col_we.value=1; dut.b_col_waddr.value=i; dut.b_col_wdata.value=v; await RisingEdge(dut.aclk)
+    dut.b_col_we.value = 0
+    for i, v in enumerate(Bv): dut.b_val_we.value=1; dut.b_val_waddr.value=i; dut.b_val_wdata.value=v; await RisingEdge(dut.aclk)
+    dut.b_val_we.value = 0
+
+async def rst_cluster(dut):
+    dut.aresetn.value=0; cocotb.start_soon(Clock(dut.aclk,10,units='ns').start())
+    await ClockCycles(dut.aclk,10); dut.aresetn.value=1; await ClockCycles(dut.aclk,5)
+    dut.start.value=0
+    for pid in range(4):
+        getattr(dut, f"row_count_{pid}").value  = 0
+        getattr(dut, f"cbuf_wr_ready_{pid}").value = 0
+        getattr(dut, f"a_desc_we_{pid}").value  = 0
+        getattr(dut, f"a_col_we_{pid}").value   = 0
+        getattr(dut, f"a_val_we_{pid}").value   = 0
+    dut.b_desc_we.value=0; dut.b_col_we.value=0; dut.b_val_we.value=0
+
+async def run_cluster(dut, row_counts, to=50000000):
+    for pid in range(4):
+        getattr(dut, f"row_count_{pid}").value  = row_counts[pid]
+        getattr(dut, f"cbuf_wr_ready_{pid}").value = 1
+    dut.start.value=1; await RisingEdge(dut.aclk); dut.start.value=0
+    cp = {}; dc = 0
+    for cy in range(to):
+        await RisingEdge(dut.aclk)
+        for pid in range(4):
+            if getattr(dut, f"cbuf_wr_valid_{pid}").value and getattr(dut, f"cbuf_wr_ready_{pid}").value:
+                cp[int(getattr(dut, f"cbuf_wr_addr_{pid}").value)] = int(getattr(dut, f"cbuf_wr_data_{pid}").value)
+        if int(dut.done.value): dc=cy; break
+    else:
+        assert False, f"cluster timeout at {to} cycles"
+    await ClockCycles(dut.aclk, 50)
+    for _ in range(100):
+        await RisingEdge(dut.aclk)
+        for pid in range(4):
+            if getattr(dut, f"cbuf_wr_valid_{pid}").value and getattr(dut, f"cbuf_wr_ready_{pid}").value:
+                cp[int(getattr(dut, f"cbuf_wr_addr_{pid}").value)] = int(getattr(dut, f"cbuf_wr_data_{pid}").value)
+    return cp, dc
+
+#=========================================================================
+@cocotb.test()
+async def test_comp_case1_cluster(dut):
+    """4-PE Cluster: A(251,257) x B(257,121) distributed round-robin by A row."""
+    Ad, Ac, Av, An, M, K  = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False)
+    Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True)
+    assert K == K2
+
+    gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc, Bv, M, N, K)
+
+    dut._log.info("=" * 70)
+    dut._log.info("4-PE CLUSTER TEST: A(%d,%d) x B(%d,%d) -> C(%d,%d)", M, K, K2, N, M, N)
+
+    pe_desc, pe_col, pe_val = partition_a(Ad, Ac, Av, M, n_pe=4)
+    row_counts = [len(pe_desc[p]) for p in range(4)]
+    dut._log.info("Row distribution: PE0=%d  PE1=%d  PE2=%d  PE3=%d", *row_counts)
+
+    await rst_cluster(dut)
+    dut.M.value=M; dut.K.value=K; dut.N.value=N
+
+    for pid in range(4):
+        await LAd_pe(dut, pid, pe_desc[pid], pe_col[pid], pe_val[pid])
+    await LBd_cluster(dut, Bd, Bc, Bv)
+
+    dut._log.info("Starting cluster...")
+    cp, cyc = await run_cluster(dut, row_counts)
+    dut._log.info("Cluster done at cycle %d, captured %d writes", cyc, len(cp))
+
+    e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp)
+    dut._log.info("Verification: total=%d, nz_ok=%d, z_ok=%d, errors=%d",
+                  M*N, nz_ok, z_ok, e)
+    assert e == 0, f"{e} mismatches"
+
+    total_macs = count_total_macs(Ad, Ac, Bd, M)
+    dut._log.info("=" * 70)
+    dut._log.info("STATISTICS:")
+    dut._log.info("  Cluster wall-time cycles: %d", cyc)
+    dut._log.info("  Total MAC ops:            %d", total_macs)
+    dut._log.info("  Speedup vs single PE:     %.2fx  (single=%d cycles)", 209513/cyc, 209513)
+    dut._log.info("=" * 70)
+    dut._log.info("4-PE CLUSTER TEST PASSED")
