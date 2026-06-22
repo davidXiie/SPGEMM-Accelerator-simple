@@ -520,4 +520,55 @@ module pe_top #(
         endcase
     end
 
+    //=========================================================================
+    // Debug trace (SIMULATION only) — target cols 53,56,69,73,30
+    //=========================================================================
+`ifdef SIMULATION
+    // task_group written to FIFO — check any lane's col matches target
+    wire [15:0] _tc0 = task_group_wr_data[19:4];    // sg0 col field
+    wire [15:0] _tc1 = task_group_wr_data[83:68];   // sg1 col field
+    wire [15:0] _tc2 = task_group_wr_data[147:132];
+    wire [15:0] _tc3 = task_group_wr_data[211:196];
+    wire _tg_hit = (_tc0==53||_tc0==56||_tc0==69||_tc0==73||_tc0==30||
+                    _tc1==53||_tc1==56||_tc1==69||_tc1==73||_tc1==30||
+                    _tc2==53||_tc2==56||_tc2==69||_tc2==73||_tc2==30||
+                    _tc3==53||_tc3==56||_tc3==69||_tc3==73||_tc3==30);
+
+    // product FIFO read side — what acc receives
+    wire [15:0] _pc0 = prod_fifo_rd_data[4+0*32+16 +: 16];
+    wire [15:0] _pc1 = prod_fifo_rd_data[4+1*32+16 +: 16];
+    wire [15:0] _pc2 = prod_fifo_rd_data[4+2*32+16 +: 16];
+    wire [15:0] _pc3 = prod_fifo_rd_data[4+3*32+16 +: 16];
+    wire [15:0] _pv0 = prod_fifo_rd_data[4+0*32 +: 16];
+    wire [15:0] _pv1 = prod_fifo_rd_data[4+1*32 +: 16];
+    wire [15:0] _pv2 = prod_fifo_rd_data[4+2*32 +: 16];
+    wire [15:0] _pv3 = prod_fifo_rd_data[4+3*32 +: 16];
+    wire _pr_hit = (_pc0==53||_pc0==56||_pc0==69||_pc0==73||_pc0==30||
+                    _pc1==53||_pc1==56||_pc1==69||_pc1==73||_pc1==30||
+                    _pc2==53||_pc2==56||_pc2==69||_pc2==73||_pc2==30||
+                    _pc3==53||_pc3==56||_pc3==69||_pc3==73||_pc3==30);
+
+    always @(posedge aclk) begin
+        // 1. Task group into FIFO — check if target col is present
+        if (task_group_wr_en && _tg_hit)
+            $display("[TG_WR @%0t row=%0d] valid=%b cols=%0d/%0d/%0d/%0d bnz=%0d fifo_full=%b",
+                $time, row_idx, stream_lane_valid,
+                _tc0, _tc1, _tc2, _tc3, b_nnz_left, task_fifo_full);
+
+        // 2. Product FIFO READ — what accumulator actually receives per cycle
+        if (prod_fifo_rd_en && _pr_hit)
+            $display("[PRD_RD @%0t row=%0d comp=%0d] valid=%b c0=%0d(v=%0d) c1=%0d(v=%0d) c2=%0d(v=%0d) c3=%0d(v=%0d) acc_rdy=%b",
+                $time, row_idx, comp_sel, prod_fifo_rd_data[3:0],
+                _pc0, _pv0, _pc1, _pv1, _pc2, _pv2, _pc3, _pv3, acc_issue_ready);
+
+        // 3. C buffer write for target positions
+        if (cbuf_wr_valid && cbuf_wr_ready &&
+            ((drain_out_row_id==2 && (drain_out_col_id==53||drain_out_col_id==56||
+                                      drain_out_col_id==69||drain_out_col_id==73)) ||
+             (drain_out_row_id==6 && drain_out_col_id==30)))
+            $display("[CBUF_WR @%0t] row=%0d col=%0d val=%0d",
+                $time, drain_out_row_id, drain_out_col_id, drain_out_value);
+    end
+`endif
+
 endmodule

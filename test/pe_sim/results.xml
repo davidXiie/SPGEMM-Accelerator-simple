@@ -1,10 +1,12 @@
 <testsuites name="results">
   <testsuite name="all" package="all">
-    <property name="random_seed" value="1782121123" />
-    <testcase name="test_comp_case1_p0" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="201" time="0" sim_time_ns="0" ratio_time="0">
+    <property name="random_seed" value="1782134020" />
+    <testcase name="test_comp_case1_p0" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="201" time="29.849411010742188" sim_time_ns="2288020.0" ratio_time="76652.09873577033">
+      <failure error_type="AssertionError" error_msg="5 mismatches&#10;assert 5 == 0" />
+    </testcase>
+    <testcase name="test_comp_case1_p1" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="259" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>
-    <testcase name="test_comp_case1_p1" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="259" time="1.4716923236846924" sim_time_ns="134020.0" ratio_time="91065.23003697718" />
     <testcase name="test_comp_case1_cluster" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="427" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>

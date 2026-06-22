@@ -22,7 +22,7 @@ PROJ_ROOT="${PROJ_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 
 # Cocotb 2.x test configuration.
 export COCOTB_TEST_MODULES="${COCOTB_TEST_MODULES:-test_comp}"
-export COCOTB_TESTCASE="${COCOTB_TESTCASE:-test_comp_case1_p1}"
+export COCOTB_TESTCASE="${COCOTB_TESTCASE:-test_comp_case1_p0}"
 export COCOTB_TOPLEVEL="${COCOTB_TOPLEVEL:-tb_pe_top}"
 export COCOTB_LOG_LEVEL="${COCOTB_LOG_LEVEL:-INFO}"
 export COCOTB_SIM=1
@@ -78,7 +78,7 @@ echo "========================================"
 mkdir -p sim_build
 
 iverilog -g2012 \
-    -DCOCOTB_SIM=1 \
+    -DCOCOTB_SIM=1 -DSIMULATION \
     -I"$PROJ_ROOT/rtl/include" \
     -s "$COCOTB_TOPLEVEL" \
     -o sim_build/sim.vvp \
