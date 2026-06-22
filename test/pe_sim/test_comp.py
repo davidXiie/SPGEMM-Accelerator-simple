@@ -154,7 +154,7 @@ async def LBd(dut, Bd, Bc, Bv):
     dut.b_val_we.value=0
 
 async def rst(dut):
-    dut.aresetn.value=0; cocotb.start_soon(Clock(dut.aclk,10,units='ns').start())
+    dut.aresetn.value=0; cocotb.start_soon(Clock(dut.aclk,10,unit='ns').start())
     await ClockCycles(dut.aclk,10); dut.aresetn.value=1; await ClockCycles(dut.aclk,5)
     dut.start.value=0;dut.row_count.value=0;dut.cbuf_wr_ready.value=0
     dut.a_desc_we.value=0;dut.a_col_we.value=0;dut.a_val_we.value=0
@@ -330,17 +330,61 @@ _B_NNZ_ADDR_W = 17   # B_NNZ_ADDR_BITS
 _C_DEPTH_LOG  = 18   # C_DENSE_DEPTH_LOG
 #=========================================================================
 
-def partition_a(Ad, Ac, Av, M, n_pe):
-    """Distribute A rows round-robin (row ri -> PE ri%n_pe).
-    Returns (pe_desc, pe_col, pe_val), each a list of n_pe arrays.
+def partition_a(Ad, Ac, Av, M, n_pe, Bd=None):
+    """Distribute A rows with greedy sequential + min-task fallback.
+
+    Phase 1 (sequential): walk rows in order; advance to the next PE whenever
+    adding the current row would push the PE's task count past the per-PE
+    average.  Rows that exhaust all n_pe slots go to Phase 2.
+    Phase 2 (greedy): each leftover row is assigned to the PE with the current
+    minimum task count.
+
+    Task count = exact MAC ops when Bd is supplied, else A-row nnz.
     Descriptors keep the original global row ID in [15:0] so each PE's
     cbuf_wr_addr computation produces correct global addresses.
     """
+    # Per-row task count
+    row_tasks = []
+    for ri in range(M):
+        nnza = (Ad[ri] >> 16) & 0xFFFF
+        st   = (Ad[ri] >> 32) & 0xFFFFFFFF
+        if Bd is not None:
+            t = sum((Bd[Ac[st + ti] & 0xFFFF]) & 0xFFFF for ti in range(nnza))
+        else:
+            t = nnza
+        row_tasks.append(t)
+
+    total = sum(row_tasks)
+    avg   = total / n_pe if n_pe > 0 else 0
+
+    pe_tasks   = [0] * n_pe
+    assignment = [0]  * M
+    remaining  = []
+    cur_pe     = 0
+
+    # Phase 1: sequential greedy
+    for ri in range(M):
+        # Advance to next PE if this row would push current PE past average
+        if cur_pe < n_pe and pe_tasks[cur_pe] + row_tasks[ri] > avg:
+            cur_pe += 1
+        if cur_pe < n_pe:
+            assignment[ri] = cur_pe
+            pe_tasks[cur_pe] += row_tasks[ri]
+        else:
+            remaining.append(ri)
+
+    # Phase 2: each leftover row → PE with current minimum task count
+    for ri in remaining:
+        pid = min(range(n_pe), key=lambda p: pe_tasks[p])
+        assignment[ri] = pid
+        pe_tasks[pid] += row_tasks[ri]
+
+    # Build output arrays
     pe_desc = [[] for _ in range(n_pe)]
     pe_col  = [[] for _ in range(n_pe)]
     pe_val  = [[] for _ in range(n_pe)]
     for ri in range(M):
-        pid          = ri % n_pe
+        pid          = assignment[ri]
         global_row   = Ad[ri] & 0xFFFF
         nnz          = (Ad[ri] >> 16) & 0xFFFF
         global_start = (Ad[ri] >> 32) & 0xFFFFFFFF
@@ -349,6 +393,7 @@ def partition_a(Ad, Ac, Av, M, n_pe):
             pe_col[pid].append(Ac[global_start + t])
             pe_val[pid].append(Av[global_start + t])
         pe_desc[pid].append((local_off << 32) | (nnz << 16) | global_row)
+
     return pe_desc, pe_col, pe_val
 
 async def LAd_pe(dut, pid, Ad, Ac, Av):
@@ -443,7 +488,7 @@ async def test_comp_case1_cluster(dut):
     dut._log.info("%d-PE CLUSTER TEST: A(%d,%d) x B(%d,%d) -> C(%d,%d)",
                   n_pe, M, K, K2, N, M, N)
 
-    pe_desc, pe_col, pe_val = partition_a(Ad, Ac, Av, M, n_pe)
+    pe_desc, pe_col, pe_val = partition_a(Ad, Ac, Av, M, n_pe, Bd)
     row_counts = [len(pe_desc[p]) for p in range(n_pe)]
     dut._log.info("Row distribution: %s", "  ".join(f"PE{p}={row_counts[p]}" for p in range(n_pe)))
 

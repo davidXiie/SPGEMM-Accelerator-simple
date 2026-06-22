@@ -143,7 +143,7 @@ module row_accumulator_4bank #(
     // =========================================================================
     // Bank signals
     // =========================================================================
-    wire [3:0]         free_b0, free_b1, free_b2, free_b3;
+    wire [BANK_FIFO_LOG:0] free_b0, free_b1, free_b2, free_b3;
     wire               rmw_b0,  rmw_b1,  rmw_b2,  rmw_b3;
     wire               emp_b0,  emp_b1,  emp_b2,  emp_b3;
     wire               clr_b0,  clr_b1,  clr_b2,  clr_b3;
@@ -228,6 +228,25 @@ module row_accumulator_4bank #(
 
     wire cur_valid_entry = (sel_tag == row_epoch) && (sel_acc != {ACC_W{1'b0}});
 
+    // All four banks for the current group_addr are readable simultaneously.
+    // Use them to detect entirely empty groups and skip in one cycle instead of four.
+    wire grp_v0 = (dtag_b0 == row_epoch) && (dacc_b0 != {ACC_W{1'b0}});
+    wire grp_v1 = (dtag_b1 == row_epoch) && (dacc_b1 != {ACC_W{1'b0}});
+    wire grp_v2 = (dtag_b2 == row_epoch) && (dacc_b2 != {ACC_W{1'b0}});
+    wire grp_v3 = (dtag_b3 == row_epoch) && (dacc_b3 != {ACC_W{1'b0}});
+    wire grp_any = grp_v0 | grp_v1 | grp_v2 | grp_v3;
+
+    // Next valid bank strictly after current bank_sel (for bank-skip in drain)
+    wire nv1 = (bank_sel < 2'd1) && grp_v1;
+    wire nv2 = (bank_sel < 2'd2) && grp_v2;
+    wire nv3 = (bank_sel < 2'd3) && grp_v3;
+    wire       nv_has_more = nv1 | nv2 | nv3;
+    wire [1:0] nv_next     = nv1 ? 2'd1 : nv2 ? 2'd2 : 2'd3;
+
+    wire [COL_W:0]         drain_cols_m1   = drain_cols - 1'b1;
+    wire [BANK_ADDR_W-1:0] last_group_addr = drain_cols_m1[COL_W-1:2];
+    wire last_group = (group_addr == last_group_addr);
+
     // =========================================================================
     // Sequential FSM
     // =========================================================================
@@ -283,7 +302,7 @@ module row_accumulator_4bank #(
                 // --------------------------------------------------------
                 S_DRAIN: begin
                     if (drain_emit) begin
-                        // Holding output for downstream handshake
+                        // Holding output: wait for downstream handshake
                         out_valid  <= 1'b1;
                         out_row_id <= cur_row_id;
                         out_col_id <= {group_addr, bank_sel};
@@ -294,31 +313,49 @@ module row_accumulator_4bank #(
                             drain_emit <= 1'b0;
                             if (last_cell) begin
                                 state <= S_DONE;
-                            end else if (bank_sel == 2'd3) begin
+                            end else if (nv_has_more) begin
+                                bank_sel <= nv_next;       // jump to next valid bank
+                            end else begin
                                 bank_sel   <= 2'd0;
                                 group_addr <= group_addr + {{(BANK_ADDR_W-1){1'b0}}, 1'b1};
-                            end else begin
-                                bank_sel <= bank_sel + 2'd1;
                             end
                         end
 
                     end else begin
                         // Scan: check current (group_addr, bank_sel)
                         if (cur_valid_entry) begin
-                            drain_emit <= 1'b1;
                             out_valid  <= 1'b1;
                             out_row_id <= cur_row_id;
                             out_col_id <= {group_addr, bank_sel};
                             out_value  <= sel_acc;
+                            if (out_ready) begin
+                                // Accepted immediately — no drain_emit stall needed
+                                if (last_cell) begin
+                                    state <= S_DONE;
+                                end else if (nv_has_more) begin
+                                    bank_sel <= nv_next;
+                                end else begin
+                                    bank_sel   <= 2'd0;
+                                    group_addr <= group_addr + {{(BANK_ADDR_W-1){1'b0}}, 1'b1};
+                                end
+                            end else begin
+                                drain_emit <= 1'b1;        // backpressure: hold
+                            end
                         end else begin
-                            // Not valid: skip to next cell
+                            // Not valid: skip
                             if (last_cell) begin
                                 state <= S_DONE;
-                            end else if (bank_sel == 2'd3) begin
+                            end else if (bank_sel == 2'd0 && !grp_any) begin
+                                // All four banks empty — group skip
+                                if (last_group)
+                                    state <= S_DONE;
+                                else
+                                    group_addr <= group_addr + {{(BANK_ADDR_W-1){1'b0}}, 1'b1};
+                            end else if (nv_has_more) begin
+                                bank_sel <= nv_next;       // jump to next valid bank
+                            end else begin
                                 bank_sel   <= 2'd0;
                                 group_addr <= group_addr + {{(BANK_ADDR_W-1){1'b0}}, 1'b1};
-                            end else begin
-                                bank_sel <= bank_sel + 2'd1;
                             end
                         end
                     end

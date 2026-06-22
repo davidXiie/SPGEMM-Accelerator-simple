@@ -131,7 +131,7 @@ module sync_fifo #(
     reg [WIDTH-1:0] mem [0:DEPTH-1];
     reg [DEPTH_LOG:0] wr_ptr, rd_ptr;
 
-    assign count    = (wr_ptr >= rd_ptr) ? (wr_ptr - rd_ptr) : (DEPTH + wr_ptr - rd_ptr);
+    assign count    = wr_ptr - rd_ptr;
     assign wr_full  = (count >= DEPTH);
     assign rd_empty = (count == 0);
     assign rd_data  = mem[rd_ptr[DEPTH_LOG-1:0]];

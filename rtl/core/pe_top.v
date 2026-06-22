@@ -140,6 +140,7 @@ module pe_top #(
     //=========================================================================
     reg [`DATA_WIDTH-1:0]   a_nnz_left;
     reg [`OFFSET_WIDTH-1:0] a_ptr;
+    wire [`A_NNZ_ADDR_BITS-1:0] a_ptr_next = a_ptr[`A_NNZ_ADDR_BITS-1:0] + 1'b1;
     reg [`DATA_WIDTH-1:0]   cur_k;
     reg [`DATA_WIDTH-1:0]   cur_a_val;
 
@@ -183,7 +184,8 @@ module pe_top #(
     wire task_group_wr_en   = stream_group_valid && !task_fifo_full;
     wire [`TASK_GROUP_WIDTH-1:0] task_group_wr_data = {sg3, sg2, sg1, sg0, stream_lane_valid};
 
-    wire b_batch_done = (state == PE_STREAM_B_ROW) && (b_nnz_left == 0);
+    wire b_last_group_fires = task_group_wr_en && (b_nnz_left <= 16'd4);
+    wire b_batch_done       = (state == PE_STREAM_B_ROW) && (b_nnz_left == 0 || b_last_group_fires);
 
     //=========================================================================
     // Task Group FIFO → MAC Array
@@ -327,7 +329,7 @@ module pe_top #(
 
     row_accumulator_4bank #(
         .OUT_COLS(512), .COL_W(9), .PROD_W(`DATA_WIDTH),
-        .ACC_W(32), .EPOCH_W(16), .BANK_FIFO_DEPTH(8), .BANK_FIFO_LOG(3), .ROW_W(16)
+        .ACC_W(32), .EPOCH_W(16), .BANK_FIFO_DEPTH(32), .BANK_FIFO_LOG(5), .ROW_W(16)
     ) u_row_acc_0 (
         .clk(aclk), .rst_n(aresetn),
         .row_start(acc_row_start_0), .row_id_in(cur_global_row), .drain_cols(N),
@@ -340,7 +342,7 @@ module pe_top #(
 
     row_accumulator_4bank #(
         .OUT_COLS(512), .COL_W(9), .PROD_W(`DATA_WIDTH),
-        .ACC_W(32), .EPOCH_W(16), .BANK_FIFO_DEPTH(8), .BANK_FIFO_LOG(3), .ROW_W(16)
+        .ACC_W(32), .EPOCH_W(16), .BANK_FIFO_DEPTH(32), .BANK_FIFO_LOG(5), .ROW_W(16)
     ) u_row_acc_1 (
         .clk(aclk), .rst_n(aresetn),
         .row_start(acc_row_start_1), .row_id_in(cur_global_row), .drain_cols(N),
@@ -418,24 +420,38 @@ module pe_top #(
                 PE_CLEAR_ACC: ; // acc_row_start pulse from combinational wire
 
                 PE_LOAD_A_ELEM: begin
-                    cur_k     <= A_col_buf[a_ptr[`A_NNZ_ADDR_BITS-1:0]];
-                    cur_a_val <= A_val_buf[a_ptr[`A_NNZ_ADDR_BITS-1:0]];
-                end
-
-                PE_LOAD_B_DESC: begin
-                    b_row_desc_reg <= B_row_desc_buf[cur_k[`B_ROW_ADDR_BITS-1:0]];
-                    b_ptr          <= B_row_desc_buf[cur_k[`B_ROW_ADDR_BITS-1:0]][63:32];
-                    b_nnz_left     <= B_row_desc_buf[cur_k[`B_ROW_ADDR_BITS-1:0]][15:0];
+                    cur_k          <= A_col_buf[a_ptr[`A_NNZ_ADDR_BITS-1:0]];
+                    cur_a_val      <= A_val_buf[a_ptr[`A_NNZ_ADDR_BITS-1:0]];
+                    // Cascade: use combinational A_col_buf read as B_row_desc_buf index.
+                    // Eliminates PE_LOAD_B_DESC state — 4-cycle setup → 1-cycle setup.
+                    b_row_desc_reg <= B_row_desc_buf[A_col_buf[a_ptr[`A_NNZ_ADDR_BITS-1:0]][`B_ROW_ADDR_BITS-1:0]];
+                    b_ptr          <= B_row_desc_buf[A_col_buf[a_ptr[`A_NNZ_ADDR_BITS-1:0]][`B_ROW_ADDR_BITS-1:0]][63:32];
+                    b_nnz_left     <= B_row_desc_buf[A_col_buf[a_ptr[`A_NNZ_ADDR_BITS-1:0]][`B_ROW_ADDR_BITS-1:0]][15:0];
                 end
 
                 PE_STREAM_B_ROW: begin
-                    // Advance b_ptr by 4 each time a group is written to FIFO
                     if (!task_fifo_full && b_nnz_left != 0) begin
-                        b_ptr      <= b_ptr + 4;
-                        b_nnz_left <= (b_nnz_left >= 16'd4) ? (b_nnz_left - 16'd4) : 16'd0;
-                    end
-                    // When B row exhausted, advance to next A element
-                    if (b_nnz_left == 0 && a_nnz_left > 0) begin
+                        if (b_nnz_left > 16'd4) begin
+                            // Middle group: advance b_ptr
+                            b_ptr      <= b_ptr + 4;
+                            b_nnz_left <= b_nnz_left - 16'd4;
+                        end else begin
+                            // Last group fires: advance A pointer
+                            a_ptr      <= a_ptr + 1;
+                            a_nnz_left <= a_nnz_left - 1;
+                            if (a_nnz_left > 1) begin
+                                // Prefetch next A element so LOAD_A_ELEM is skipped.
+                                cur_k          <= A_col_buf[a_ptr_next];
+                                cur_a_val      <= A_val_buf[a_ptr_next];
+                                b_row_desc_reg <= B_row_desc_buf[A_col_buf[a_ptr_next][`B_ROW_ADDR_BITS-1:0]];
+                                b_ptr          <= B_row_desc_buf[A_col_buf[a_ptr_next][`B_ROW_ADDR_BITS-1:0]][63:32];
+                                b_nnz_left     <= B_row_desc_buf[A_col_buf[a_ptr_next][`B_ROW_ADDR_BITS-1:0]][15:0];
+                            end else begin
+                                b_nnz_left <= 16'd0;
+                            end
+                        end
+                    end else if (b_nnz_left == 0 && a_nnz_left > 0) begin
+                        // Empty B row: advance a_ptr, go through LOAD_A_ELEM
                         a_ptr      <= a_ptr + 1;
                         a_nnz_left <= a_nnz_left - 1;
                     end
@@ -485,18 +501,17 @@ module pe_top #(
                     state_next = PE_LOAD_A_ELEM;
 
             PE_LOAD_A_ELEM:
-                if (state_stable) state_next = PE_LOAD_B_DESC;
-
-            PE_LOAD_B_DESC:
-                if (state_stable) state_next = PE_STREAM_B_ROW;
+                state_next = PE_STREAM_B_ROW;  // 1-cycle setup: no state_stable wait
 
             PE_STREAM_B_ROW:
                 if (b_batch_done) begin
-                    // a_nnz_left is being decremented this same cycle (sequential
-                    // non-blocking fires at same edge). Old value 1 means it will
-                    // become 0 — no more A elements → drain.
-                    if (a_nnz_left <= 1) state_next = PE_WAIT_TASK_DRAIN;
-                    else                 state_next = PE_LOAD_A_ELEM;
+                    // a_nnz_left pre-decrement: value 1 → will become 0 after edge.
+                    if (a_nnz_left <= 1)
+                        state_next = PE_WAIT_TASK_DRAIN;
+                    else if (b_last_group_fires)
+                        state_next = PE_STREAM_B_ROW;  // prefetched, skip LOAD_A_ELEM
+                    else
+                        state_next = PE_LOAD_A_ELEM;   // empty B row still needs setup
                 end
 
             PE_WAIT_TASK_DRAIN:
@@ -549,6 +564,10 @@ module pe_top #(
                     _pc3==53||_pc3==56||_pc3==69||_pc3==73||_pc3==30);
 
     always @(posedge aclk) begin
+        // 0. Alert on dropped products (product_fifo_full when MAC output valid)
+        if ((|mul_valid) && product_fifo_full)
+            $display("[PROD_DROP @%0t] mul_valid=%b pf_cnt=%0d", $time, mul_valid, product_fifo_cnt);
+
         // 1. Task group into FIFO — check if target col is present
         if (task_group_wr_en && _tg_hit)
             $display("[TG_WR @%0t row=%0d] valid=%b cols=%0d/%0d/%0d/%0d bnz=%0d fifo_full=%b",

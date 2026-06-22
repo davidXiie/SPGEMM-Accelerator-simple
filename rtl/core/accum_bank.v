@@ -25,7 +25,7 @@ module accum_bank #(
     input  wire [3:0]                   wr_valid,
     input  wire [4*BANK_ADDR_W-1:0]     wr_addr_flat,  // {addr3,addr2,addr1,addr0}
     input  wire [4*PROD_W-1:0]          wr_data_flat,  // {dat3,dat2,dat1,dat0}
-    output wire [3:0]                   free_count,    // 0..FIFO_DEPTH
+    output wire [FIFO_DEPTH_LOG:0]      free_count,    // 0..FIFO_DEPTH
 
     output wire                         rmw_busy,
     output wire                         fifo_empty,
@@ -74,7 +74,7 @@ module accum_bank #(
     wire [FIFO_DEPTH_LOG-1:0] waddr3 = fifo_tail + slot3;
 
     assign fifo_empty  = (fifo_cnt == {(FIFO_DEPTH_LOG+1){1'b0}});
-    assign free_count  = FIFO_DEPTH[3:0] - fifo_cnt[3:0];
+    assign free_count  = FIFO_DEPTH[FIFO_DEPTH_LOG:0] - fifo_cnt;
 
     // =========================================================================
     // Tag & accumulator memories
@@ -86,22 +86,28 @@ module accum_bank #(
     assign drain_acc = acc_mem[drain_rd_addr];
 
     // =========================================================================
-    // RMW pipeline
+    // RMW pipeline — 2 stages, 1 entry/cycle throughput
+    //   S1: fetch addr+prod from FIFO, compute new value combinationally
+    //   S2: write result to tag_mem/acc_mem
+    //   Forwarding: if S1 and S2 target the same address, bypass memory reads
     // =========================================================================
-    localparam RMW_IDLE  = 2'd0;
-    localparam RMW_READ  = 2'd1;
-    localparam RMW_ADD   = 2'd2;
-    localparam RMW_WRITE = 2'd3;
+    reg                   s1_valid;
+    reg [BANK_ADDR_W-1:0] s1_addr;
+    reg [PROD_W-1:0]      s1_prod;
 
-    reg [1:0]              rmw_st;
-    reg [BANK_ADDR_W-1:0]  rmw_addr;
-    reg [PROD_W-1:0]       rmw_prod;
-    reg [ACC_W-1:0]        rmw_old;
-    reg [EPOCH_W-1:0]      rmw_old_tag;
-    reg [ACC_W-1:0]        rmw_new;
+    reg                   s2_valid;
+    reg [BANK_ADDR_W-1:0] s2_addr;
+    reg [ACC_W-1:0]       s2_new_val;
 
-    wire deq_fire = !fifo_empty && (rmw_st == RMW_IDLE);
-    assign rmw_busy = (rmw_st != RMW_IDLE);
+    wire deq_fire = !fifo_empty;
+    assign rmw_busy = s1_valid | s2_valid;
+
+    wire               s12_hazard   = s1_valid && s2_valid && (s1_addr == s2_addr);
+    wire [ACC_W-1:0]   s1_old_acc   = s12_hazard ? s2_new_val : acc_mem[s1_addr];
+    wire               s1_epoch_hit = s12_hazard ? 1'b1       : (tag_mem[s1_addr] == row_epoch);
+    wire [ACC_W-1:0]   s1_new_val   = s1_epoch_hit
+        ? (s1_old_acc + {{(ACC_W-PROD_W){s1_prod[PROD_W-1]}}, s1_prod})
+        : {{(ACC_W-PROD_W){s1_prod[PROD_W-1]}}, s1_prod};
 
     // =========================================================================
     // Tag clear
@@ -136,7 +142,7 @@ module accum_bank #(
                 fifo_mem[waddr3] <= {wr_addr_flat[3*BANK_ADDR_W +: BANK_ADDR_W],
                                      wr_data_flat[3*PROD_W      +: PROD_W]};
 
-            fifo_tail <= fifo_tail + wr_cnt[FIFO_DEPTH_LOG-1:0];
+            fifo_tail <= fifo_tail + wr_cnt;
 
             if (deq_fire)
                 fifo_head <= fifo_head + {{(FIFO_DEPTH_LOG-1){1'b0}}, 1'b1};
@@ -148,46 +154,32 @@ module accum_bank #(
         end
     end
 
-    // =========================================================================
-    // RMW pipeline
-    // =========================================================================
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            rmw_st      <= RMW_IDLE;
-            rmw_addr    <= {BANK_ADDR_W{1'b0}};
-            rmw_prod    <= {PROD_W{1'b0}};
-            rmw_old     <= {ACC_W{1'b0}};
-            rmw_old_tag <= {EPOCH_W{1'b0}};
-            rmw_new     <= {ACC_W{1'b0}};
+            s1_valid   <= 1'b0;
+            s1_addr    <= {BANK_ADDR_W{1'b0}};
+            s1_prod    <= {PROD_W{1'b0}};
+            s2_valid   <= 1'b0;
+            s2_addr    <= {BANK_ADDR_W{1'b0}};
+            s2_new_val <= {ACC_W{1'b0}};
         end else begin
-            case (rmw_st)
-                RMW_IDLE: begin
-                    if (deq_fire) begin
-                        rmw_addr <= fifo_mem[fifo_head][ENTRY_W-1 -: BANK_ADDR_W];
-                        rmw_prod <= fifo_mem[fifo_head][PROD_W-1:0];
-                        rmw_st   <= RMW_READ;
-                    end
-                end
-                RMW_READ: begin
-                    rmw_old_tag <= tag_mem[rmw_addr];
-                    rmw_old     <= acc_mem[rmw_addr];
-                    rmw_st      <= RMW_ADD;
-                end
-                RMW_ADD: begin
-                    if (rmw_old_tag != row_epoch)
-                        rmw_new <= {{(ACC_W-PROD_W){rmw_prod[PROD_W-1]}}, rmw_prod};
-                    else
-                        rmw_new <= rmw_old
-                                 + {{(ACC_W-PROD_W){rmw_prod[PROD_W-1]}}, rmw_prod};
-                    rmw_st <= RMW_WRITE;
-                end
-                RMW_WRITE: begin
-                    tag_mem[rmw_addr] <= row_epoch;
-                    acc_mem[rmw_addr] <= rmw_new;
-                    rmw_st            <= RMW_IDLE;
-                end
-                default: rmw_st <= RMW_IDLE;
-            endcase
+            // S2: write result to memories
+            if (s2_valid) begin
+                tag_mem[s2_addr] <= row_epoch;
+                acc_mem[s2_addr] <= s2_new_val;
+            end
+            // Advance S1 → S2
+            s2_valid   <= s1_valid;
+            s2_addr    <= s1_addr;
+            s2_new_val <= s1_new_val;
+            // Dequeue FIFO → S1
+            if (deq_fire) begin
+                s1_valid <= 1'b1;
+                s1_addr  <= fifo_mem[fifo_head][ENTRY_W-1 -: BANK_ADDR_W];
+                s1_prod  <= fifo_mem[fifo_head][PROD_W-1:0];
+            end else begin
+                s1_valid <= 1'b0;
+            end
         end
     end
 

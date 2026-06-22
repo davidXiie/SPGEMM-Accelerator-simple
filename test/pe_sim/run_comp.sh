@@ -78,7 +78,7 @@ echo "========================================"
 mkdir -p sim_build
 
 iverilog -g2012 \
-    -DCOCOTB_SIM=1 -DSIMULATION \
+    -DCOCOTB_SIM=1 \
     -I"$PROJ_ROOT/rtl/include" \
     -s "$COCOTB_TOPLEVEL" \
     -o sim_build/sim.vvp \
