@@ -1,9 +1,9 @@
 <testsuites name="results">
   <testsuite name="all" package="all">
-    <property name="random_seed" value="1782094292" />
-    <testcase name="test_comp_case1_p0" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="161" time="37.995607137680054" sim_time_ns="4279810.0" ratio_time="112639.60026988841" />
-    <testcase name="test_comp_case1_p1" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="217" time="0" sim_time_ns="0" ratio_time="0">
+    <property name="random_seed" value="1782102989" />
+    <testcase name="test_comp_case1_p0" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="182" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>
+    <testcase name="test_comp_case1_p1" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="239" time="1.1350440979003906" sim_time_ns="99250.0" ratio_time="87441.53657429968" />
   </testsuite>
 </testsuites>

@@ -31,6 +31,7 @@ module row_accumulator_4bank #(
     // Row control
     input  wire                   row_start,
     input  wire [ROW_W-1:0]       row_id_in,
+    input  wire [COL_W:0]         drain_cols,   // actual output columns (1..OUT_COLS); drain stops at col drain_cols-1
     input  wire                   row_input_done,
     output reg                    busy,
     output reg                    row_done,
@@ -152,6 +153,11 @@ module row_accumulator_4bank #(
     wire tag_clear_pulse = (state == S_CLEAR_TAGS) && !clr_triggered;
     wire [BANK_ADDR_W-1:0] drain_rd_addr = group_addr;
 
+    // Early drain termination: stop at col (drain_cols-1) instead of always scanning all OUT_COLS.
+    // cur_col_id = {group_addr, bank_sel} encodes the column being inspected.
+    wire [COL_W-1:0] cur_col_id = {group_addr, bank_sel};
+    wire last_cell = ({1'b0, cur_col_id} + {{COL_W{1'b0}}, 1'b1} == drain_cols);
+
     accum_bank #(
         .BANK_DEPTH(BANK_DEPTH), .BANK_ADDR_W(BANK_ADDR_W),
         .PROD_W(PROD_W), .ACC_W(ACC_W), .EPOCH_W(EPOCH_W),
@@ -221,8 +227,6 @@ module row_accumulator_4bank #(
                                  (bank_sel==2'd2) ? dacc_b2 : dacc_b3;
 
     wire cur_valid_entry = (sel_tag == row_epoch) && (sel_acc != {ACC_W{1'b0}});
-    wire last_cell = (bank_sel == 2'd3) &&
-                     (group_addr == BANK_LAST[BANK_ADDR_W-1:0]);
 
     // =========================================================================
     // Sequential FSM

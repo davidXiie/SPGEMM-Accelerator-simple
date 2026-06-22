@@ -77,6 +77,17 @@ def load_comp_matrix(index_file, matrix_file, is_B=False):
             cur_row += 1; row_nnz = 0
         return row_desc, col_arr, val_arr, offset, B_rows, B_cols
 
+def count_total_macs(Ad, Ac, Bd, M):
+    """Exact count of MAC operations: for each A[i,k] nonzero, add B row k's nnz."""
+    total = 0
+    for ri in range(M):
+        nnza = (Ad[ri] >> 16) & 0xFFFF
+        st   = (Ad[ri] >> 32) & 0xFFFFFFFF
+        for t in range(nnza):
+            k = Ac[st + t] & 0xFFFF
+            total += Bd[k] & 0xFFFF
+    return total
+
 def compute_golden_c(A_desc, A_col, A_val, B_desc, B_col, B_val, M, N, K):
     """Integer golden C = A × B."""
     C = [[0] * MAX_N for _ in range(MAX_N)]
@@ -132,17 +143,27 @@ async def rst(dut):
 
 async def run_pe(dut, rc, to=10000000):
     dut.row_count.value=rc;dut.cbuf_wr_ready.value=1;dut.start.value=1;await RisingEdge(dut.aclk);dut.start.value=0
-    cp={};dc=0
+    cp={};dc=0;lane_busy=[0,0,0,0];rmw_busy=[0,0,0,0]
+    mac_sig  = dut.u_pe.mac_lane_valid
+    # ping-pong: combine bank stats from both accumulators (at most one draining at a time)
+    rmw_sigs_0 = [dut.u_pe.u_row_acc_0.rmw_b0, dut.u_pe.u_row_acc_0.rmw_b1,
+                  dut.u_pe.u_row_acc_0.rmw_b2, dut.u_pe.u_row_acc_0.rmw_b3]
+    rmw_sigs_1 = [dut.u_pe.u_row_acc_1.rmw_b0, dut.u_pe.u_row_acc_1.rmw_b1,
+                  dut.u_pe.u_row_acc_1.rmw_b2, dut.u_pe.u_row_acc_1.rmw_b3]
     for cy in range(to):
         await RisingEdge(dut.aclk)
         if dut.cbuf_wr_valid.value and dut.cbuf_wr_ready.value: cp[int(dut.cbuf_wr_addr.value)]=int(dut.cbuf_wr_data.value)
+        mlv = int(mac_sig.value)
+        for i in range(4):
+            if (mlv >> i) & 1: lane_busy[i] += 1
+            if int(rmw_sigs_0[i].value) or int(rmw_sigs_1[i].value): rmw_busy[i] += 1
         if int(dut.done.value): dc=cy;break
     else: assert False,f"timeout {to}"
     await ClockCycles(dut.aclk,50)
     for _ in range(100):
         await RisingEdge(dut.aclk)
         if dut.cbuf_wr_valid.value and dut.cbuf_wr_ready.value: cp[int(dut.cbuf_wr_addr.value)]=int(dut.cbuf_wr_data.value)
-    return cp,dc
+    return cp,dc,lane_busy,rmw_busy
 
 def verify(dut, M, N, Ad, gf, cp):
     e=0;nz_ok=0;z_ok=0
@@ -184,7 +205,7 @@ async def test_comp_case1_p0(dut):
     await LBd(dut, Bd, Bc, Bv)
 
     dut._log.info("Starting PE, row_count=%d...", M)
-    cp, cyc = await run_pe(dut, M, to=50000000)
+    cp, cyc, lane_busy, rmw_busy = await run_pe(dut, M, to=50000000)
 
     dut._log.info("PE done at cycle %d, captured %d writes", cyc, len(cp))
 
@@ -195,21 +216,22 @@ async def test_comp_case1_p0(dut):
     assert e == 0, f"{e} mismatches"
 
     # Stats
-    nz_C = len(gv)
-    overhead_cyc = M * 20
-    compute_cyc = max(0, cyc - overhead_cyc - nz_C)
-    total_products = An * (Bn / K)
-    mac_util_pct = total_products / (compute_cyc * 4) * 100 if compute_cyc > 0 else 0
+    total_macs = count_total_macs(Ad, Ac, Bd, M)
+    lane_utils = [lb / cyc * 100 if cyc > 0 else 0.0 for lb in lane_busy]
+    rmw_utils  = [rb / cyc * 100 if cyc > 0 else 0.0 for rb in rmw_busy]
 
     dut._log.info("=" * 70)
-    dut._log.info("STATISTICS (4-bank accumulator):")
-    dut._log.info("  Total cycles:        %d", cyc)
-    dut._log.info("  FSM overhead (est):  %d (%.1f%%)", overhead_cyc, 100*overhead_cyc/cyc)
-    dut._log.info("  Writeback cycles:    %d (%.1f%%, sparse=%d entries)", nz_C, 100*nz_C/cyc, nz_C)
-    dut._log.info("  Compute cycles:      %d (%.1f%%)", compute_cyc, 100*compute_cyc/cyc)
-    dut._log.info("  Estimated products:  %.0f", total_products)
-    dut._log.info("  MAC utilization:     %.1f%% (4 MACs)", mac_util_pct)
-    dut._log.info("  (old design: M*512=%d clear + M*512=%d writeback)", M*512, M*512)
+    dut._log.info("STATISTICS:")
+    dut._log.info("  Total cycles:      %d", cyc)
+    dut._log.info("  Total MAC ops:     %d  (exact)", total_macs)
+    dut._log.info("  Per-lane MAC utilization (mac_lane_valid):")
+    for i in range(4):
+        dut._log.info("    Lane %d: %6d busy cycles  →  %.2f%%", i, lane_busy[i], lane_utils[i])
+    dut._log.info("  Average MAC util:  %.2f%%", sum(lane_utils) / 4)
+    dut._log.info("  Per-bank accumulator RMW utilization (rmw_busy):")
+    for i in range(4):
+        dut._log.info("    Bank %d: %6d RMW cycles   →  %.2f%%", i, rmw_busy[i], rmw_utils[i])
+    dut._log.info("  Average RMW util:  %.2f%%", sum(rmw_utils) / 4)
     dut._log.info("=" * 70)
     dut._log.info("COMPETITION TEST PASSED")
 
@@ -240,7 +262,7 @@ async def test_comp_case1_p1(dut):
     await LBd(dut, Bd, Bc, Bv)
 
     dut._log.info("Starting PE, row_count=%d...", M)
-    cp, cyc = await run_pe(dut, M, to=10000000)
+    cp, cyc, lane_busy, rmw_busy = await run_pe(dut, M, to=10000000)
 
     dut._log.info("PE done at cycle %d, captured %d writes", cyc, len(cp))
 
@@ -250,21 +272,22 @@ async def test_comp_case1_p1(dut):
     dut._log.info("Verification: total=%d, nz_ok=%d, z_ok=%d, errors=%d", total, nz_ok, z_ok, e)
     assert e == 0, f"{e} mismatches"
 
-    # Compute stats (new 4-bank accumulator: no per-row clear, sparse writeback)
-    nz_C = len(gv)          # non-zero C entries actually written
-    overhead_cyc = M * 20   # estimated FSM overhead (load/desc states)
-    compute_cyc = max(0, cyc - overhead_cyc - nz_C)
-    total_products = An * (Bn / K)  # rough estimate
-    mac_util_pct = total_products / (compute_cyc * 4) * 100 if compute_cyc > 0 else 0
+    # Stats
+    total_macs = count_total_macs(Ad, Ac, Bd, M)
+    lane_utils = [lb / cyc * 100 if cyc > 0 else 0.0 for lb in lane_busy]
+    rmw_utils  = [rb / cyc * 100 if cyc > 0 else 0.0 for rb in rmw_busy]
 
     dut._log.info("=" * 70)
-    dut._log.info("STATISTICS (4-bank accumulator):")
-    dut._log.info("  Total cycles:        %d", cyc)
-    dut._log.info("  FSM overhead (est):  %d (%.1f%%)", overhead_cyc, 100*overhead_cyc/cyc)
-    dut._log.info("  Writeback cycles:    %d (%.1f%%, sparse=%d entries)", nz_C, 100*nz_C/cyc, nz_C)
-    dut._log.info("  Compute cycles:      %d (%.1f%%)", compute_cyc, 100*compute_cyc/cyc)
-    dut._log.info("  Estimated products:  %.0f", total_products)
-    dut._log.info("  MAC utilization:     %.1f%% (4 MACs)", mac_util_pct)
-    dut._log.info("  (old design used M*512=%d clear + M*512=%d writeback cycles)", M*512, M*512)
+    dut._log.info("STATISTICS:")
+    dut._log.info("  Total cycles:      %d", cyc)
+    dut._log.info("  Total MAC ops:     %d  (exact)", total_macs)
+    dut._log.info("  Per-lane MAC utilization (mac_lane_valid):")
+    for i in range(4):
+        dut._log.info("    Lane %d: %6d busy cycles  →  %.2f%%", i, lane_busy[i], lane_utils[i])
+    dut._log.info("  Average MAC util:  %.2f%%", sum(lane_utils) / 4)
+    dut._log.info("  Per-bank accumulator RMW utilization (rmw_busy):")
+    for i in range(4):
+        dut._log.info("    Bank %d: %6d RMW cycles   →  %.2f%%", i, rmw_busy[i], rmw_utils[i])
+    dut._log.info("  Average RMW util:  %.2f%%", sum(rmw_utils) / 4)
     dut._log.info("=" * 70)
     dut._log.info("COMPETITION TEST PASSED")
