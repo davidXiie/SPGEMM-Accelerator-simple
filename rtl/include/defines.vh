@@ -21,7 +21,7 @@
 //=============================================================================
 // PE & MAC Configuration
 //=============================================================================
-`define N_PE          1
+`define N_PE          2       // cluster size — change here to scale
 `define N_MAC         4
 `define N_MAC_BITS    2       // log2(4)
 

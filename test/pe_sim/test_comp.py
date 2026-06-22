@@ -77,6 +77,25 @@ def load_comp_matrix(index_file, matrix_file, is_B=False):
             cur_row += 1; row_nnz = 0
         return row_desc, col_arr, val_arr, offset, B_rows, B_cols
 
+def align_b_4wide(Bd, Bc, Bv):
+    """Pad each B row to ceil(nnz/4)*4 elements so b_ptr is always 4-aligned.
+    Padding elements use col=0, val=0 (harmless: products are 0 and lane_valid
+    masks them out).  Must be called before compute_golden_c and hardware load.
+    """
+    new_Bc = []; new_Bv = []; new_Bd = []; new_off = 0
+    for d in Bd:
+        start  = (d >> 32) & 0xFFFFFFFF
+        nnz    = d & 0xFFFF
+        new_Bd.append((new_off << 32) | nnz)
+        for t in range(nnz):
+            new_Bc.append(Bc[start + t])
+            new_Bv.append(Bv[start + t])
+        padded = ((nnz + 3) // 4) * 4
+        for _ in range(padded - nnz):
+            new_Bc.append(0); new_Bv.append(0)
+        new_off += padded
+    return new_Bd, new_Bc, new_Bv
+
 def count_total_macs(Ad, Ac, Bd, M):
     """Exact count of MAC operations: for each A[i,k] nonzero, add B row k's nnz."""
     total = 0
@@ -186,6 +205,7 @@ async def test_comp_case1_p0(dut):
     Ad, Ac, Av, An, M, K = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False)
     Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True)
     assert K == K2, f"K mismatch: {K} vs {K2}"
+    Bd, Bc, Bv = align_b_4wide(Bd, Bc, Bv)
 
     gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc, Bv, M, N, K)
 
@@ -243,6 +263,7 @@ async def test_comp_case1_p1(dut):
     Ad, Ac, Av, An, M, K = load_comp_matrix('A_1_Index.txt', 'A_1_Matrix.txt', False)
     Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_1_Index.txt', 'B_1_Matrix.txt', True)
     assert K == K2, f"K mismatch: {K} vs {K2}"
+    Bd, Bc, Bv = align_b_4wide(Bd, Bc, Bv)
 
     gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc, Bv, M, N, K)
 
@@ -292,20 +313,34 @@ async def test_comp_case1_p1(dut):
     dut._log.info("=" * 70)
     dut._log.info("COMPETITION TEST PASSED")
 
+
 #=========================================================================
-# 4-PE cluster helpers
+# Cluster helpers — packed-bus interface, N_PE-parametric
+#
+# All per-PE signals use packed buses: field for PE i is at bus[i*W +: W].
+# n_pe is read from dut.n_pe_sig so changing N_PE in defines.vh + recompile
+# is all that's needed — no Python constant to update.
+#
+# Width constants must stay in sync with defines.vh:
+_A_ROW_ADDR_W = 8    # A_ROW_ADDR_BITS
+_A_NNZ_ADDR_W = 14   # A_NNZ_ADDR_BITS
+_DATA_W       = 16   # DATA_WIDTH
+_B_ROW_ADDR_W = 9    # B_ROW_ADDR_BITS
+_B_NNZ_ADDR_W = 17   # B_NNZ_ADDR_BITS
+_C_DEPTH_LOG  = 18   # C_DENSE_DEPTH_LOG
 #=========================================================================
 
-def partition_a(Ad, Ac, Av, M, n_pe=4):
-    """Distribute A rows round-robin to n_pe PEs.
-    Each PE gets its own compacted col/val arrays with local offsets but
-    the original global row ID in desc[15:0] so cbuf_wr_addr is correct.
+def partition_a(Ad, Ac, Av, M, n_pe):
+    """Distribute A rows round-robin (row ri -> PE ri%n_pe).
+    Returns (pe_desc, pe_col, pe_val), each a list of n_pe arrays.
+    Descriptors keep the original global row ID in [15:0] so each PE's
+    cbuf_wr_addr computation produces correct global addresses.
     """
     pe_desc = [[] for _ in range(n_pe)]
     pe_col  = [[] for _ in range(n_pe)]
     pe_val  = [[] for _ in range(n_pe)]
     for ri in range(M):
-        pid = ri % n_pe
+        pid          = ri % n_pe
         global_row   = Ad[ri] & 0xFFFF
         nnz          = (Ad[ri] >> 16) & 0xFFFF
         global_start = (Ad[ri] >> 32) & 0xFFFFFFFF
@@ -317,17 +352,28 @@ def partition_a(Ad, Ac, Av, M, n_pe=4):
     return pe_desc, pe_col, pe_val
 
 async def LAd_pe(dut, pid, Ad, Ac, Av):
-    we_d = getattr(dut, f"a_desc_we_{pid}");  wa_d = getattr(dut, f"a_desc_waddr_{pid}"); wd_d = getattr(dut, f"a_desc_wdata_{pid}")
-    we_c = getattr(dut, f"a_col_we_{pid}");   wa_c = getattr(dut, f"a_col_waddr_{pid}");  wd_c = getattr(dut, f"a_col_wdata_{pid}")
-    we_v = getattr(dut, f"a_val_we_{pid}");   wa_v = getattr(dut, f"a_val_waddr_{pid}");  wd_v = getattr(dut, f"a_val_wdata_{pid}")
-    for i, d in enumerate(Ad): we_d.value=1; wa_d.value=i; wd_d.value=d; await RisingEdge(dut.aclk)
-    we_d.value = 0
-    for i, v in enumerate(Ac): we_c.value=1; wa_c.value=i; wd_c.value=v; await RisingEdge(dut.aclk)
-    we_c.value = 0
-    for i, v in enumerate(Av): we_v.value=1; wa_v.value=i; wd_v.value=v; await RisingEdge(dut.aclk)
-    we_v.value = 0
+    """Load A into PE pid via packed buses."""
+    for i, d in enumerate(Ad):
+        dut.a_desc_we.value    = 1 << pid
+        dut.a_desc_waddr.value = i << (pid * _A_ROW_ADDR_W)
+        dut.a_desc_wdata.value = d << (pid * 64)
+        await RisingEdge(dut.aclk)
+    dut.a_desc_we.value = 0; dut.a_desc_waddr.value = 0; dut.a_desc_wdata.value = 0
+    for i, v in enumerate(Ac):
+        dut.a_col_we.value    = 1 << pid
+        dut.a_col_waddr.value = i << (pid * _A_NNZ_ADDR_W)
+        dut.a_col_wdata.value = v << (pid * _DATA_W)
+        await RisingEdge(dut.aclk)
+    dut.a_col_we.value = 0; dut.a_col_waddr.value = 0; dut.a_col_wdata.value = 0
+    for i, v in enumerate(Av):
+        dut.a_val_we.value    = 1 << pid
+        dut.a_val_waddr.value = i << (pid * _A_NNZ_ADDR_W)
+        dut.a_val_wdata.value = v << (pid * _DATA_W)
+        await RisingEdge(dut.aclk)
+    dut.a_val_we.value = 0; dut.a_val_waddr.value = 0; dut.a_val_wdata.value = 0
 
 async def LBd_cluster(dut, Bd, Bc, Bv):
+    """Load B broadcast (single set of ports drives all PEs simultaneously)."""
     for i, d in enumerate(Bd): dut.b_desc_we.value=1; dut.b_desc_waddr.value=i; dut.b_desc_wdata.value=d; await RisingEdge(dut.aclk)
     dut.b_desc_we.value = 0
     for i, v in enumerate(Bc): dut.b_col_we.value=1; dut.b_col_waddr.value=i; dut.b_col_wdata.value=v; await RisingEdge(dut.aclk)
@@ -338,63 +384,77 @@ async def LBd_cluster(dut, Bd, Bc, Bv):
 async def rst_cluster(dut):
     dut.aresetn.value=0; cocotb.start_soon(Clock(dut.aclk,10,units='ns').start())
     await ClockCycles(dut.aclk,10); dut.aresetn.value=1; await ClockCycles(dut.aclk,5)
-    dut.start.value=0
-    for pid in range(4):
-        getattr(dut, f"row_count_{pid}").value  = 0
-        getattr(dut, f"cbuf_wr_ready_{pid}").value = 0
-        getattr(dut, f"a_desc_we_{pid}").value  = 0
-        getattr(dut, f"a_col_we_{pid}").value   = 0
-        getattr(dut, f"a_val_we_{pid}").value   = 0
-    dut.b_desc_we.value=0; dut.b_col_we.value=0; dut.b_val_we.value=0
+    dut.start.value       = 0
+    dut.row_count.value   = 0
+    dut.cbuf_wr_ready.value = 0
+    dut.a_desc_we.value   = 0; dut.a_desc_waddr.value = 0; dut.a_desc_wdata.value = 0
+    dut.a_col_we.value    = 0; dut.a_col_waddr.value  = 0; dut.a_col_wdata.value  = 0
+    dut.a_val_we.value    = 0; dut.a_val_waddr.value  = 0; dut.a_val_wdata.value  = 0
+    dut.b_desc_we.value   = 0; dut.b_col_we.value     = 0; dut.b_val_we.value     = 0
 
-async def run_cluster(dut, row_counts, to=50000000):
-    for pid in range(4):
-        getattr(dut, f"row_count_{pid}").value  = row_counts[pid]
-        getattr(dut, f"cbuf_wr_ready_{pid}").value = 1
+async def run_cluster(dut, row_counts, n_pe, to=50000000):
+    """Start all n_pe PEs, collect C from packed cbuf buses, return (cp, cycles)."""
+    rc_packed = sum(row_counts[p] << (p * 16) for p in range(n_pe))
+    dut.row_count.value    = rc_packed
+    dut.cbuf_wr_ready.value = (1 << n_pe) - 1
     dut.start.value=1; await RisingEdge(dut.aclk); dut.start.value=0
     cp = {}; dc = 0
+    addr_mask = (1 << _C_DEPTH_LOG) - 1
+    data_mask = (1 << _DATA_W) - 1
     for cy in range(to):
         await RisingEdge(dut.aclk)
-        for pid in range(4):
-            if getattr(dut, f"cbuf_wr_valid_{pid}").value and getattr(dut, f"cbuf_wr_ready_{pid}").value:
-                cp[int(getattr(dut, f"cbuf_wr_addr_{pid}").value)] = int(getattr(dut, f"cbuf_wr_data_{pid}").value)
+        vb = int(dut.cbuf_wr_valid.value)
+        rb = int(dut.cbuf_wr_ready.value)
+        ab = int(dut.cbuf_wr_addr.value)
+        db = int(dut.cbuf_wr_data.value)
+        for pid in range(n_pe):
+            if (vb >> pid) & 1 and (rb >> pid) & 1:
+                cp[(ab >> (pid * _C_DEPTH_LOG)) & addr_mask] = (db >> (pid * _DATA_W)) & data_mask
         if int(dut.done.value): dc=cy; break
     else:
         assert False, f"cluster timeout at {to} cycles"
     await ClockCycles(dut.aclk, 50)
     for _ in range(100):
         await RisingEdge(dut.aclk)
-        for pid in range(4):
-            if getattr(dut, f"cbuf_wr_valid_{pid}").value and getattr(dut, f"cbuf_wr_ready_{pid}").value:
-                cp[int(getattr(dut, f"cbuf_wr_addr_{pid}").value)] = int(getattr(dut, f"cbuf_wr_data_{pid}").value)
+        vb = int(dut.cbuf_wr_valid.value); rb = int(dut.cbuf_wr_ready.value)
+        ab = int(dut.cbuf_wr_addr.value);  db = int(dut.cbuf_wr_data.value)
+        for pid in range(n_pe):
+            if (vb >> pid) & 1 and (rb >> pid) & 1:
+                cp[(ab >> (pid * _C_DEPTH_LOG)) & addr_mask] = (db >> (pid * _DATA_W)) & data_mask
     return cp, dc
 
 #=========================================================================
 @cocotb.test()
 async def test_comp_case1_cluster(dut):
-    """4-PE Cluster: A(251,257) x B(257,121) distributed round-robin by A row."""
+    """N_PE-wide cluster: A(251,257) x B(257,121), rows distributed round-robin."""
     Ad, Ac, Av, An, M, K  = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False)
     Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True)
     assert K == K2
+    Bd, Bc, Bv = align_b_4wide(Bd, Bc, Bv)
 
     gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc, Bv, M, N, K)
 
-    dut._log.info("=" * 70)
-    dut._log.info("4-PE CLUSTER TEST: A(%d,%d) x B(%d,%d) -> C(%d,%d)", M, K, K2, N, M, N)
-
-    pe_desc, pe_col, pe_val = partition_a(Ad, Ac, Av, M, n_pe=4)
-    row_counts = [len(pe_desc[p]) for p in range(4)]
-    dut._log.info("Row distribution: PE0=%d  PE1=%d  PE2=%d  PE3=%d", *row_counts)
-
+    # rst_cluster starts the clock; read n_pe_sig only after clock is running
+    # so the initial block in tb_pe_cluster has had time to fire.
     await rst_cluster(dut)
+    n_pe = int(dut.n_pe_sig.value)
+
+    dut._log.info("=" * 70)
+    dut._log.info("%d-PE CLUSTER TEST: A(%d,%d) x B(%d,%d) -> C(%d,%d)",
+                  n_pe, M, K, K2, N, M, N)
+
+    pe_desc, pe_col, pe_val = partition_a(Ad, Ac, Av, M, n_pe)
+    row_counts = [len(pe_desc[p]) for p in range(n_pe)]
+    dut._log.info("Row distribution: %s", "  ".join(f"PE{p}={row_counts[p]}" for p in range(n_pe)))
+
     dut.M.value=M; dut.K.value=K; dut.N.value=N
 
-    for pid in range(4):
+    for pid in range(n_pe):
         await LAd_pe(dut, pid, pe_desc[pid], pe_col[pid], pe_val[pid])
     await LBd_cluster(dut, Bd, Bc, Bv)
 
-    dut._log.info("Starting cluster...")
-    cp, cyc = await run_cluster(dut, row_counts)
+    dut._log.info("Starting %d-PE cluster...", n_pe)
+    cp, cyc = await run_cluster(dut, row_counts, n_pe)
     dut._log.info("Cluster done at cycle %d, captured %d writes", cyc, len(cp))
 
     e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp)
@@ -403,10 +463,12 @@ async def test_comp_case1_cluster(dut):
     assert e == 0, f"{e} mismatches"
 
     total_macs = count_total_macs(Ad, Ac, Bd, M)
+    single_pe_cycles = 209513
     dut._log.info("=" * 70)
     dut._log.info("STATISTICS:")
+    dut._log.info("  N_PE:                    %d", n_pe)
     dut._log.info("  Cluster wall-time cycles: %d", cyc)
     dut._log.info("  Total MAC ops:            %d", total_macs)
-    dut._log.info("  Speedup vs single PE:     %.2fx  (single=%d cycles)", 209513/cyc, 209513)
+    dut._log.info("  Speedup vs single PE:     %.2fx  (single=%d cycles)", single_pe_cycles/cyc, single_pe_cycles)
     dut._log.info("=" * 70)
-    dut._log.info("4-PE CLUSTER TEST PASSED")
+    dut._log.info("%d-PE CLUSTER TEST PASSED", n_pe)

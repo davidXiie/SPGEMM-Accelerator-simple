@@ -42,7 +42,6 @@ iverilog -g2012 \
     "$PROJ_ROOT/rtl/sim/tb_pe_cluster.v" \
     "$PROJ_ROOT/rtl/core/pe_cluster.v" \
     "$PROJ_ROOT/rtl/core/pe_top.v" \
-    "$PROJ_ROOT/rtl/core/pe_task_packer.v" \
     "$PROJ_ROOT/rtl/core/pe_mul_array.v" \
     "$PROJ_ROOT/rtl/core/accum_bank.v" \
     "$PROJ_ROOT/rtl/core/row_accumulator_4bank.v" \
