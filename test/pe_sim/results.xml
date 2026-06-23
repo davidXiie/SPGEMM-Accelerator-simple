@@ -1,12 +1,12 @@
 <testsuites name="results">
   <testsuite name="all" package="all">
-    <property name="random_seed" value="1782159040" />
-    <testcase name="test_comp_case1_p0" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="201" time="0" sim_time_ns="0" ratio_time="0">
-      <skipped />
-    </testcase>
+    <property name="random_seed" value="1782209359" />
+    <testcase name="test_comp_case1_p0" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="201" time="13.744905233383179" sim_time_ns="838780.0" ratio_time="61024.793242138796" />
     <testcase name="test_comp_case1_p1" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="259" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>
-    <testcase name="test_comp_case1_cluster" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="472" time="24.22281789779663" sim_time_ns="333170.0" ratio_time="13754.386521243921" />
+    <testcase name="test_comp_case1_cluster" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="472" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
   </testsuite>
 </testsuites>

@@ -140,8 +140,10 @@ module pe_top #(
     //=========================================================================
     reg [`DATA_WIDTH-1:0]   a_nnz_left;
     reg [`OFFSET_WIDTH-1:0] a_ptr;
-    wire [`A_NNZ_ADDR_BITS-1:0] a_ptr_next = a_ptr[`A_NNZ_ADDR_BITS-1:0] + 1'b1;
+    wire [`A_NNZ_ADDR_BITS-1:0] a_ptr_next  = a_ptr[`A_NNZ_ADDR_BITS-1:0] + 1'b1;
+    wire [`A_NNZ_ADDR_BITS-1:0] a_ptr_plus2 = a_ptr[`A_NNZ_ADDR_BITS-1:0] + 2'd2;
     reg [`DATA_WIDTH-1:0]   cur_k;
+    reg [1:0]               b_lane_skip;    // leading lanes in cur B group already cross-filled
     reg [`DATA_WIDTH-1:0]   cur_a_val;
 
     //=========================================================================
@@ -166,25 +168,96 @@ module pe_top #(
     wire [`DATA_WIDTH-1:0] bv3 = B_val_b3[b_group];
 
     //=========================================================================
-    // Task Group generation — 4 tasks per cycle, written directly to FIFO
+    // Next-A-element prefetch for cross-element task filling
+    //   3-level cascade: A_col_buf[a_ptr+1] → B_row_desc_buf → B_col/val banks
     //=========================================================================
-    wire [3:0] stream_lane_valid;
-    assign stream_lane_valid[0] = (b_nnz_left >= 16'd1);
-    assign stream_lane_valid[1] = (b_nnz_left >= 16'd2);
-    assign stream_lane_valid[2] = (b_nnz_left >= 16'd3);
-    assign stream_lane_valid[3] = (b_nnz_left >= 16'd4);
+    wire [`DATA_WIDTH-1:0]    nxt_k_w      = A_col_buf[a_ptr_next];
+    wire [`DATA_WIDTH-1:0]    nxt_a_val_w  = A_val_buf[a_ptr_next];
+    wire [63:0]               nxt_b_desc_w = B_row_desc_buf[nxt_k_w[`B_ROW_ADDR_BITS-1:0]];
+    wire [`OFFSET_WIDTH-1:0]  nxt_b_ptr_w  = nxt_b_desc_w[63:32];
+    wire [`DATA_WIDTH-1:0]    nxt_b_nnz_w  = nxt_b_desc_w[15:0];
+    wire [`B_NNZ_ADDR_BITS-3:0] nb_group   = nxt_b_ptr_w[`B_NNZ_ADDR_BITS-1:2];
+    wire [`DATA_WIDTH-1:0] nbc0 = B_col_b0[nb_group];
+    wire [`DATA_WIDTH-1:0] nbc1 = B_col_b1[nb_group];
+    wire [`DATA_WIDTH-1:0] nbc2 = B_col_b2[nb_group];
+    wire [`DATA_WIDTH-1:0] nbc3 = B_col_b3[nb_group];
+    wire [`DATA_WIDTH-1:0] nbv0 = B_val_b0[nb_group];
+    wire [`DATA_WIDTH-1:0] nbv1 = B_val_b1[nb_group];
+    wire [`DATA_WIDTH-1:0] nbv2 = B_val_b2[nb_group];
+    wire [`DATA_WIDTH-1:0] nbv3 = B_val_b3[nb_group];
 
-    wire [`TASK_WIDTH-1:0] sg0 = {16'd0, bv0, cur_a_val, bc0};
-    wire [`TASK_WIDTH-1:0] sg1 = {16'd0, bv1, cur_a_val, bc1};
-    wire [`TASK_WIDTH-1:0] sg2 = {16'd0, bv2, cur_a_val, bc2};
-    wire [`TASK_WIDTH-1:0] sg3 = {16'd0, bv3, cur_a_val, bc3};
+    //=========================================================================
+    // Task Group generation — cross-element filling support
+    //=========================================================================
+
+    // Available slots in current group (4 minus skipped leading lanes)
+    wire [15:0] avail_slots_w = 16'd4 - {14'd0, b_lane_skip};
+    // Last group: all remaining elements fit in current group's available slots
+    wire is_last_b_group = (b_nnz_left > 16'd0) && (b_nnz_left <= avail_slots_w);
 
     wire task_fifo_full;   // driven by u_task_fifo below
     wire stream_group_valid = (state == PE_STREAM_B_ROW) && (b_nnz_left != 0);
     wire task_group_wr_en   = stream_group_valid && !task_fifo_full;
+
+    // Spare slots available for cross-fill (only meaningful when is_last_b_group)
+    wire [2:0] spare_slots_w = avail_slots_w[2:0] - b_nnz_left[2:0];
+    // How many slots to fill from next A element's B row (full 16-bit comparison avoids wrap-around)
+    wire [2:0] fill_used_w = (nxt_b_nnz_w > {13'd0, spare_slots_w}) ? spare_slots_w
+                                                                      : nxt_b_nnz_w[2:0];
+    // Cross-fill: last group + more A elements + next B row non-empty + no existing skip + free slots
+    wire do_cross_fill    = is_last_b_group && (a_nnz_left > 16'd1) && (nxt_b_nnz_w > 16'd0)
+                          && (b_lane_skip == 2'd0) && (spare_slots_w > 3'd0) && task_group_wr_en;
+    // fill_exhausts_nxt: entire next B row consumed by cross-fill (full 16-bit comparison)
+    wire fill_exhausts_nxt = do_cross_fill && (nxt_b_nnz_w <= {13'd0, spare_slots_w});
+
+    // Total valid lanes in last group (current + fill)
+    wire [3:0] total_valid_lanes = {2'd0, b_lane_skip} + {1'b0, b_nnz_left[2:0]}
+                                 + (do_cross_fill ? {1'b0, fill_used_w} : 4'd0);
+
+    // Per-lane validity
+    wire [3:0] stream_lane_valid;
+    assign stream_lane_valid[0] = (b_lane_skip == 2'd0)
+                                && (is_last_b_group ? (total_valid_lanes >= 4'd1) : 1'b1);
+    assign stream_lane_valid[1] = (b_lane_skip <= 2'd1)
+                                && (is_last_b_group ? (total_valid_lanes >= 4'd2) : 1'b1);
+    assign stream_lane_valid[2] = (b_lane_skip <= 2'd2)
+                                && (is_last_b_group ? (total_valid_lanes >= 4'd3) : 1'b1);
+    assign stream_lane_valid[3] = (is_last_b_group ? (total_valid_lanes >= 4'd4) : 1'b1);
+
+    // Cross-fill mux: lane i >= b_nnz_left uses nbc[i-b_nnz_left] / nxt_a_val_w
+    // b_lane_skip controls VALIDITY only — each lane always reads its own bank[i].
+    wire cf1 = do_cross_fill && (b_nnz_left == 16'd1);
+    wire cf2 = do_cross_fill && (b_nnz_left <= 16'd2);
+    wire cf3 = do_cross_fill && (b_nnz_left <= 16'd3);
+
+    wire [`DATA_WIDTH-1:0] sg0_bc = bc0;
+    wire [`DATA_WIDTH-1:0] sg0_bv = bv0;
+    wire [`DATA_WIDTH-1:0] sg0_av = cur_a_val;
+
+    wire [`DATA_WIDTH-1:0] sg1_bc = cf1 ? nbc0 : bc1;
+    wire [`DATA_WIDTH-1:0] sg1_bv = cf1 ? nbv0 : bv1;
+    wire [`DATA_WIDTH-1:0] sg1_av = cf1 ? nxt_a_val_w : cur_a_val;
+
+    wire [`DATA_WIDTH-1:0] sg2_bc = !cf2 ? bc2 : (b_nnz_left == 16'd1) ? nbc1 : nbc0;
+    wire [`DATA_WIDTH-1:0] sg2_bv = !cf2 ? bv2 : (b_nnz_left == 16'd1) ? nbv1 : nbv0;
+    wire [`DATA_WIDTH-1:0] sg2_av = cf2 ? nxt_a_val_w : cur_a_val;
+
+    wire [`DATA_WIDTH-1:0] sg3_bc = !cf3 ? bc3
+                                  : (b_nnz_left == 16'd1) ? nbc2
+                                  : (b_nnz_left == 16'd2) ? nbc1 : nbc0;
+    wire [`DATA_WIDTH-1:0] sg3_bv = !cf3 ? bv3
+                                  : (b_nnz_left == 16'd1) ? nbv2
+                                  : (b_nnz_left == 16'd2) ? nbv1 : nbv0;
+    wire [`DATA_WIDTH-1:0] sg3_av = cf3 ? nxt_a_val_w : cur_a_val;
+
+    wire [`TASK_WIDTH-1:0] sg0 = {16'd0, sg0_bv, sg0_av, sg0_bc};
+    wire [`TASK_WIDTH-1:0] sg1 = {16'd0, sg1_bv, sg1_av, sg1_bc};
+    wire [`TASK_WIDTH-1:0] sg2 = {16'd0, sg2_bv, sg2_av, sg2_bc};
+    wire [`TASK_WIDTH-1:0] sg3 = {16'd0, sg3_bv, sg3_av, sg3_bc};
+
     wire [`TASK_GROUP_WIDTH-1:0] task_group_wr_data = {sg3, sg2, sg1, sg0, stream_lane_valid};
 
-    wire b_last_group_fires = task_group_wr_en && (b_nnz_left <= 16'd4);
+    wire b_last_group_fires = task_group_wr_en && is_last_b_group;
     wire b_batch_done       = (state == PE_STREAM_B_ROW) && (b_nnz_left == 0 || b_last_group_fires);
 
     //=========================================================================
@@ -399,6 +472,7 @@ module pe_top #(
             b_row_desc_reg <= 0;
             b_ptr          <= 0;
             b_nnz_left     <= 0;
+            b_lane_skip    <= 2'd0;
             done           <= 1'b0;
         end else begin
             done <= 1'b0;
@@ -417,7 +491,9 @@ module pe_top #(
                     a_nnz_left     <= A_row_desc_buf[row_idx][31:16];
                 end
 
-                PE_CLEAR_ACC: ; // acc_row_start pulse from combinational wire
+                PE_CLEAR_ACC: begin
+                    b_lane_skip <= 2'd0;   // reset any residual skip from previous row
+                end
 
                 PE_LOAD_A_ELEM: begin
                     cur_k          <= A_col_buf[a_ptr[`A_NNZ_ADDR_BITS-1:0]];
@@ -431,14 +507,32 @@ module pe_top #(
 
                 PE_STREAM_B_ROW: begin
                     if (!task_fifo_full && b_nnz_left != 0) begin
-                        if (b_nnz_left > 16'd4) begin
-                            // Middle group: advance b_ptr
-                            b_ptr      <= b_ptr + 4;
-                            b_nnz_left <= b_nnz_left - 16'd4;
-                        end else begin
-                            // Last group fires: advance A pointer
+                        if (!is_last_b_group) begin
+                            // Middle group: consume avail_slots elements, reset b_lane_skip
+                            b_ptr       <= b_ptr + 4;
+                            b_nnz_left  <= b_nnz_left - avail_slots_w;
+                            b_lane_skip <= 2'd0;
+                        end else if (do_cross_fill && fill_exhausts_nxt) begin
+                            // Cross-fill consumes BOTH current and next A element entirely
+                            a_ptr      <= a_ptr_plus2;
+                            a_nnz_left <= a_nnz_left - 16'd2;
+                            b_nnz_left <= 16'd0;
+                            b_lane_skip <= 2'd0;
+                        end else if (do_cross_fill) begin
+                            // Cross-fill: next A's B row partially consumed (fill_used_w elements)
                             a_ptr      <= a_ptr + 1;
                             a_nnz_left <= a_nnz_left - 1;
+                            cur_k          <= nxt_k_w;
+                            cur_a_val      <= nxt_a_val_w;
+                            b_row_desc_reg <= nxt_b_desc_w;
+                            b_ptr          <= nxt_b_ptr_w;
+                            b_nnz_left     <= nxt_b_nnz_w - {13'd0, fill_used_w};
+                            b_lane_skip    <= fill_used_w[1:0];
+                        end else begin
+                            // Normal last group: advance A pointer, optionally prefetch next
+                            a_ptr      <= a_ptr + 1;
+                            a_nnz_left <= a_nnz_left - 1;
+                            b_lane_skip <= 2'd0;
                             if (a_nnz_left > 1) begin
                                 // Prefetch next A element so LOAD_A_ELEM is skipped.
                                 cur_k          <= A_col_buf[a_ptr_next];
@@ -454,6 +548,7 @@ module pe_top #(
                         // Empty B row: advance a_ptr, go through LOAD_A_ELEM
                         a_ptr      <= a_ptr + 1;
                         a_nnz_left <= a_nnz_left - 1;
+                        b_lane_skip <= 2'd0;
                     end
                 end
 
@@ -505,13 +600,21 @@ module pe_top #(
 
             PE_STREAM_B_ROW:
                 if (b_batch_done) begin
-                    // a_nnz_left pre-decrement: value 1 → will become 0 after edge.
-                    if (a_nnz_left <= 1)
-                        state_next = PE_WAIT_TASK_DRAIN;
-                    else if (b_last_group_fires)
-                        state_next = PE_STREAM_B_ROW;  // prefetched, skip LOAD_A_ELEM
-                    else
-                        state_next = PE_LOAD_A_ELEM;   // empty B row still needs setup
+                    if (fill_exhausts_nxt) begin
+                        // Consumed two A elements simultaneously — check pre-dec by 2
+                        if (a_nnz_left <= 2)
+                            state_next = PE_WAIT_TASK_DRAIN;
+                        else
+                            state_next = PE_LOAD_A_ELEM;   // load a_ptr+2
+                    end else begin
+                        // a_nnz_left pre-decrement: value 1 → will become 0 after edge.
+                        if (a_nnz_left <= 1)
+                            state_next = PE_WAIT_TASK_DRAIN;
+                        else if (b_last_group_fires)
+                            state_next = PE_STREAM_B_ROW;  // prefetched/cross-filled, skip LOAD_A_ELEM
+                        else
+                            state_next = PE_LOAD_A_ELEM;   // empty B row still needs setup
+                    end
                 end
 
             PE_WAIT_TASK_DRAIN:
