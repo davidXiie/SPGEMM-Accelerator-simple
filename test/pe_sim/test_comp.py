@@ -427,7 +427,7 @@ async def LBd_cluster(dut, Bd, Bc, Bv):
     dut.b_val_we.value = 0
 
 async def rst_cluster(dut):
-    dut.aresetn.value=0; cocotb.start_soon(Clock(dut.aclk,10,units='ns').start())
+    dut.aresetn.value=0; cocotb.start_soon(Clock(dut.aclk,10,unit='ns').start())
     await ClockCycles(dut.aclk,10); dut.aresetn.value=1; await ClockCycles(dut.aclk,5)
     dut.start.value       = 0
     dut.row_count.value   = 0
