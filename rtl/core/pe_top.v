@@ -1,10 +1,17 @@
 //=============================================================================
 // File     : pe_top.v
 // Project  : SPGEMM-Accelerator v2
-// Brief    : PE Top — hardware on-chip instruction generation.
+// Brief    : PE Top — hardware on-chip instruction generation with
+//            cross-B-row task packing.
 //
 //   Eliminates pre-computed instr_buf.  Instead, the generator FSM walks
-//   A_col_buf → B_desc_buf to produce (a_val, bg0..3, valid3:0) directly.
+//   A_col_buf → B_desc_buf to produce 4-wide task groups directly.
+//
+//   Cross-B-row packing: a carry buffer (up to 3 elements) holds tail
+//   elements from a partial B-row group.  When the next A nonzero is
+//   prefetched its B-row head fills the remaining slots, forming a
+//   complete 4-wide group.  Each lane carries its own a_val so different
+//   A nonzeros can coexist in one task group (never crossing A rows).
 //
 //   A row descriptor (64-bit):
 //     [63:32] a_off   — start index into A_col/A_val buffers (local to PE)
@@ -15,20 +22,9 @@
 //     [63:32] b_off   — start of B row in 4-bank storage (may be non-4-aligned)
 //     [15: 0] b_nnz   — number of B nonzeros in this row
 //
-//   B bank layout (per-row rotation):
-//     B row r stored at b_off where b_off%4 == r%4.
-//     Element at abs_pos = b_off+u → bank abs_pos%4, addr abs_pos/4.
-//     Generator uses abs_pos%4 to assign lanes; no FIFO, direct 4-wide emit.
-//
-//   Generator throughput: 4 MACs/cycle (one 4-wide group per cycle in EMIT).
-//   Read latency overhead: 1 cycle per A nonzero (GEN_FETCH state).
-//
-//   FSM (8 states):
-//     PE_IDLE → PE_LOAD_ROW_DESC → PE_CLEAR_ACC → PE_STREAM_INSTRS
-//     → PE_WAIT_TASK_DRAIN → PE_WAIT_PRODUCT_DRAIN → PE_NEXT_ROW → PE_DONE
-//
-//   Generator sub-FSM (4 states, runs concurrently during PE_STREAM_INSTRS):
+//   Generator sub-FSM (5 states):
 //     GEN_IDLE → GEN_FETCH → GEN_EMIT ↔ GEN_ROW_DONE
+//                                     → GEN_FLUSH (drain carry at row end)
 //=============================================================================
 
 `include "defines.vh"
@@ -76,10 +72,9 @@ module pe_top #(
     input  wire [63:0]                   b_desc_wdata,
 
     // C buffer read port (synchronous, 1-cycle latency)
-    // c_rd_addr = {local_row_idx[A_ROW_ADDR_BITS-1:0], col[8:0]}  (17-bit)
     input  wire                          c_rd_en,
     input  wire [16:0]                   c_rd_addr,
-    output reg  [31:0]                   c_rd_data   // FP32 accumulator output
+    output reg  [31:0]                   c_rd_data
 );
 
     localparam ACC_COL_W     = 9;
@@ -166,25 +161,32 @@ module pe_top #(
     //=========================================================================
     reg comp_sel;
     reg [`A_ROW_ADDR_BITS-1:0] row_idx;
-    reg [31:0]                 cur_a_off;   // A nnz start (local to PE)
-    reg [15:0]                 cur_a_nnz;   // A nnz count for current row
+    reg [31:0]                 cur_a_off;
+    reg [15:0]                 cur_a_nnz;
 
     //=========================================================================
     // Generator sub-FSM
     //=========================================================================
-    localparam GEN_IDLE     = 2'd0;
-    localparam GEN_FETCH    = 2'd1;  // read A_col+A_val+B_desc (combinatorial), register
-    localparam GEN_EMIT     = 2'd2;  // emit 4-wide group each cycle
-    localparam GEN_ROW_DONE = 2'd3;  // row complete, wait for main FSM
+    localparam GEN_IDLE     = 3'd0;
+    localparam GEN_FETCH    = 3'd1;
+    localparam GEN_EMIT     = 3'd2;
+    localparam GEN_ROW_DONE = 3'd3;
+    localparam GEN_FLUSH    = 3'd4;  // flush remaining carry at end of A row
 
-    reg [1:0]  gen_state;
-    reg [15:0] gen_t;       // A nonzero counter (incremented after each FETCH)
-    reg [15:0] gen_g;       // group counter within current B row
-    reg [15:0] gen_a_val;   // registered FP16 A value for current A nonzero
-    reg [31:0] gen_b_off;   // registered B row start offset
-    reg [15:0] gen_b_nnz;   // registered B row nonzero count
+    reg [2:0]  gen_state;
+    reg [15:0] gen_t;
+    reg [15:0] gen_g;
+    reg [15:0] gen_a_val;
+    reg [31:0] gen_b_off;
+    reg [15:0] gen_b_nnz;
 
-    // Combinatorial reads (2-level chain; FPGA needs pipeline regs between stages)
+    // Carry buffer: up to 3 elements from the tail of the previous B row
+    reg [1:0]  carry_cnt;          // 0..3
+    reg [15:0] carry_av [0:2];     // a_val per carry slot
+    reg [15:0] carry_bv [0:2];     // b_val per carry slot
+    reg [15:0] carry_bc [0:2];     // col_id per carry slot
+
+    // 2-level combinatorial read chain
     wire [`A_NNZ_ADDR_BITS-1:0] fetch_a_addr =
         cur_a_off[`A_NNZ_ADDR_BITS-1:0] + gen_t[`A_NNZ_ADDR_BITS-1:0];
     wire [15:0] fetch_k_idx   = A_col_buf[fetch_a_addr];
@@ -193,47 +195,21 @@ module pe_top #(
     wire [31:0] fetch_b_off   = fetch_b_desc[63:32];
     wire [15:0] fetch_b_nnz   = fetch_b_desc[15:0];
 
-    // Current group decode (combinatorial from registered gen_b_off, gen_g, gen_a_val)
-    //
-    // B elements in group g: absolute positions abs_base .. abs_base+3 where
-    //   abs_base = gen_b_off + gen_g * 4
-    //
-    // With per-row rotation, gen_b_off%4 == r%4, so abs_base%4 rotates per B row.
-    //   lane for position j = (abs_base + j) % 4
-    //   b_grp for lane k   = (abs_base + jk) / 4  where jk = (k - abs_base%4 + 4)%4
-    //
-    // Pattern for b_grp (let m = abs_base/4, r = abs_base%4):
-    //   r=0: L0=m  L1=m  L2=m  L3=m
-    //   r=1: L0=m+1 L1=m  L2=m  L3=m
-    //   r=2: L0=m+1 L1=m+1 L2=m  L3=m
-    //   r=3: L0=m+1 L1=m+1 L2=m+1 L3=m
-
+    // Current group decode
     wire [31:0] gen_abs_base  = gen_b_off + {gen_g[13:0], 2'b00};
     wire [1:0]  gen_r         = gen_abs_base[1:0];
-    wire [14:0] gen_m         = gen_abs_base[16:2];   // abs_base >> 2 (fits 15 bits)
+    wire [14:0] gen_m         = gen_abs_base[16:2];
 
     wire [14:0] gen_bg0 = (gen_r == 2'd0) ? gen_m : gen_m + 15'd1;
     wire [14:0] gen_bg1 = (gen_r <= 2'd1) ? gen_m : gen_m + 15'd1;
     wire [14:0] gen_bg2 = (gen_r <= 2'd2) ? gen_m : gen_m + 15'd1;
     wire [14:0] gen_bg3 = gen_m;
 
-    // Valid bits: position j=(k-r+4)%4 for lane k; valid if j < gen_cnt
     wire [15:0] gen_remaining = gen_b_nnz - {gen_g[13:0], 2'b00};
     wire [3:0]  gen_cnt       = (gen_remaining >= 16'd4) ? 4'd4 : gen_remaining[3:0];
     wire        gen_last_grp  = (gen_remaining <= 16'd4);
 
-    wire [1:0] jv0 = (2'd0 - gen_r) & 2'b11;
-    wire [1:0] jv1 = (2'd1 - gen_r) & 2'b11;
-    wire [1:0] jv2 = (2'd2 - gen_r) & 2'b11;
-    wire [1:0] jv3 = (2'd3 - gen_r) & 2'b11;
-
-    wire gen_vld0 = ({2'b0, jv0} < gen_cnt);
-    wire gen_vld1 = ({2'b0, jv1} < gen_cnt);
-    wire gen_vld2 = ({2'b0, jv2} < gen_cnt);
-    wire gen_vld3 = ({2'b0, jv3} < gen_cnt);
-    wire [3:0] gen_lane_valid = {gen_vld3, gen_vld2, gen_vld1, gen_vld0};
-
-    // B bank reads using per-lane independent addresses (combinatorial)
+    // B bank reads (4 lanes, combinatorial)
     wire [`DATA_WIDTH-1:0] bc0 = B_col_b0[gen_bg0];
     wire [`DATA_WIDTH-1:0] bv0 = B_val_b0[gen_bg0];
     wire [`DATA_WIDTH-1:0] bc1 = B_col_b1[gen_bg1];
@@ -243,17 +219,91 @@ module pe_top #(
     wire [`DATA_WIDTH-1:0] bc3 = B_col_b3[gen_bg3];
     wire [`DATA_WIDTH-1:0] bv3 = B_val_b3[gen_bg3];
 
-    // All 4 lanes share same A value (same A nonzero for this B row's group)
-    wire [`TASK_WIDTH-1:0] sg0 = {16'd0, bv0, gen_a_val, bc0};
-    wire [`TASK_WIDTH-1:0] sg1 = {16'd0, bv1, gen_a_val, bc1};
-    wire [`TASK_WIDTH-1:0] sg2 = {16'd0, bv2, gen_a_val, bc2};
-    wire [`TASK_WIDTH-1:0] sg3 = {16'd0, bv3, gen_a_val, bc3};
+    //=========================================================================
+    // New elements in sequential order (rotation-corrected)
+    //
+    // ne[j] = j-th valid element in this group (lane (gen_r+j)%4).
+    // Valid lanes are gen_r, (gen_r+1)%4, ..., (gen_r+gen_cnt-1)%4.
+    // Extracting them in this fixed order allows uniform carry buffer filling.
+    //=========================================================================
+    wire [15:0] ne_bv [0:3];
+    wire [15:0] ne_bc [0:3];
+
+    assign ne_bv[0] = (gen_r==2'd0)?bv0:(gen_r==2'd1)?bv1:(gen_r==2'd2)?bv2:bv3;
+    assign ne_bc[0] = (gen_r==2'd0)?bc0:(gen_r==2'd1)?bc1:(gen_r==2'd2)?bc2:bc3;
+    assign ne_bv[1] = (gen_r==2'd0)?bv1:(gen_r==2'd1)?bv2:(gen_r==2'd2)?bv3:bv0;
+    assign ne_bc[1] = (gen_r==2'd0)?bc1:(gen_r==2'd1)?bc2:(gen_r==2'd2)?bc3:bc0;
+    assign ne_bv[2] = (gen_r==2'd0)?bv2:(gen_r==2'd1)?bv3:(gen_r==2'd2)?bv0:bv1;
+    assign ne_bc[2] = (gen_r==2'd0)?bc2:(gen_r==2'd1)?bc3:(gen_r==2'd2)?bc0:bc1;
+    assign ne_bv[3] = (gen_r==2'd0)?bv3:(gen_r==2'd1)?bv0:(gen_r==2'd2)?bv1:bv2;
+    assign ne_bc[3] = (gen_r==2'd0)?bc3:(gen_r==2'd1)?bc0:(gen_r==2'd2)?bc1:bc2;
+
+    //=========================================================================
+    // Pack logic
+    //
+    // pack_total  = carry_cnt + gen_cnt  (range 1..7, fits in 3 bits)
+    // pack_can_emit = pack_total >= 4    (bit [2] of the 3-bit sum)
+    // overflow_cnt  = pack_total - 4     (pack_total[1:0] when can_emit)
+    //
+    // Output slot k (when emit):
+    //   k < carry_cnt → carry buffer slot k
+    //   k >= carry_cnt → ne[k - carry_cnt] with gen_a_val
+    //=========================================================================
+    wire [2:0] pack_total    = {1'b0, carry_cnt} + {1'b0, gen_cnt[2:0]};
+    wire       pack_can_emit = pack_total[2];          // >= 4
+    wire [1:0] overflow_cnt  = pack_total[1:0];        // valid when pack_can_emit
+
+    // Output a_val per slot
+    wire [15:0] out_av0 = (carry_cnt >= 2'd1) ? carry_av[0] : gen_a_val;
+    wire [15:0] out_av1 = (carry_cnt >= 2'd2) ? carry_av[1] : gen_a_val;
+    wire [15:0] out_av2 = (carry_cnt >= 2'd3) ? carry_av[2] : gen_a_val;
+    wire [15:0] out_av3 = gen_a_val;  // slot 3 always from new (carry_cnt <= 3)
+
+    // Output b_val per slot (slot k: carry if k < carry_cnt, else ne[k-carry_cnt])
+    wire [15:0] out_bv0 = (carry_cnt >= 2'd1) ? carry_bv[0] : ne_bv[0];
+    wire [15:0] out_bv1 = (carry_cnt >= 2'd2) ? carry_bv[1] :
+                          (carry_cnt == 2'd1)  ? ne_bv[0]    : ne_bv[1];
+    wire [15:0] out_bv2 = (carry_cnt == 2'd3) ? carry_bv[2] :
+                          (carry_cnt == 2'd2)  ? ne_bv[0]    :
+                          (carry_cnt == 2'd1)  ? ne_bv[1]    : ne_bv[2];
+    wire [15:0] out_bv3 = (carry_cnt == 2'd3) ? ne_bv[0]    :
+                          (carry_cnt == 2'd2)  ? ne_bv[1]    :
+                          (carry_cnt == 2'd1)  ? ne_bv[2]    : ne_bv[3];
+
+    // Output col_id per slot
+    wire [15:0] out_bc0 = (carry_cnt >= 2'd1) ? carry_bc[0] : ne_bc[0];
+    wire [15:0] out_bc1 = (carry_cnt >= 2'd2) ? carry_bc[1] :
+                          (carry_cnt == 2'd1)  ? ne_bc[0]    : ne_bc[1];
+    wire [15:0] out_bc2 = (carry_cnt == 2'd3) ? carry_bc[2] :
+                          (carry_cnt == 2'd2)  ? ne_bc[0]    :
+                          (carry_cnt == 2'd1)  ? ne_bc[1]    : ne_bc[2];
+    wire [15:0] out_bc3 = (carry_cnt == 2'd3) ? ne_bc[0]    :
+                          (carry_cnt == 2'd2)  ? ne_bc[1]    :
+                          (carry_cnt == 2'd1)  ? ne_bc[2]    : ne_bc[3];
+
+    // Task group slots for pack emit (all 4 lanes valid, per-lane a_val)
+    wire [`TASK_WIDTH-1:0] pack_sg0 = {16'd0, out_bv0, out_av0, out_bc0};
+    wire [`TASK_WIDTH-1:0] pack_sg1 = {16'd0, out_bv1, out_av1, out_bc1};
+    wire [`TASK_WIDTH-1:0] pack_sg2 = {16'd0, out_bv2, out_av2, out_bc2};
+    wire [`TASK_WIDTH-1:0] pack_sg3 = {16'd0, out_bv3, out_av3, out_bc3};
+
+    // Task group slots for flush emit (only carry_cnt lanes valid)
+    wire [`TASK_WIDTH-1:0] flush_sg0 = {16'd0, carry_bv[0], carry_av[0], carry_bc[0]};
+    wire [`TASK_WIDTH-1:0] flush_sg1 = {16'd0, carry_bv[1], carry_av[1], carry_bc[1]};
+    wire [`TASK_WIDTH-1:0] flush_sg2 = {16'd0, carry_bv[2], carry_av[2], carry_bc[2]};
+    wire [3:0] flush_lane_valid = (carry_cnt == 2'd1) ? 4'b0001 :
+                                  (carry_cnt == 2'd2) ? 4'b0011 : 4'b0111;
 
     wire task_fifo_full;
-    wire gen_emit_active    = (gen_state == GEN_EMIT);
-    wire [3:0] lane_valid_w = gen_lane_valid;
-    wire task_group_wr_en   = gen_emit_active && !task_fifo_full;
-    wire [`TASK_GROUP_WIDTH-1:0] task_group_wr_data = {sg3, sg2, sg1, sg0, lane_valid_w};
+    wire do_pack_emit  = (gen_state == GEN_EMIT)  && pack_can_emit;
+    wire do_flush_emit = (gen_state == GEN_FLUSH);
+
+    wire task_group_wr_en = (do_pack_emit || do_flush_emit) && !task_fifo_full;
+
+    wire [`TASK_GROUP_WIDTH-1:0] task_group_wr_data =
+        do_flush_emit
+        ? {64'd0, flush_sg2, flush_sg1, flush_sg0, flush_lane_valid}
+        : {pack_sg3, pack_sg2, pack_sg1, pack_sg0, 4'b1111};
 
     //=========================================================================
     // Generator sub-FSM sequential
@@ -266,12 +316,18 @@ module pe_top #(
             gen_a_val <= 0;
             gen_b_off <= 0;
             gen_b_nnz <= 0;
+            carry_cnt <= 2'd0;
+            carry_av[0] <= 0; carry_av[1] <= 0; carry_av[2] <= 0;
+            carry_bv[0] <= 0; carry_bv[1] <= 0; carry_bv[2] <= 0;
+            carry_bc[0] <= 0; carry_bc[1] <= 0; carry_bc[2] <= 0;
         end else begin
             case (gen_state)
+
                 GEN_IDLE: begin
                     if (state == PE_CLEAR_ACC) begin
-                        gen_t <= 0;
-                        gen_g <= 0;
+                        gen_t     <= 0;
+                        gen_g     <= 0;
+                        carry_cnt <= 2'd0;  // reset carry at start of each A row
                         if (cur_a_nnz == 16'd0)
                             gen_state <= GEN_ROW_DONE;
                         else
@@ -280,56 +336,173 @@ module pe_top #(
                 end
 
                 GEN_FETCH: begin
-                    // Register combinatorial reads; advance t (pre-increment for next fetch)
                     gen_a_val <= fetch_a_val;
                     gen_b_off <= fetch_b_off;
                     gen_b_nnz <= fetch_b_nnz;
                     gen_t     <= gen_t + 16'd1;
                     gen_g     <= 0;
                     if (fetch_b_nnz == 16'd0) begin
-                        // Empty B row — skip
-                        if (gen_t + 16'd1 >= cur_a_nnz)
-                            gen_state <= GEN_ROW_DONE;
-                        // else stay GEN_FETCH (gen_t already incremented above → next A nnz)
+                        // Skip empty B row
+                        if (gen_t + 16'd1 >= cur_a_nnz) begin
+                            // No more A nnzs — flush carry if any
+                            if (carry_cnt != 2'd0)
+                                gen_state <= GEN_FLUSH;
+                            else
+                                gen_state <= GEN_ROW_DONE;
+                        end
+                        // else stay in GEN_FETCH to try next A nnz
                     end else begin
                         gen_state <= GEN_EMIT;
                     end
                 end
 
                 GEN_EMIT: begin
-                    if (!task_fifo_full) begin
-                        if (gen_last_grp) begin
-                            if (gen_t >= cur_a_nnz) begin
-                                gen_state <= GEN_ROW_DONE;
-                            end else if (fetch_b_nnz == 16'd0) begin
-                                // Next A nnz has empty B row — fall back to GEN_FETCH to skip
-                                gen_t     <= gen_t + 16'd1;
-                                gen_g     <= 0;
-                                gen_state <= (gen_t + 16'd1 >= cur_a_nnz) ?
-                                             GEN_ROW_DONE : GEN_FETCH;
-                            end else begin
-                                // Zero-overhead prefetch: register next A nnz in same cycle
-                                // fetch_* combinatorial signals already use gen_t (next nnz index)
-                                gen_a_val <= fetch_a_val;
-                                gen_b_off <= fetch_b_off;
-                                gen_b_nnz <= fetch_b_nnz;
-                                gen_t     <= gen_t + 16'd1;
-                                gen_g     <= 0;
-                                // Stay in GEN_EMIT — no state change
+                    if (pack_can_emit) begin
+                        // -------------------------------------------------------
+                        // Emit case: carry_cnt + gen_cnt >= 4 → write one group
+                        // -------------------------------------------------------
+                        if (!task_fifo_full) begin
+                            // Update carry with overflow elements
+                            // (new carry slots = ne[4-carry_cnt .. gen_cnt-1])
+                            carry_cnt <= pack_total[1:0]; // = carry_cnt+gen_cnt-4
+
+                            // Carry slot 0 (overflow_cnt >= 1, i.e., pack_total >= 5)
+                            if (pack_total >= 3'd5) begin
+                                carry_av[0] <= gen_a_val;
+                                carry_bv[0] <= (carry_cnt == 2'd1) ? ne_bv[3] :
+                                               (carry_cnt == 2'd2) ? ne_bv[2] : ne_bv[1];
+                                carry_bc[0] <= (carry_cnt == 2'd1) ? ne_bc[3] :
+                                               (carry_cnt == 2'd2) ? ne_bc[2] : ne_bc[1];
                             end
+                            // Carry slot 1 (overflow_cnt >= 2, i.e., pack_total >= 6)
+                            if (pack_total >= 3'd6) begin
+                                carry_av[1] <= gen_a_val;
+                                carry_bv[1] <= (carry_cnt == 2'd2) ? ne_bv[3] : ne_bv[2];
+                                carry_bc[1] <= (carry_cnt == 2'd2) ? ne_bc[3] : ne_bc[2];
+                            end
+                            // Carry slot 2 (overflow_cnt == 3, pack_total == 7)
+                            if (pack_total == 3'd7) begin
+                                carry_av[2] <= gen_a_val;
+                                carry_bv[2] <= ne_bv[3];
+                                carry_bc[2] <= ne_bc[3];
+                            end
+
+                            // State / counter transitions
+                            if (gen_last_grp) begin
+                                if (gen_t >= cur_a_nnz) begin
+                                    // All A nnzs consumed
+                                    if (pack_total[1:0] != 2'b0)
+                                        gen_state <= GEN_FLUSH;
+                                    else
+                                        gen_state <= GEN_ROW_DONE;
+                                end else if (fetch_b_nnz == 16'd0) begin
+                                    // Next A nnz has empty B row — skip
+                                    gen_t <= gen_t + 16'd1;
+                                    gen_g <= 0;
+                                    if (gen_t + 16'd1 >= cur_a_nnz) begin
+                                        if (pack_total[1:0] != 2'b0)
+                                            gen_state <= GEN_FLUSH;
+                                        else
+                                            gen_state <= GEN_ROW_DONE;
+                                    end else
+                                        gen_state <= GEN_FETCH;
+                                end else begin
+                                    // Zero-overhead prefetch: load next A nnz
+                                    gen_a_val <= fetch_a_val;
+                                    gen_b_off <= fetch_b_off;
+                                    gen_b_nnz <= fetch_b_nnz;
+                                    gen_t     <= gen_t + 16'd1;
+                                    gen_g     <= 0;
+                                    // stay in GEN_EMIT
+                                end
+                            end else begin
+                                gen_g <= gen_g + 16'd1;
+                            end
+                        end
+                        // else task_fifo_full: stall, no updates
+
+                    end else begin
+                        // -------------------------------------------------------
+                        // Accumulate case: carry_cnt + gen_cnt < 4.
+                        // Only possible at last group (gen_cnt < 4).
+                        // No FIFO write, always proceed.
+                        // -------------------------------------------------------
+                        carry_cnt <= pack_total[1:0]; // carry_cnt + gen_cnt (< 4)
+
+                        // Append ne[0..gen_cnt-1] to carry starting at carry[carry_cnt]
+                        case (carry_cnt)
+                            2'd0: begin
+                                carry_av[0] <= gen_a_val;
+                                carry_bv[0] <= ne_bv[0];
+                                carry_bc[0] <= ne_bc[0];
+                                if (gen_cnt >= 4'd2) begin
+                                    carry_av[1] <= gen_a_val;
+                                    carry_bv[1] <= ne_bv[1];
+                                    carry_bc[1] <= ne_bc[1];
+                                end
+                                if (gen_cnt >= 4'd3) begin
+                                    carry_av[2] <= gen_a_val;
+                                    carry_bv[2] <= ne_bv[2];
+                                    carry_bc[2] <= ne_bc[2];
+                                end
+                            end
+                            2'd1: begin
+                                carry_av[1] <= gen_a_val;
+                                carry_bv[1] <= ne_bv[0];
+                                carry_bc[1] <= ne_bc[0];
+                                if (gen_cnt >= 4'd2) begin
+                                    carry_av[2] <= gen_a_val;
+                                    carry_bv[2] <= ne_bv[1];
+                                    carry_bc[2] <= ne_bc[1];
+                                end
+                            end
+                            2'd2: begin
+                                carry_av[2] <= gen_a_val;
+                                carry_bv[2] <= ne_bv[0];
+                                carry_bc[2] <= ne_bc[0];
+                            end
+                            default: ; // carry_cnt=3: impossible when pack_total < 4
+                        endcase
+
+                        // State transitions (always at last group)
+                        if (gen_t >= cur_a_nnz) begin
+                            // No more A nnzs — flush carry
+                            gen_state <= GEN_FLUSH;
+                        end else if (fetch_b_nnz == 16'd0) begin
+                            gen_t <= gen_t + 16'd1;
+                            gen_g <= 0;
+                            if (gen_t + 16'd1 >= cur_a_nnz)
+                                gen_state <= GEN_FLUSH;
+                            else
+                                gen_state <= GEN_FETCH;
                         end else begin
-                            gen_g <= gen_g + 16'd1;
+                            // Zero-overhead prefetch: next A nnz has non-empty B row
+                            gen_a_val <= fetch_a_val;
+                            gen_b_off <= fetch_b_off;
+                            gen_b_nnz <= fetch_b_nnz;
+                            gen_t     <= gen_t + 16'd1;
+                            gen_g     <= 0;
+                            // stay in GEN_EMIT
                         end
                     end
-                    // else: task FIFO full — stall, stay in GEN_EMIT
+                end
+
+                GEN_FLUSH: begin
+                    // Emit partial group using carry buffer, then done
+                    if (!task_fifo_full) begin
+                        carry_cnt <= 2'd0;
+                        gen_state <= GEN_ROW_DONE;
+                    end
                 end
 
                 GEN_ROW_DONE: begin
-                    // Stay until main FSM moves on to drain/next-row
                     if (state == PE_WAIT_TASK_DRAIN || state == PE_NEXT_ROW ||
                         state == PE_WAIT_PRODUCT_DRAIN)
                         gen_state <= GEN_IDLE;
                 end
+
+                default: gen_state <= GEN_IDLE;
+
             endcase
         end
     end

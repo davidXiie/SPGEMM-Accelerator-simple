@@ -286,17 +286,7 @@ module row_accumulator_4bank #(
         end
     end
 
-`ifdef SIMULATION
-    integer ai, bi;
-    always @(posedge clk) begin
-        if (do_enqueue) begin
-            for (ai = 0; ai < 4; ai = ai + 1)
-                for (bi = ai+1; bi < 4; bi = bi + 1)
-                    if (lane_valid[ai] && lane_valid[bi] &&
-                        lane_col_id[ai*COL_W +:COL_W] == lane_col_id[bi*COL_W +:COL_W])
-                        $error("RA4B: duplicate col_id in bundle lanes %0d and %0d", ai, bi);
-        end
-    end
-`endif
+// Note: duplicate col_id across lanes is valid with cross-B-row packing;
+// accum_bank FIFO serialises multiple writes to the same address correctly.
 
 endmodule
