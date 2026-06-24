@@ -1,12 +1,14 @@
 <testsuites name="results">
   <testsuite name="all" package="all">
-    <property name="random_seed" value="1782218023" />
+    <property name="random_seed" value="1782219794" />
     <testcase name="test_comp_case1_p0" classname="test_comp" file="d:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\pe_sim\test_comp.py" lineno="201" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>
     <testcase name="test_comp_case1_p1" classname="test_comp" file="d:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\pe_sim\test_comp.py" lineno="259" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>
-    <testcase name="test_comp_case1_cluster" classname="test_comp" file="d:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\pe_sim\test_comp.py" lineno="472" time="23.22848629951477" sim_time_ns="333170.0" ratio_time="14343.164496558682" />
+    <testcase name="test_comp_case1_cluster" classname="test_comp" file="d:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\pe_sim\test_comp.py" lineno="472" time="22.648678064346313" sim_time_ns="333110.0" ratio_time="14707.701661598687">
+      <failure error_type="AssertionError" error_msg="5 mismatches" />
+    </testcase>
   </testsuite>
 </testsuites>

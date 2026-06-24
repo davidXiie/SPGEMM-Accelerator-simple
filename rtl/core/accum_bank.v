@@ -19,33 +19,33 @@ module accum_bank #(
 ) (
     input  wire                         clk,
     input  wire                         rst_n,
-    input  wire [EPOCH_W-1:0]           row_epoch,
+    input  wire [EPOCH_W-1:0]           row_epoch,   //输入的16位tag
 
     // 4 independent write ports (only active when wr_valid[i]=1)
     input  wire [3:0]                   wr_valid,
     input  wire [4*BANK_ADDR_W-1:0]     wr_addr_flat,  // {addr3,addr2,addr1,addr0}
     input  wire [4*PROD_W-1:0]          wr_data_flat,  // {dat3,dat2,dat1,dat0}
-    output wire [FIFO_DEPTH_LOG:0]      free_count,    // 0..FIFO_DEPTH
+    output wire [FIFO_DEPTH_LOG:0]      free_count,    // 0..FIFO_DEPTH   fifo剩余容量
 
-    output wire                         rmw_busy,
-    output wire                         fifo_empty,
+    output wire                         rmw_busy,      //RMW 流水线是否有空闲
+    output wire                         fifo_empty,     //fifo 是否为空
 
     // Sequential tag-clear (triggered by top on epoch wrap)
-    input  wire                         tag_clear_en,
-    output wire                         tag_clear_busy,
+    input  wire                         tag_clear_en,    //清除tag
+    output wire                         tag_clear_busy,  //tag_clear 是否有空闲
 
     // Combinational drain read (only valid after all RMW done)
-    input  wire [BANK_ADDR_W-1:0]       drain_rd_addr,
-    output wire [EPOCH_W-1:0]           drain_tag,
-    output wire [ACC_W-1:0]             drain_acc
+    input  wire [BANK_ADDR_W-1:0]       drain_rd_addr, //上层选择读取的bank地址
+    output wire [EPOCH_W-1:0]           drain_tag,  //判断tag是否相等
+    output wire [ACC_W-1:0]             drain_acc     //输出的累加结果
 );
 
     // =========================================================================
     // Localparams
     // =========================================================================
-    localparam ENTRY_W    = BANK_ADDR_W + PROD_W;
-    localparam FIFO_MASK  = FIFO_DEPTH - 1;
-    localparam BANK_LAST  = BANK_DEPTH - 1;   // last valid bank_addr
+    localparam ENTRY_W    = BANK_ADDR_W + PROD_W;   //fifo存地址+值
+    localparam FIFO_MASK  = FIFO_DEPTH - 1;             //深度是8
+    localparam BANK_LAST  = BANK_DEPTH - 1;   //   bank深度128
 
     // =========================================================================
     // FIFO — circular ring buffer with 4 write ports, 1 read port
@@ -53,9 +53,9 @@ module accum_bank #(
     //   slot_of[i] = number of wr_valid[0..i-1] bits set = write offset for port i
     //   All valid ports write contiguously from fifo_tail each cycle.
     // =========================================================================
-    reg [ENTRY_W-1:0]         fifo_mem [0:FIFO_DEPTH-1];
-    reg [FIFO_DEPTH_LOG-1:0]  fifo_tail;
-    reg [FIFO_DEPTH_LOG-1:0]  fifo_head;
+    (* ram_style = "distributed" *) reg [ENTRY_W-1:0]         fifo_mem [0:FIFO_DEPTH-1];       //8*23 fifo  
+    reg [FIFO_DEPTH_LOG-1:0]  fifo_tail;                        //写指针
+    reg [FIFO_DEPTH_LOG-1:0]  fifo_head;                        //读指针
     reg [FIFO_DEPTH_LOG:0]    fifo_cnt;    // 0 .. FIFO_DEPTH (needs one extra bit)
 
     // Burst write count this cycle
@@ -79,11 +79,11 @@ module accum_bank #(
     // =========================================================================
     // Tag & accumulator memories
     // =========================================================================
-    reg [EPOCH_W-1:0]  tag_mem [0:BANK_DEPTH-1];
-    reg [ACC_W-1:0]    acc_mem [0:BANK_DEPTH-1];
+    (* ram_style = "distributed" *) reg [EPOCH_W-1:0]  tag_mem [0:BANK_DEPTH-1];     //存128个epoch
+    (* ram_style = "distributed" *) reg [ACC_W-1:0]    acc_mem [0:BANK_DEPTH-1];      //128个累加器
 
     assign drain_tag = tag_mem[drain_rd_addr];
-    assign drain_acc = acc_mem[drain_rd_addr];
+    assign drain_acc = acc_mem[drain_rd_addr];          //通过 drain_rd_addr 同时读出对应地址的 tag 和 acc，供上层判断数据有效性并获取累加结果
 
     // =========================================================================
     // RMW pipeline — 2 stages, 1 entry/cycle throughput
@@ -99,12 +99,13 @@ module accum_bank #(
     reg [BANK_ADDR_W-1:0] s2_addr;
     reg [ACC_W-1:0]       s2_new_val;
 
-    wire deq_fire = !fifo_empty;
+    wire deq_fire = !fifo_empty;   //FIFO 非空就取
     assign rmw_busy = s1_valid | s2_valid;
 
-    wire               s12_hazard   = s1_valid && s2_valid && (s1_addr == s2_addr);
-    wire [ACC_W-1:0]   s1_old_acc   = s12_hazard ? s2_new_val : acc_mem[s1_addr];
-    wire               s1_epoch_hit = s12_hazard ? 1'b1       : (tag_mem[s1_addr] == row_epoch);
+    wire               s12_hazard   = s1_valid && s2_valid && (s1_addr == s2_addr);  
+    // RAW 冲突：S1 要读地址 X，S2 正要写地址 X（还没落地），S1 如果直接读 mem 会拿到旧值。
+    wire [ACC_W-1:0]   s1_old_acc   = s12_hazard ? s2_new_val : acc_mem[s1_addr]; // 绕过内存，直接用 S2 还没写回的结果
+    wire               s1_epoch_hit = s12_hazard ? 1'b1       : (tag_mem[s1_addr] == row_epoch);   
     wire [ACC_W-1:0]   s1_new_val   = s1_epoch_hit
         ? (s1_old_acc + {{(ACC_W-PROD_W){s1_prod[PROD_W-1]}}, s1_prod})
         : {{(ACC_W-PROD_W){s1_prod[PROD_W-1]}}, s1_prod};
@@ -125,8 +126,6 @@ module accum_bank #(
             fifo_tail <= {FIFO_DEPTH_LOG{1'b0}};
             fifo_head <= {FIFO_DEPTH_LOG{1'b0}};
             fifo_cnt  <= {(FIFO_DEPTH_LOG+1){1'b0}};
-            for (fi = 0; fi < FIFO_DEPTH; fi = fi + 1)
-                fifo_mem[fi] <= {ENTRY_W{1'b0}};
         end else begin
             // Multi-write: each valid port appends to the burst sequence
             if (wr_valid[0])
@@ -164,9 +163,13 @@ module accum_bank #(
             s2_new_val <= {ACC_W{1'b0}};
         end else begin
             // S2: write result to memories
+            // Tag-clear writes merged here (s2_valid and clr_active never
+            // overlap: clr_active only set after all RMW done).
             if (s2_valid) begin
                 tag_mem[s2_addr] <= row_epoch;
                 acc_mem[s2_addr] <= s2_new_val;
+            end else if (clr_active) begin
+                tag_mem[clr_idx] <= {EPOCH_W{1'b0}};
             end
             // Advance S1 → S2
             s2_valid   <= s1_valid;
@@ -191,15 +194,13 @@ module accum_bank #(
         if (!rst_n) begin
             clr_active <= 1'b0;
             clr_idx    <= {BANK_ADDR_W{1'b0}};
-            for (ci = 0; ci < BANK_DEPTH; ci = ci + 1)
-                tag_mem[ci] <= {EPOCH_W{1'b0}};
         end else begin
             if (tag_clear_en && !clr_active) begin
                 clr_active <= 1'b1;
                 clr_idx    <= {BANK_ADDR_W{1'b0}};
             end
             if (clr_active) begin
-                tag_mem[clr_idx] <= {EPOCH_W{1'b0}};
+                // tag_mem write handled in main RMW always block
                 if (clr_idx == BANK_LAST[BANK_ADDR_W-1:0]) begin
                     clr_active <= 1'b0;
                 end else begin
@@ -213,6 +214,15 @@ module accum_bank #(
     // Simulation assertions
     // =========================================================================
 `ifdef SIMULATION
+    integer si;
+    initial begin
+        for (si = 0; si < BANK_DEPTH; si = si + 1) begin
+            tag_mem[si] = {EPOCH_W{1'b0}};
+            acc_mem[si] = {ACC_W{1'b0}};
+        end
+        for (si = 0; si < FIFO_DEPTH; si = si + 1)
+            fifo_mem[si] = {ENTRY_W{1'b0}};
+    end
     always @(posedge clk) begin
         if (fifo_cnt > FIFO_DEPTH[FIFO_DEPTH_LOG:0])
             $error("accum_bank FIFO overflow (cnt=%0d)", fifo_cnt);
