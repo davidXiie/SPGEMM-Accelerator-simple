@@ -1,8 +1,6 @@
 //=============================================================================
-// File     : tb_pe_top.v
-// Project  : SPGEMM-Accelerator v2
-// Brief    : Minimal cocotb wrapper for pe_top unit test.
-//            Exposes all PE ports as module-level wires for cocotb to drive.
+// File     : tb_pe_top.v  (inst-version)
+// Brief    : Cocotb wrapper for pe_top unit test.
 //=============================================================================
 
 `include "defines.vh"
@@ -20,33 +18,33 @@ module tb_pe_top;
     reg [`MAX_DIM_BITS-1:0] K;
     reg [`MAX_DIM_BITS-1:0] N;
 
-    // A buffer load ports
+    // Row descriptor load port
     reg        a_desc_we;
-    reg [7:0]  a_desc_waddr;
+    reg [`A_ROW_ADDR_BITS-1:0] a_desc_waddr;
     reg [63:0] a_desc_wdata;
-    reg        a_col_we;
-    reg [15:0] a_col_waddr;
-    reg [`DATA_WIDTH-1:0] a_col_wdata;
+
+    // A value buffer load port
     reg        a_val_we;
-    reg [15:0] a_val_waddr;
+    reg [`A_NNZ_ADDR_BITS-1:0] a_val_waddr;
     reg [`DATA_WIDTH-1:0] a_val_wdata;
 
-    // B buffer load ports
-    reg        b_desc_we;
-    reg [9:0]  b_desc_waddr;
-    reg [63:0] b_desc_wdata;
+    // B col/val buffer load ports
     reg        b_col_we;
-    reg [17:0] b_col_waddr;
+    reg [`B_NNZ_ADDR_BITS-1:0] b_col_waddr;
     reg [`DATA_WIDTH-1:0] b_col_wdata;
     reg        b_val_we;
-    reg [17:0] b_val_waddr;
+    reg [`B_NNZ_ADDR_BITS-1:0] b_val_waddr;
     reg [`DATA_WIDTH-1:0] b_val_wdata;
 
-    // C buffer write handshake
-    wire       cbuf_wr_valid;
-    reg        cbuf_wr_ready;
-    wire [17:0] cbuf_wr_addr;
-    wire [`DATA_WIDTH-1:0] cbuf_wr_data;
+    // Instruction buffer load port
+    reg        instr_we;
+    reg [`INSTR_ADDR_BITS-1:0] instr_waddr;
+    reg [63:0] instr_wdata;
+
+    // C buffer read port: addr = {local_row_idx[7:0], col[8:0]}  (17-bit)
+    reg         c_rd_en;
+    reg  [16:0] c_rd_addr;
+    wire [31:0]  c_rd_data;    // FP32 output
 
 `ifndef COCOTB_SIM
     always #5 aclk = ~aclk;
@@ -63,47 +61,35 @@ module tb_pe_top;
         .N              (N),
 
         .a_desc_we      (a_desc_we),
-        .a_desc_waddr   (a_desc_waddr[`A_ROW_ADDR_BITS-1:0]),
+        .a_desc_waddr   (a_desc_waddr),
         .a_desc_wdata   (a_desc_wdata),
-        .a_col_we       (a_col_we),
-        .a_col_waddr    (a_col_waddr[`A_NNZ_ADDR_BITS-1:0]),
-        .a_col_wdata    (a_col_wdata),
+
         .a_val_we       (a_val_we),
-        .a_val_waddr    (a_val_waddr[`A_NNZ_ADDR_BITS-1:0]),
+        .a_val_waddr    (a_val_waddr),
         .a_val_wdata    (a_val_wdata),
 
-        .b_desc_we      (b_desc_we),
-        .b_desc_waddr   (b_desc_waddr[`B_ROW_ADDR_BITS-1:0]),
-        .b_desc_wdata   (b_desc_wdata),
         .b_col_we       (b_col_we),
-        .b_col_waddr    (b_col_waddr[`B_NNZ_ADDR_BITS-1:0]),
+        .b_col_waddr    (b_col_waddr),
         .b_col_wdata    (b_col_wdata),
         .b_val_we       (b_val_we),
-        .b_val_waddr    (b_val_waddr[`B_NNZ_ADDR_BITS-1:0]),
+        .b_val_waddr    (b_val_waddr),
         .b_val_wdata    (b_val_wdata),
 
-        .cbuf_wr_valid  (cbuf_wr_valid),
-        .cbuf_wr_ready  (cbuf_wr_ready),
-        .cbuf_wr_addr   (cbuf_wr_addr),
-        .cbuf_wr_data   (cbuf_wr_data)
-    );
+        .instr_we       (instr_we),
+        .instr_waddr    (instr_waddr),
+        .instr_wdata    (instr_wdata),
 
-`ifndef COCOTB_SIM
-    initial begin
-        $dumpfile("tb_pe_top.fst");
-        $dumpvars(0, tb_pe_top);
-        #10000000 $finish;
-    end
-`endif
+        .c_rd_en        (c_rd_en),
+        .c_rd_addr      (c_rd_addr),
+        .c_rd_data      (c_rd_data)
+    );
 
 `ifdef COCOTB_SIM
     initial begin
         $dumpfile("sim_build/pe_dump.vcd");
         $dumpvars(0, tb_pe_top.u_pe.state);
         $dumpvars(0, tb_pe_top.u_pe.row_idx);
-        $dumpvars(0, tb_pe_top.u_pe.a_nnz_left);
-        $dumpvars(0, tb_pe_top.u_pe.b_nnz_left);
-        $dumpvars(0, tb_pe_top.u_pe.cbuf_wr_valid);
+        $dumpvars(0, tb_pe_top.u_pe.instr_ptr);
         $dumpvars(0, tb_pe_top.u_pe.done);
     end
 `endif

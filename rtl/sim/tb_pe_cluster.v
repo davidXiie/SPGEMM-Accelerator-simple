@@ -13,7 +13,6 @@ module tb_pe_cluster;
     localparam N_PE = `N_PE;
 
     // Expose N_PE so cocotb can read it without hardcoding the value in Python.
-    // reg+initial resolves to a known value at time 0 (no X unlike wire/assign).
     reg [7:0] n_pe_sig;
     initial n_pe_sig = N_PE;
 
@@ -29,17 +28,16 @@ module tb_pe_cluster;
     reg [N_PE-1:0]                    a_desc_we;
     reg [N_PE*`A_ROW_ADDR_BITS-1:0]  a_desc_waddr;
     reg [N_PE*64-1:0]                 a_desc_wdata;
-    reg [N_PE-1:0]                    a_col_we;
-    reg [N_PE*`A_NNZ_ADDR_BITS-1:0]  a_col_waddr;
-    reg [N_PE*`DATA_WIDTH-1:0]        a_col_wdata;
     reg [N_PE-1:0]                    a_val_we;
     reg [N_PE*`A_NNZ_ADDR_BITS-1:0]  a_val_waddr;
     reg [N_PE*`DATA_WIDTH-1:0]        a_val_wdata;
 
+    // Instruction buffer (packed, per PE)
+    reg [N_PE-1:0]                    instr_we;
+    reg [N_PE*`INSTR_ADDR_BITS-1:0]  instr_waddr;
+    reg [N_PE*64-1:0]                 instr_wdata;
+
     // B write ports (broadcast)
-    reg                          b_desc_we;
-    reg [`B_ROW_ADDR_BITS-1:0]  b_desc_waddr;
-    reg [63:0]                   b_desc_wdata;
     reg                          b_col_we;
     reg [`B_NNZ_ADDR_BITS-1:0]  b_col_waddr;
     reg [`DATA_WIDTH-1:0]        b_col_wdata;
@@ -47,11 +45,10 @@ module tb_pe_cluster;
     reg [`B_NNZ_ADDR_BITS-1:0]  b_val_waddr;
     reg [`DATA_WIDTH-1:0]        b_val_wdata;
 
-    // C output (packed)
-    wire [N_PE-1:0]                        cbuf_wr_valid;
-    reg  [N_PE-1:0]                        cbuf_wr_ready;
-    wire [N_PE*`C_DENSE_DEPTH_LOG-1:0]    cbuf_wr_addr;
-    wire [N_PE*`DATA_WIDTH-1:0]           cbuf_wr_data;
+    // C buffer read (per PE, packed)
+    reg  [N_PE-1:0]              c_rd_en;
+    reg  [N_PE*17-1:0]           c_rd_addr;
+    wire [N_PE*32-1:0]           c_rd_data;  // FP32 per PE
 
 `ifndef COCOTB_SIM
     always #5 aclk = ~aclk;
@@ -63,15 +60,16 @@ module tb_pe_cluster;
         .M(M), .K(K), .N(N),
 
         .a_desc_we(a_desc_we), .a_desc_waddr(a_desc_waddr), .a_desc_wdata(a_desc_wdata),
-        .a_col_we(a_col_we),   .a_col_waddr(a_col_waddr),   .a_col_wdata(a_col_wdata),
         .a_val_we(a_val_we),   .a_val_waddr(a_val_waddr),   .a_val_wdata(a_val_wdata),
 
-        .b_desc_we(b_desc_we), .b_desc_waddr(b_desc_waddr), .b_desc_wdata(b_desc_wdata),
+        .instr_we(instr_we),   .instr_waddr(instr_waddr),   .instr_wdata(instr_wdata),
+
         .b_col_we(b_col_we),   .b_col_waddr(b_col_waddr),   .b_col_wdata(b_col_wdata),
         .b_val_we(b_val_we),   .b_val_waddr(b_val_waddr),   .b_val_wdata(b_val_wdata),
 
-        .cbuf_wr_valid(cbuf_wr_valid), .cbuf_wr_ready(cbuf_wr_ready),
-        .cbuf_wr_addr(cbuf_wr_addr),   .cbuf_wr_data(cbuf_wr_data)
+        .c_rd_en  (c_rd_en),
+        .c_rd_addr(c_rd_addr),
+        .c_rd_data(c_rd_data)
     );
 
 `ifdef COCOTB_SIM

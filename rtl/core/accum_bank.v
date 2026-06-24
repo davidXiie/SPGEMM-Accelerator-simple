@@ -11,7 +11,7 @@
 module accum_bank #(
     parameter BANK_DEPTH     = 128,    // accumulators per bank (OUT_COLS/4)
     parameter BANK_ADDR_W    = 7,      // ceil(log2(BANK_DEPTH))
-    parameter PROD_W         = 16,
+    parameter PROD_W         = 32,     // FP32 product (ACC_W == PROD_W)
     parameter ACC_W          = 32,
     parameter EPOCH_W        = 16,
     parameter FIFO_DEPTH     = 8,      // must be power of 2
@@ -105,9 +105,16 @@ module accum_bank #(
     wire               s12_hazard   = s1_valid && s2_valid && (s1_addr == s2_addr);
     wire [ACC_W-1:0]   s1_old_acc   = s12_hazard ? s2_new_val : acc_mem[s1_addr];
     wire               s1_epoch_hit = s12_hazard ? 1'b1       : (tag_mem[s1_addr] == row_epoch);
-    wire [ACC_W-1:0]   s1_new_val   = s1_epoch_hit
-        ? (s1_old_acc + {{(ACC_W-PROD_W){s1_prod[PROD_W-1]}}, s1_prod})
-        : {{(ACC_W-PROD_W){s1_prod[PROD_W-1]}}, s1_prod};
+
+    // FP32 accumulation: fp32_add(old_acc, new_product)
+    wire [31:0] fp32_sum;
+    fp32_add u_fp32_add (
+        .a (s1_old_acc),
+        .b (s1_prod),
+        .z (fp32_sum)
+    );
+    // On epoch miss (first write to this col): store product directly (same as 0.0 + prod)
+    wire [ACC_W-1:0]   s1_new_val   = s1_epoch_hit ? fp32_sum : s1_prod;
 
     // =========================================================================
     // Tag clear
