@@ -37,10 +37,10 @@ module pe_cluster #(
     input  wire [N_PE*`A_NNZ_ADDR_BITS-1:0]   a_val_waddr,
     input  wire [N_PE*`DATA_WIDTH-1:0]         a_val_wdata,
 
-    // Instruction buffer (packed, per PE)
-    input  wire [N_PE-1:0]                     instr_we,
-    input  wire [N_PE*`INSTR_ADDR_BITS-1:0]   instr_waddr,
-    input  wire [N_PE*128-1:0]                 instr_wdata,
+    // A column index buffer (per PE, packed)
+    input  wire [N_PE-1:0]                     a_col_we,
+    input  wire [N_PE*`A_NNZ_ADDR_BITS-1:0]   a_col_waddr,
+    input  wire [N_PE*`DATA_WIDTH-1:0]         a_col_wdata,
 
     //=========================================================================
     // B write ports (broadcast — single set, wired to every PE)
@@ -50,6 +50,11 @@ module pe_cluster #(
     input  wire                          b_val_we,
     input  wire [`B_NNZ_ADDR_BITS-1:0]  b_val_waddr,
     input  wire [`DATA_WIDTH-1:0]        b_val_wdata,
+
+    // B row descriptor (broadcast; {b_off[31:0], 0[31:16], b_nnz[15:0]})
+    input  wire                          b_desc_we,
+    input  wire [`MAX_DIM_BITS-1:0]     b_desc_waddr,
+    input  wire [63:0]                   b_desc_wdata,
 
     //=========================================================================
     // C buffer read (per PE, packed)
@@ -80,9 +85,9 @@ module pe_cluster #(
                 .a_val_waddr (a_val_waddr[i*`A_NNZ_ADDR_BITS +: `A_NNZ_ADDR_BITS]),
                 .a_val_wdata (a_val_wdata[i*`DATA_WIDTH +: `DATA_WIDTH]),
 
-                .instr_we    (instr_we[i]),
-                .instr_waddr (instr_waddr[i*`INSTR_ADDR_BITS +: `INSTR_ADDR_BITS]),
-                .instr_wdata (instr_wdata[i*128 +: 128]),
+                .a_col_we    (a_col_we[i]),
+                .a_col_waddr (a_col_waddr[i*`A_NNZ_ADDR_BITS +: `A_NNZ_ADDR_BITS]),
+                .a_col_wdata (a_col_wdata[i*`DATA_WIDTH +: `DATA_WIDTH]),
 
                 .b_col_we    (b_col_we),
                 .b_col_waddr (b_col_waddr),
@@ -90,6 +95,10 @@ module pe_cluster #(
                 .b_val_we    (b_val_we),
                 .b_val_waddr (b_val_waddr),
                 .b_val_wdata (b_val_wdata),
+
+                .b_desc_we   (b_desc_we),
+                .b_desc_waddr(b_desc_waddr),
+                .b_desc_wdata(b_desc_wdata),
 
                 .c_rd_en   (c_rd_en[i]),
                 .c_rd_addr (c_rd_addr[i*17 +: 17]),

@@ -32,10 +32,10 @@ module tb_pe_cluster;
     reg [N_PE*`A_NNZ_ADDR_BITS-1:0]  a_val_waddr;
     reg [N_PE*`DATA_WIDTH-1:0]        a_val_wdata;
 
-    // Instruction buffer (packed, per PE)
-    reg [N_PE-1:0]                    instr_we;
-    reg [N_PE*`INSTR_ADDR_BITS-1:0]  instr_waddr;
-    reg [N_PE*128-1:0]                instr_wdata;
+    // A column index buffer (packed, per PE)
+    reg [N_PE-1:0]                    a_col_we;
+    reg [N_PE*`A_NNZ_ADDR_BITS-1:0]  a_col_waddr;
+    reg [N_PE*`DATA_WIDTH-1:0]        a_col_wdata;
 
     // B write ports (broadcast)
     reg                          b_col_we;
@@ -44,6 +44,11 @@ module tb_pe_cluster;
     reg                          b_val_we;
     reg [`B_NNZ_ADDR_BITS-1:0]  b_val_waddr;
     reg [`DATA_WIDTH-1:0]        b_val_wdata;
+
+    // B row descriptor (broadcast)
+    reg                          b_desc_we;
+    reg [`MAX_DIM_BITS-1:0]     b_desc_waddr;
+    reg [63:0]                   b_desc_wdata;
 
     // C buffer read (per PE, packed)
     reg  [N_PE-1:0]              c_rd_en;
@@ -61,11 +66,11 @@ module tb_pe_cluster;
 
         .a_desc_we(a_desc_we), .a_desc_waddr(a_desc_waddr), .a_desc_wdata(a_desc_wdata),
         .a_val_we(a_val_we),   .a_val_waddr(a_val_waddr),   .a_val_wdata(a_val_wdata),
-
-        .instr_we(instr_we),   .instr_waddr(instr_waddr),   .instr_wdata(instr_wdata),
+        .a_col_we(a_col_we),   .a_col_waddr(a_col_waddr),   .a_col_wdata(a_col_wdata),
 
         .b_col_we(b_col_we),   .b_col_waddr(b_col_waddr),   .b_col_wdata(b_col_wdata),
         .b_val_we(b_val_we),   .b_val_waddr(b_val_waddr),   .b_val_wdata(b_val_wdata),
+        .b_desc_we(b_desc_we), .b_desc_waddr(b_desc_waddr), .b_desc_wdata(b_desc_wdata),
 
         .c_rd_en  (c_rd_en),
         .c_rd_addr(c_rd_addr),

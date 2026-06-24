@@ -36,10 +36,15 @@ module tb_pe_top;
     reg [`B_NNZ_ADDR_BITS-1:0] b_val_waddr;
     reg [`DATA_WIDTH-1:0] b_val_wdata;
 
-    // Instruction buffer load port
-    reg        instr_we;
-    reg [`INSTR_ADDR_BITS-1:0] instr_waddr;
-    reg [127:0] instr_wdata;
+    // A column index buffer load port
+    reg        a_col_we;
+    reg [`A_NNZ_ADDR_BITS-1:0] a_col_waddr;
+    reg [`DATA_WIDTH-1:0] a_col_wdata;
+
+    // B row descriptor load port
+    reg        b_desc_we;
+    reg [`MAX_DIM_BITS-1:0] b_desc_waddr;
+    reg [63:0] b_desc_wdata;
 
     // C buffer read port: addr = {local_row_idx[7:0], col[8:0]}  (17-bit)
     reg         c_rd_en;
@@ -68,6 +73,10 @@ module tb_pe_top;
         .a_val_waddr    (a_val_waddr),
         .a_val_wdata    (a_val_wdata),
 
+        .a_col_we       (a_col_we),
+        .a_col_waddr    (a_col_waddr),
+        .a_col_wdata    (a_col_wdata),
+
         .b_col_we       (b_col_we),
         .b_col_waddr    (b_col_waddr),
         .b_col_wdata    (b_col_wdata),
@@ -75,9 +84,9 @@ module tb_pe_top;
         .b_val_waddr    (b_val_waddr),
         .b_val_wdata    (b_val_wdata),
 
-        .instr_we       (instr_we),
-        .instr_waddr    (instr_waddr),
-        .instr_wdata    (instr_wdata),
+        .b_desc_we      (b_desc_we),
+        .b_desc_waddr   (b_desc_waddr),
+        .b_desc_wdata   (b_desc_wdata),
 
         .c_rd_en        (c_rd_en),
         .c_rd_addr      (c_rd_addr),
@@ -89,7 +98,7 @@ module tb_pe_top;
         $dumpfile("sim_build/pe_dump.vcd");
         $dumpvars(0, tb_pe_top.u_pe.state);
         $dumpvars(0, tb_pe_top.u_pe.row_idx);
-        $dumpvars(0, tb_pe_top.u_pe.instr_ptr);
+        $dumpvars(0, tb_pe_top.u_pe.gen_state);
         $dumpvars(0, tb_pe_top.u_pe.done);
     end
 `endif

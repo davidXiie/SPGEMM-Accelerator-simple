@@ -1,29 +1,34 @@
 //=============================================================================
 // File     : pe_top.v
-// Project  : SPGEMM-Accelerator v2  (inst-version)
-// Brief    : PE Top — address-based instruction scheduling.
+// Project  : SPGEMM-Accelerator v2
+// Brief    : PE Top — hardware on-chip instruction generation.
 //
-//   A_val_buf and B_col/val_b0..b3 hold raw A/B data in SRAM.
-//   instr_buf holds a pre-computed (b_group, a_val_ptr, lane_valid) schedule.
+//   Eliminates pre-computed instr_buf.  Instead, the generator FSM walks
+//   A_col_buf → B_desc_buf to produce (a_val, bg0..3, valid3:0) directly.
 //
-//   Instruction format (64-bit):
-//     [63:33] reserved
-//     [32:18] b_group      index into B_col/val bank arrays  (15-bit)
-//     [17: 4] a_val_ptr    index into A_val_buf              (14-bit)
-//     [ 3: 0] lane_valid   active MAC lanes                  ( 4-bit)
+//   A row descriptor (64-bit):
+//     [63:32] a_off   — start index into A_col/A_val buffers (local to PE)
+//     [31:16] a_nnz   — number of A nonzeros in this row
+//     [15: 0] c_row   — global C output row id (host readback only)
 //
-//   Row descriptor stored in A_row_desc_buf (64-bit):
-//     [63:32] instr_start  absolute start index into instr_buf
-//     [31:16] instr_count  number of instruction groups for this row
-//     [15: 0] c_row        global C output row id (for host readback only)
+//   B descriptor (64-bit, broadcast):
+//     [63:32] b_off   — start of B row in 4-bank storage (may be non-4-aligned)
+//     [15: 0] b_nnz   — number of B nonzeros in this row
 //
-//   C buffer: 4-bank internal SRAM, banked by col[1:0].
-//     Each PE owns its slice; drain writes 4 values simultaneously per cycle.
-//     Read port c_rd_addr = {local_row_idx[7:0], col[8:0]} (17-bit).
+//   B bank layout (per-row rotation):
+//     B row r stored at b_off where b_off%4 == r%4.
+//     Element at abs_pos = b_off+u → bank abs_pos%4, addr abs_pos/4.
+//     Generator uses abs_pos%4 to assign lanes; no FIFO, direct 4-wide emit.
+//
+//   Generator throughput: 4 MACs/cycle (one 4-wide group per cycle in EMIT).
+//   Read latency overhead: 1 cycle per A nonzero (GEN_FETCH state).
 //
 //   FSM (8 states):
 //     PE_IDLE → PE_LOAD_ROW_DESC → PE_CLEAR_ACC → PE_STREAM_INSTRS
 //     → PE_WAIT_TASK_DRAIN → PE_WAIT_PRODUCT_DRAIN → PE_NEXT_ROW → PE_DONE
+//
+//   Generator sub-FSM (4 states, runs concurrently during PE_STREAM_INSTRS):
+//     GEN_IDLE → GEN_FETCH → GEN_EMIT ↔ GEN_ROW_DONE
 //=============================================================================
 
 `include "defines.vh"
@@ -42,15 +47,20 @@ module pe_top #(
     input  wire [`MAX_DIM_BITS-1:0]  K,
     input  wire [`MAX_DIM_BITS-1:0]  N,
 
-    // Row descriptor load  {instr_start[31:0], instr_count[15:0], c_row[15:0]}
+    // Row descriptor load  {a_off[31:0], a_nnz[15:0], c_row[15:0]}
     input  wire                          a_desc_we,
     input  wire [`A_ROW_ADDR_BITS-1:0]   a_desc_waddr,
     input  wire [63:0]                   a_desc_wdata,
 
-    // A value buffer
+    // A value buffer (FP16)
     input  wire                          a_val_we,
     input  wire [`A_NNZ_ADDR_BITS-1:0]  a_val_waddr,
     input  wire [`DATA_WIDTH-1:0]        a_val_wdata,
+
+    // A column index buffer (which B row each A nonzero points to)
+    input  wire                          a_col_we,
+    input  wire [`A_NNZ_ADDR_BITS-1:0]  a_col_waddr,
+    input  wire [`DATA_WIDTH-1:0]        a_col_wdata,
 
     // B col/val buffers (4-banked by absolute index[1:0])
     input  wire                          b_col_we,
@@ -60,10 +70,10 @@ module pe_top #(
     input  wire [`B_NNZ_ADDR_BITS-1:0]  b_val_waddr,
     input  wire [`DATA_WIDTH-1:0]        b_val_wdata,
 
-    // Instruction buffer
-    input  wire                          instr_we,
-    input  wire [`INSTR_ADDR_BITS-1:0]  instr_waddr,
-    input  wire [127:0]                  instr_wdata,
+    // B row descriptor (broadcast; {b_off[31:0], 0[31:16], b_nnz[15:0]})
+    input  wire                          b_desc_we,
+    input  wire [`MAX_DIM_BITS-1:0]     b_desc_waddr,
+    input  wire [63:0]                   b_desc_wdata,
 
     // C buffer read port (synchronous, 1-cycle latency)
     // c_rd_addr = {local_row_idx[A_ROW_ADDR_BITS-1:0], col[8:0]}  (17-bit)
@@ -72,19 +82,22 @@ module pe_top #(
     output reg  [31:0]                   c_rd_data   // FP32 accumulator output
 );
 
-    localparam ACC_COL_W     = 9;                                  // log2(OUT_COLS=512)
-    localparam BANK_ADDR_W   = ACC_COL_W - 2;                     // 7 bits (groups 0..127)
-    localparam C_BANK_ADDR_W = `A_ROW_ADDR_BITS + BANK_ADDR_W;   // 15 bits
-    localparam C_BANK_DEPTH  = 1 << C_BANK_ADDR_W;                // 32768
-    localparam C_RD_ADDR_W   = `A_ROW_ADDR_BITS + ACC_COL_W;     // 17 bits
+    localparam ACC_COL_W     = 9;
+    localparam BANK_ADDR_W   = ACC_COL_W - 2;
+    localparam C_BANK_ADDR_W = `A_ROW_ADDR_BITS + BANK_ADDR_W;
+    localparam C_BANK_DEPTH  = 1 << C_BANK_ADDR_W;
+    localparam C_RD_ADDR_W   = `A_ROW_ADDR_BITS + ACC_COL_W;
+
+    localparam B_BANK_DEPTH  = `B_NNZ_SLOT / 4;
+    localparam B_DESC_DEPTH  = 1 << `MAX_DIM_BITS;
 
     //=========================================================================
     // SRAM declarations
     //=========================================================================
     reg [63:0]            A_row_desc_buf [0:`A_ROW_SLOT_PER_PE-1];
     reg [`DATA_WIDTH-1:0] A_val_buf      [0:`A_NNZ_SLOT_PER_PE-1];
+    reg [`DATA_WIDTH-1:0] A_col_buf      [0:`A_NNZ_SLOT_PER_PE-1];
 
-    localparam B_BANK_DEPTH = `B_NNZ_SLOT / 4;
     reg [`DATA_WIDTH-1:0] B_col_b0 [0:B_BANK_DEPTH-1];
     reg [`DATA_WIDTH-1:0] B_col_b1 [0:B_BANK_DEPTH-1];
     reg [`DATA_WIDTH-1:0] B_col_b2 [0:B_BANK_DEPTH-1];
@@ -94,10 +107,8 @@ module pe_top #(
     reg [`DATA_WIDTH-1:0] B_val_b2 [0:B_BANK_DEPTH-1];
     reg [`DATA_WIDTH-1:0] B_val_b3 [0:B_BANK_DEPTH-1];
 
-    reg [127:0]           instr_buf [0:`INSTR_SLOT-1];
+    reg [63:0]            B_desc_buf [0:B_DESC_DEPTH-1];
 
-    // Per-PE banked C buffer: banked by col[1:0], stores FP32 (32-bit)
-    // Address: {local_row_idx[7:0], col_group[6:0]}  (15-bit)
     reg [31:0] c_bank0 [0:C_BANK_DEPTH-1];
     reg [31:0] c_bank1 [0:C_BANK_DEPTH-1];
     reg [31:0] c_bank2 [0:C_BANK_DEPTH-1];
@@ -106,7 +117,7 @@ module pe_top #(
 `ifdef COCOTB_SIM
     integer _ci;
     initial begin
-        c_rd_data = 32'h0;  // prevent X in packed c_rd_data bus (32-bit FP32 per PE)
+        c_rd_data = 32'h0;
         for (_ci = 0; _ci < C_BANK_DEPTH; _ci = _ci + 1) begin
             c_bank0[_ci] = 32'h0; c_bank1[_ci] = 32'h0;
             c_bank2[_ci] = 32'h0; c_bank3[_ci] = 32'h0;
@@ -120,7 +131,8 @@ module pe_top #(
     always @(posedge aclk) begin
         if (a_desc_we) A_row_desc_buf[a_desc_waddr] <= a_desc_wdata;
         if (a_val_we)  A_val_buf[a_val_waddr]        <= a_val_wdata;
-        if (instr_we)  instr_buf[instr_waddr]         <= instr_wdata;
+        if (a_col_we)  A_col_buf[a_col_waddr]         <= a_col_wdata;
+        if (b_desc_we) B_desc_buf[b_desc_waddr]       <= b_desc_wdata;
         if (b_col_we) case (b_col_waddr[1:0])
             2'd0: B_col_b0[b_col_waddr[`B_NNZ_ADDR_BITS-1:2]] <= b_col_wdata;
             2'd1: B_col_b1[b_col_waddr[`B_NNZ_ADDR_BITS-1:2]] <= b_col_wdata;
@@ -154,54 +166,173 @@ module pe_top #(
     //=========================================================================
     reg comp_sel;
     reg [`A_ROW_ADDR_BITS-1:0] row_idx;
-    reg [31:0]                 cur_instr_start;
-    reg [15:0]                 cur_instr_count;
-    reg [15:0]                 instr_ptr;
+    reg [31:0]                 cur_a_off;   // A nnz start (local to PE)
+    reg [15:0]                 cur_a_nnz;   // A nnz count for current row
 
     //=========================================================================
-    // Instruction decode & task group formation (combinatorial)
+    // Generator sub-FSM
     //=========================================================================
-    wire [`INSTR_ADDR_BITS-1:0] instr_raddr =
-        cur_instr_start[`INSTR_ADDR_BITS-1:0] + instr_ptr[`INSTR_ADDR_BITS-1:0];
+    localparam GEN_IDLE     = 2'd0;
+    localparam GEN_FETCH    = 2'd1;  // read A_col+A_val+B_desc (combinatorial), register
+    localparam GEN_EMIT     = 2'd2;  // emit 4-wide group each cycle
+    localparam GEN_ROW_DONE = 2'd3;  // row complete, wait for main FSM
 
-    // Instruction format (128-bit, 4 × 32-bit per-lane words):
-    //   Lane k word occupies bits [k*32+31 : k*32]:
-    //     [31:16] a_val_fp16 — FP16 A-value embedded directly (no A_val_buf read)
-    //     [15: 1] b_group    — B bank address = abs_B_pos / 4; lane k reads bank k
-    //     [    0] valid
-    wire [127:0] cur_instr    = instr_buf[instr_raddr];
-    wire [3:0]   lane_valid_w = {cur_instr[96], cur_instr[64], cur_instr[32], cur_instr[0]};
+    reg [1:0]  gen_state;
+    reg [15:0] gen_t;       // A nonzero counter (incremented after each FETCH)
+    reg [15:0] gen_g;       // group counter within current B row
+    reg [15:0] gen_a_val;   // registered FP16 A value for current A nonzero
+    reg [31:0] gen_b_off;   // registered B row start offset
+    reg [15:0] gen_b_nnz;   // registered B row nonzero count
 
-    // Per-lane FP16 A values (embedded in instruction)
-    wire [`DATA_WIDTH-1:0] a_val_0 = cur_instr[ 31:16];
-    wire [`DATA_WIDTH-1:0] a_val_1 = cur_instr[ 63:48];
-    wire [`DATA_WIDTH-1:0] a_val_2 = cur_instr[ 95:80];
-    wire [`DATA_WIDTH-1:0] a_val_3 = cur_instr[127:112];
+    // Combinatorial reads (2-level chain; FPGA needs pipeline regs between stages)
+    wire [`A_NNZ_ADDR_BITS-1:0] fetch_a_addr =
+        cur_a_off[`A_NNZ_ADDR_BITS-1:0] + gen_t[`A_NNZ_ADDR_BITS-1:0];
+    wire [15:0] fetch_k_idx   = A_col_buf[fetch_a_addr];
+    wire [15:0] fetch_a_val   = A_val_buf[fetch_a_addr];
+    wire [63:0] fetch_b_desc  = B_desc_buf[fetch_k_idx[`MAX_DIM_BITS-1:0]];
+    wire [31:0] fetch_b_off   = fetch_b_desc[63:32];
+    wire [15:0] fetch_b_nnz   = fetch_b_desc[15:0];
 
-    // Per-lane B bank addresses — all 4 B SRAMs addressed independently
-    wire [14:0] bg0 = cur_instr[ 15: 1];
-    wire [14:0] bg1 = cur_instr[ 47:33];
-    wire [14:0] bg2 = cur_instr[ 79:65];
-    wire [14:0] bg3 = cur_instr[111:97];
+    // Current group decode (combinatorial from registered gen_b_off, gen_g, gen_a_val)
+    //
+    // B elements in group g: absolute positions abs_base .. abs_base+3 where
+    //   abs_base = gen_b_off + gen_g * 4
+    //
+    // With per-row rotation, gen_b_off%4 == r%4, so abs_base%4 rotates per B row.
+    //   lane for position j = (abs_base + j) % 4
+    //   b_grp for lane k   = (abs_base + jk) / 4  where jk = (k - abs_base%4 + 4)%4
+    //
+    // Pattern for b_grp (let m = abs_base/4, r = abs_base%4):
+    //   r=0: L0=m  L1=m  L2=m  L3=m
+    //   r=1: L0=m+1 L1=m  L2=m  L3=m
+    //   r=2: L0=m+1 L1=m+1 L2=m  L3=m
+    //   r=3: L0=m+1 L1=m+1 L2=m+1 L3=m
 
-    wire [`DATA_WIDTH-1:0] bc0 = B_col_b0[bg0];
-    wire [`DATA_WIDTH-1:0] bv0 = B_val_b0[bg0];
-    wire [`DATA_WIDTH-1:0] bc1 = B_col_b1[bg1];
-    wire [`DATA_WIDTH-1:0] bv1 = B_val_b1[bg1];
-    wire [`DATA_WIDTH-1:0] bc2 = B_col_b2[bg2];
-    wire [`DATA_WIDTH-1:0] bv2 = B_val_b2[bg2];
-    wire [`DATA_WIDTH-1:0] bc3 = B_col_b3[bg3];
-    wire [`DATA_WIDTH-1:0] bv3 = B_val_b3[bg3];
+    wire [31:0] gen_abs_base  = gen_b_off + {gen_g[13:0], 2'b00};
+    wire [1:0]  gen_r         = gen_abs_base[1:0];
+    wire [14:0] gen_m         = gen_abs_base[16:2];   // abs_base >> 2 (fits 15 bits)
 
-    wire [`TASK_WIDTH-1:0] sg0 = {16'd0, bv0, a_val_0, bc0};
-    wire [`TASK_WIDTH-1:0] sg1 = {16'd0, bv1, a_val_1, bc1};
-    wire [`TASK_WIDTH-1:0] sg2 = {16'd0, bv2, a_val_2, bc2};
-    wire [`TASK_WIDTH-1:0] sg3 = {16'd0, bv3, a_val_3, bc3};
+    wire [14:0] gen_bg0 = (gen_r == 2'd0) ? gen_m : gen_m + 15'd1;
+    wire [14:0] gen_bg1 = (gen_r <= 2'd1) ? gen_m : gen_m + 15'd1;
+    wire [14:0] gen_bg2 = (gen_r <= 2'd2) ? gen_m : gen_m + 15'd1;
+    wire [14:0] gen_bg3 = gen_m;
+
+    // Valid bits: position j=(k-r+4)%4 for lane k; valid if j < gen_cnt
+    wire [15:0] gen_remaining = gen_b_nnz - {gen_g[13:0], 2'b00};
+    wire [3:0]  gen_cnt       = (gen_remaining >= 16'd4) ? 4'd4 : gen_remaining[3:0];
+    wire        gen_last_grp  = (gen_remaining <= 16'd4);
+
+    wire [1:0] jv0 = (2'd0 - gen_r) & 2'b11;
+    wire [1:0] jv1 = (2'd1 - gen_r) & 2'b11;
+    wire [1:0] jv2 = (2'd2 - gen_r) & 2'b11;
+    wire [1:0] jv3 = (2'd3 - gen_r) & 2'b11;
+
+    wire gen_vld0 = ({2'b0, jv0} < gen_cnt);
+    wire gen_vld1 = ({2'b0, jv1} < gen_cnt);
+    wire gen_vld2 = ({2'b0, jv2} < gen_cnt);
+    wire gen_vld3 = ({2'b0, jv3} < gen_cnt);
+    wire [3:0] gen_lane_valid = {gen_vld3, gen_vld2, gen_vld1, gen_vld0};
+
+    // B bank reads using per-lane independent addresses (combinatorial)
+    wire [`DATA_WIDTH-1:0] bc0 = B_col_b0[gen_bg0];
+    wire [`DATA_WIDTH-1:0] bv0 = B_val_b0[gen_bg0];
+    wire [`DATA_WIDTH-1:0] bc1 = B_col_b1[gen_bg1];
+    wire [`DATA_WIDTH-1:0] bv1 = B_val_b1[gen_bg1];
+    wire [`DATA_WIDTH-1:0] bc2 = B_col_b2[gen_bg2];
+    wire [`DATA_WIDTH-1:0] bv2 = B_val_b2[gen_bg2];
+    wire [`DATA_WIDTH-1:0] bc3 = B_col_b3[gen_bg3];
+    wire [`DATA_WIDTH-1:0] bv3 = B_val_b3[gen_bg3];
+
+    // All 4 lanes share same A value (same A nonzero for this B row's group)
+    wire [`TASK_WIDTH-1:0] sg0 = {16'd0, bv0, gen_a_val, bc0};
+    wire [`TASK_WIDTH-1:0] sg1 = {16'd0, bv1, gen_a_val, bc1};
+    wire [`TASK_WIDTH-1:0] sg2 = {16'd0, bv2, gen_a_val, bc2};
+    wire [`TASK_WIDTH-1:0] sg3 = {16'd0, bv3, gen_a_val, bc3};
 
     wire task_fifo_full;
-    wire instr_active      = (state == PE_STREAM_INSTRS) && (instr_ptr < cur_instr_count);
-    wire task_group_wr_en  = instr_active && !task_fifo_full;
+    wire gen_emit_active    = (gen_state == GEN_EMIT);
+    wire [3:0] lane_valid_w = gen_lane_valid;
+    wire task_group_wr_en   = gen_emit_active && !task_fifo_full;
     wire [`TASK_GROUP_WIDTH-1:0] task_group_wr_data = {sg3, sg2, sg1, sg0, lane_valid_w};
+
+    //=========================================================================
+    // Generator sub-FSM sequential
+    //=========================================================================
+    always @(posedge aclk or negedge aresetn) begin
+        if (!aresetn) begin
+            gen_state <= GEN_IDLE;
+            gen_t     <= 0;
+            gen_g     <= 0;
+            gen_a_val <= 0;
+            gen_b_off <= 0;
+            gen_b_nnz <= 0;
+        end else begin
+            case (gen_state)
+                GEN_IDLE: begin
+                    if (state == PE_CLEAR_ACC) begin
+                        gen_t <= 0;
+                        gen_g <= 0;
+                        if (cur_a_nnz == 16'd0)
+                            gen_state <= GEN_ROW_DONE;
+                        else
+                            gen_state <= GEN_FETCH;
+                    end
+                end
+
+                GEN_FETCH: begin
+                    // Register combinatorial reads; advance t (pre-increment for next fetch)
+                    gen_a_val <= fetch_a_val;
+                    gen_b_off <= fetch_b_off;
+                    gen_b_nnz <= fetch_b_nnz;
+                    gen_t     <= gen_t + 16'd1;
+                    gen_g     <= 0;
+                    if (fetch_b_nnz == 16'd0) begin
+                        // Empty B row — skip
+                        if (gen_t + 16'd1 >= cur_a_nnz)
+                            gen_state <= GEN_ROW_DONE;
+                        // else stay GEN_FETCH (gen_t already incremented above → next A nnz)
+                    end else begin
+                        gen_state <= GEN_EMIT;
+                    end
+                end
+
+                GEN_EMIT: begin
+                    if (!task_fifo_full) begin
+                        if (gen_last_grp) begin
+                            if (gen_t >= cur_a_nnz) begin
+                                gen_state <= GEN_ROW_DONE;
+                            end else if (fetch_b_nnz == 16'd0) begin
+                                // Next A nnz has empty B row — fall back to GEN_FETCH to skip
+                                gen_t     <= gen_t + 16'd1;
+                                gen_g     <= 0;
+                                gen_state <= (gen_t + 16'd1 >= cur_a_nnz) ?
+                                             GEN_ROW_DONE : GEN_FETCH;
+                            end else begin
+                                // Zero-overhead prefetch: register next A nnz in same cycle
+                                // fetch_* combinatorial signals already use gen_t (next nnz index)
+                                gen_a_val <= fetch_a_val;
+                                gen_b_off <= fetch_b_off;
+                                gen_b_nnz <= fetch_b_nnz;
+                                gen_t     <= gen_t + 16'd1;
+                                gen_g     <= 0;
+                                // Stay in GEN_EMIT — no state change
+                            end
+                        end else begin
+                            gen_g <= gen_g + 16'd1;
+                        end
+                    end
+                    // else: task FIFO full — stall, stay in GEN_EMIT
+                end
+
+                GEN_ROW_DONE: begin
+                    // Stay until main FSM moves on to drain/next-row
+                    if (state == PE_WAIT_TASK_DRAIN || state == PE_NEXT_ROW ||
+                        state == PE_WAIT_PRODUCT_DRAIN)
+                        gen_state <= GEN_IDLE;
+                end
+            endcase
+        end
+    end
 
     //=========================================================================
     // Task Group FIFO → MAC Array
@@ -228,11 +359,11 @@ module pe_top #(
     //=========================================================================
     // MAC Array (4-lane)
     //=========================================================================
-    wire [`N_MAC-1:0]           mac_lane_valid;
+    wire [`N_MAC-1:0]             mac_lane_valid;
     wire [`N_MAC*`TASK_WIDTH-1:0] mac_lane_task;
 
-    reg [`N_MAC-1:0]            mac_lane_valid_r;
-    reg [`N_MAC*`TASK_WIDTH-1:0] mac_lane_task_r;
+    reg [`N_MAC-1:0]              mac_lane_valid_r;
+    reg [`N_MAC*`TASK_WIDTH-1:0]  mac_lane_task_r;
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
             mac_lane_valid_r <= 0;
@@ -250,7 +381,7 @@ module pe_top #(
     assign mac_lane_valid = mac_lane_valid_r;
     assign mac_lane_task  = mac_lane_task_r;
 
-    wire [`N_MAC-1:0]               mul_valid;
+    wire [`N_MAC-1:0]                mul_valid;
     wire [`N_MAC*`PRODUCT_WIDTH-1:0] mul_product;
 
     pe_mul_array u_mul_array (
@@ -272,7 +403,6 @@ module pe_top #(
 
     assign product_group_wr_en            = |mul_valid && !product_fifo_full;
     assign product_group_wr_data[3:0]     = mul_valid;
-    // Each product: 48 bits = {col_id[15:0], fp32_val[31:0]}
     assign product_group_wr_data[51:4]    = mul_product[0*48 +: 48];
     assign product_group_wr_data[99:52]   = mul_product[1*48 +: 48];
     assign product_group_wr_data[147:100] = mul_product[2*48 +: 48];
@@ -306,7 +436,6 @@ module pe_top #(
     wire acc_row_done_0,    acc_row_done_1;
     wire acc_issue_ready_0, acc_issue_ready_1;
 
-    // 4-wide drain outputs from each accumulator
     wire [3:0]             drain_valid_0,  drain_valid_1;
     wire [BANK_ADDR_W-1:0] drain_gaddr_0,  drain_gaddr_1;
     wire [`A_ROW_ADDR_BITS-1:0] drain_row_id_0, drain_row_id_1;
@@ -330,20 +459,18 @@ module pe_top #(
 
     wire [3:0]   acc_lane_valid;
     wire [35:0]  acc_lane_col_id;
-    wire [127:0] acc_lane_product;  // 4 × 32-bit FP32 products
+    wire [127:0] acc_lane_product;
 
     assign acc_lane_valid   = prod_fifo_rd_data[3:0];
-    // Each lane's product: bits [31:0]=fp32_val, bits [47:32]=col_id
-    assign acc_lane_col_id  = {prod_fifo_rd_data[4+3*48+32 +: 9],  // lane3 col_id[8:0]
+    assign acc_lane_col_id  = {prod_fifo_rd_data[4+3*48+32 +: 9],
                                prod_fifo_rd_data[4+2*48+32 +: 9],
                                prod_fifo_rd_data[4+1*48+32 +: 9],
                                prod_fifo_rd_data[4+0*48+32 +: 9]};
-    assign acc_lane_product = {prod_fifo_rd_data[4+3*48 +: 32],    // lane3 fp32_val
+    assign acc_lane_product = {prod_fifo_rd_data[4+3*48 +: 32],
                                prod_fifo_rd_data[4+2*48 +: 32],
                                prod_fifo_rd_data[4+1*48 +: 32],
                                prod_fifo_rd_data[4+0*48 +: 32]};
 
-    // row_id_in = local row_idx (used as C buffer row address)
     row_accumulator_4bank #(
         .OUT_COLS(512), .COL_W(9), .PROD_W(32),
         .ACC_W(32), .EPOCH_W(16), .BANK_FIFO_DEPTH(32), .BANK_FIFO_LOG(5),
@@ -379,16 +506,13 @@ module pe_top #(
                              (product_fifo_cnt < (`PROD_FIFO_DEPTH - `MUL_LAT - 1));
 
     //=========================================================================
-    // C buffer write — 4 banks updated simultaneously per drain group
-    // comp_sel=0: acc0 computing, acc1 draining → drain from acc1
-    // comp_sel=1: acc1 computing, acc0 draining → drain from acc0
+    // C buffer write
     //=========================================================================
-    wire [3:0]               c_wr_valid  = comp_sel ? drain_valid_0  : drain_valid_1;
-    wire [BANK_ADDR_W-1:0]   c_wr_gaddr  = comp_sel ? drain_gaddr_0  : drain_gaddr_1;
+    wire [3:0]               c_wr_valid = comp_sel ? drain_valid_0  : drain_valid_1;
+    wire [BANK_ADDR_W-1:0]   c_wr_gaddr = comp_sel ? drain_gaddr_0  : drain_gaddr_1;
     wire [`A_ROW_ADDR_BITS-1:0] c_wr_rid = comp_sel ? drain_row_id_0 : drain_row_id_1;
-    wire [4*32-1:0]          c_wr_vals   = comp_sel ? drain_values_0 : drain_values_1;
-
-    wire [C_BANK_ADDR_W-1:0] c_wr_addr = {c_wr_rid, c_wr_gaddr};
+    wire [4*32-1:0]          c_wr_vals  = comp_sel ? drain_values_0 : drain_values_1;
+    wire [C_BANK_ADDR_W-1:0] c_wr_addr  = {c_wr_rid, c_wr_gaddr};
 
     always @(posedge aclk) begin
         if (c_wr_valid[0]) c_bank0[c_wr_addr] <= c_wr_vals[0*32 +: 32];
@@ -398,8 +522,7 @@ module pe_top #(
     end
 
     //=========================================================================
-    // C buffer read (synchronous, 1-cycle latency)
-    // c_rd_addr = {local_row_idx[A_ROW_ADDR_BITS-1:0], col[ACC_COL_W-1:0]}
+    // C buffer read
     //=========================================================================
     wire [1:0]               rd_bank  = c_rd_addr[1:0];
     wire [C_BANK_ADDR_W-1:0] rd_baddr = {c_rd_addr[C_RD_ADDR_W-1:ACC_COL_W],
@@ -417,7 +540,7 @@ module pe_top #(
     end
 
     //=========================================================================
-    // FSM sequential
+    // Main FSM sequential
     //=========================================================================
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) state <= PE_IDLE;
@@ -426,12 +549,11 @@ module pe_top #(
 
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
-            comp_sel        <= 1'b0;
-            row_idx         <= 0;
-            cur_instr_start <= 0;
-            cur_instr_count <= 0;
-            instr_ptr       <= 0;
-            done            <= 1'b0;
+            comp_sel    <= 1'b0;
+            row_idx     <= 0;
+            cur_a_off   <= 0;
+            cur_a_nnz   <= 0;
+            done        <= 1'b0;
         end else begin
             done <= 1'b0;
             case (state)
@@ -440,19 +562,13 @@ module pe_top #(
                 end
 
                 PE_LOAD_ROW_DESC: begin
-                    cur_instr_count <= A_row_desc_buf[row_idx][31:16];
-                    cur_instr_start <= A_row_desc_buf[row_idx][63:32];
-                    instr_ptr       <= 0;
-                end
-
-                PE_STREAM_INSTRS: begin
-                    if (task_group_wr_en) instr_ptr <= instr_ptr + 1;
+                    cur_a_off <= A_row_desc_buf[row_idx][63:32];
+                    cur_a_nnz <= A_row_desc_buf[row_idx][31:16];
                 end
 
                 PE_NEXT_ROW: begin
                     row_idx  <= row_idx + 1;
                     comp_sel <= ~comp_sel;
-                    instr_ptr <= 0;
                 end
 
                 PE_DONE: begin
@@ -463,7 +579,7 @@ module pe_top #(
     end
 
     //=========================================================================
-    // FSM next-state logic
+    // Main FSM next-state logic
     //=========================================================================
     always @(*) begin
         state_next = state;
@@ -478,12 +594,10 @@ module pe_top #(
                 state_next = PE_STREAM_INSTRS;
 
             PE_STREAM_INSTRS:
-                if (instr_ptr >= cur_instr_count)
-                    state_next = PE_WAIT_TASK_DRAIN;
+                if (gen_state == GEN_ROW_DONE) state_next = PE_WAIT_TASK_DRAIN;
 
             PE_WAIT_TASK_DRAIN:
-                if (task_fifo_empty)
-                    state_next = PE_WAIT_PRODUCT_DRAIN;
+                if (task_fifo_empty) state_next = PE_WAIT_PRODUCT_DRAIN;
 
             PE_WAIT_PRODUCT_DRAIN:
                 if (prod_fifo_empty && mac_pipeline_idle && !other_acc_busy)
