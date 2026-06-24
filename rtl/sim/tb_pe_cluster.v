@@ -35,7 +35,7 @@ module tb_pe_cluster;
     // Instruction buffer (packed, per PE)
     reg [N_PE-1:0]                    instr_we;
     reg [N_PE*`INSTR_ADDR_BITS-1:0]  instr_waddr;
-    reg [N_PE*64-1:0]                 instr_wdata;
+    reg [N_PE*128-1:0]                instr_wdata;
 
     // B write ports (broadcast)
     reg                          b_col_we;

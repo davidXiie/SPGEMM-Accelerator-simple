@@ -63,7 +63,7 @@ module pe_top #(
     // Instruction buffer
     input  wire                          instr_we,
     input  wire [`INSTR_ADDR_BITS-1:0]  instr_waddr,
-    input  wire [63:0]                   instr_wdata,
+    input  wire [127:0]                  instr_wdata,
 
     // C buffer read port (synchronous, 1-cycle latency)
     // c_rd_addr = {local_row_idx[A_ROW_ADDR_BITS-1:0], col[8:0]}  (17-bit)
@@ -94,7 +94,7 @@ module pe_top #(
     reg [`DATA_WIDTH-1:0] B_val_b2 [0:B_BANK_DEPTH-1];
     reg [`DATA_WIDTH-1:0] B_val_b3 [0:B_BANK_DEPTH-1];
 
-    reg [63:0]            instr_buf [0:`INSTR_SLOT-1];
+    reg [127:0]           instr_buf [0:`INSTR_SLOT-1];
 
     // Per-PE banked C buffer: banked by col[1:0], stores FP32 (32-bit)
     // Address: {local_row_idx[7:0], col_group[6:0]}  (15-bit)
@@ -164,27 +164,39 @@ module pe_top #(
     wire [`INSTR_ADDR_BITS-1:0] instr_raddr =
         cur_instr_start[`INSTR_ADDR_BITS-1:0] + instr_ptr[`INSTR_ADDR_BITS-1:0];
 
-    wire [63:0] cur_instr    = instr_buf[instr_raddr];
-    wire [14:0] b_group_w    = cur_instr[32:18];
-    wire [13:0] a_val_ptr_w  = cur_instr[17:4];
-    wire [3:0]  lane_valid_w = cur_instr[3:0];
+    // Instruction format (128-bit, 4 × 32-bit per-lane words):
+    //   Lane k word occupies bits [k*32+31 : k*32]:
+    //     [31:16] a_val_fp16 — FP16 A-value embedded directly (no A_val_buf read)
+    //     [15: 1] b_group    — B bank address = abs_B_pos / 4; lane k reads bank k
+    //     [    0] valid
+    wire [127:0] cur_instr    = instr_buf[instr_raddr];
+    wire [3:0]   lane_valid_w = {cur_instr[96], cur_instr[64], cur_instr[32], cur_instr[0]};
 
-    wire [`DATA_WIDTH-1:0] a_val_w = A_val_buf[a_val_ptr_w];
+    // Per-lane FP16 A values (embedded in instruction)
+    wire [`DATA_WIDTH-1:0] a_val_0 = cur_instr[ 31:16];
+    wire [`DATA_WIDTH-1:0] a_val_1 = cur_instr[ 63:48];
+    wire [`DATA_WIDTH-1:0] a_val_2 = cur_instr[ 95:80];
+    wire [`DATA_WIDTH-1:0] a_val_3 = cur_instr[127:112];
 
-    wire [14:0] bg = b_group_w;
-    wire [`DATA_WIDTH-1:0] bc0 = B_col_b0[bg];
-    wire [`DATA_WIDTH-1:0] bc1 = B_col_b1[bg];
-    wire [`DATA_WIDTH-1:0] bc2 = B_col_b2[bg];
-    wire [`DATA_WIDTH-1:0] bc3 = B_col_b3[bg];
-    wire [`DATA_WIDTH-1:0] bv0 = B_val_b0[bg];
-    wire [`DATA_WIDTH-1:0] bv1 = B_val_b1[bg];
-    wire [`DATA_WIDTH-1:0] bv2 = B_val_b2[bg];
-    wire [`DATA_WIDTH-1:0] bv3 = B_val_b3[bg];
+    // Per-lane B bank addresses — all 4 B SRAMs addressed independently
+    wire [14:0] bg0 = cur_instr[ 15: 1];
+    wire [14:0] bg1 = cur_instr[ 47:33];
+    wire [14:0] bg2 = cur_instr[ 79:65];
+    wire [14:0] bg3 = cur_instr[111:97];
 
-    wire [`TASK_WIDTH-1:0] sg0 = {16'd0, bv0, a_val_w, bc0};
-    wire [`TASK_WIDTH-1:0] sg1 = {16'd0, bv1, a_val_w, bc1};
-    wire [`TASK_WIDTH-1:0] sg2 = {16'd0, bv2, a_val_w, bc2};
-    wire [`TASK_WIDTH-1:0] sg3 = {16'd0, bv3, a_val_w, bc3};
+    wire [`DATA_WIDTH-1:0] bc0 = B_col_b0[bg0];
+    wire [`DATA_WIDTH-1:0] bv0 = B_val_b0[bg0];
+    wire [`DATA_WIDTH-1:0] bc1 = B_col_b1[bg1];
+    wire [`DATA_WIDTH-1:0] bv1 = B_val_b1[bg1];
+    wire [`DATA_WIDTH-1:0] bc2 = B_col_b2[bg2];
+    wire [`DATA_WIDTH-1:0] bv2 = B_val_b2[bg2];
+    wire [`DATA_WIDTH-1:0] bc3 = B_col_b3[bg3];
+    wire [`DATA_WIDTH-1:0] bv3 = B_val_b3[bg3];
+
+    wire [`TASK_WIDTH-1:0] sg0 = {16'd0, bv0, a_val_0, bc0};
+    wire [`TASK_WIDTH-1:0] sg1 = {16'd0, bv1, a_val_1, bc1};
+    wire [`TASK_WIDTH-1:0] sg2 = {16'd0, bv2, a_val_2, bc2};
+    wire [`TASK_WIDTH-1:0] sg3 = {16'd0, bv3, a_val_3, bc3};
 
     wire task_fifo_full;
     wire instr_active      = (state == PE_STREAM_INSTRS) && (instr_ptr < cur_instr_count);

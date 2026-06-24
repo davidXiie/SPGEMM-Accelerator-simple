@@ -40,7 +40,7 @@ module pe_cluster #(
     // Instruction buffer (packed, per PE)
     input  wire [N_PE-1:0]                     instr_we,
     input  wire [N_PE*`INSTR_ADDR_BITS-1:0]   instr_waddr,
-    input  wire [N_PE*64-1:0]                  instr_wdata,
+    input  wire [N_PE*128-1:0]                 instr_wdata,
 
     //=========================================================================
     // B write ports (broadcast — single set, wired to every PE)
@@ -82,7 +82,7 @@ module pe_cluster #(
 
                 .instr_we    (instr_we[i]),
                 .instr_waddr (instr_waddr[i*`INSTR_ADDR_BITS +: `INSTR_ADDR_BITS]),
-                .instr_wdata (instr_wdata[i*64 +: 64]),
+                .instr_wdata (instr_wdata[i*128 +: 128]),
 
                 .b_col_we    (b_col_we),
                 .b_col_waddr (b_col_waddr),

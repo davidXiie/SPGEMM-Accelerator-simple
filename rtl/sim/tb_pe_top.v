@@ -39,7 +39,7 @@ module tb_pe_top;
     // Instruction buffer load port
     reg        instr_we;
     reg [`INSTR_ADDR_BITS-1:0] instr_waddr;
-    reg [63:0] instr_wdata;
+    reg [127:0] instr_wdata;
 
     // C buffer read port: addr = {local_row_idx[7:0], col[8:0]}  (17-bit)
     reg         c_rd_en;

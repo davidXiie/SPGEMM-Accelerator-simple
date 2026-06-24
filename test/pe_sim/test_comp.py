@@ -86,22 +86,30 @@ def load_comp_matrix(index_file, matrix_file, is_B=False):
         return row_desc, col_arr, val_arr, offset, B_rows, B_cols
 
 def align_b_4wide(Bd, Bc, Bv):
-    """Pad each B row to ceil(nnz/4)*4 elements so b_ptr is always 4-aligned.
-    Padding elements use col=0, val=0 (harmless: products are 0 and lane_valid
-    masks them out).  Must be called before compute_golden_c and hardware load.
+    """Lay out B elements in 4-bank storage with per-row rotation.
+
+    Row r starts at absolute position b_off where b_off % 4 == r % 4.
+    This distributes the "extra" tail element of partial rows evenly across
+    all 4 lanes rather than always burdening Lane 0.
+
+    The instruction generator uses lane = (b_off + u) % 4 (general form) so
+    no hardware change is required — element at abs_pos goes to bank abs_pos%4.
     """
     new_Bc = []; new_Bv = []; new_Bd = []; new_off = 0
-    for d in Bd:
+    for r, d in enumerate(Bd):
         start  = (d >> 32) & 0xFFFFFFFF
         nnz    = d & 0xFFFF
+        # Advance new_off until its residue == r % 4
+        target_mod = r % 4
+        gap = (target_mod - new_off % 4) % 4
+        for _ in range(gap):
+            new_Bc.append(0); new_Bv.append(0)
+        new_off += gap
         new_Bd.append((new_off << 32) | nnz)
         for t in range(nnz):
             new_Bc.append(Bc[start + t])
             new_Bv.append(Bv[start + t])
-        padded = ((nnz + 3) // 4) * 4
-        for _ in range(padded - nnz):
-            new_Bc.append(0); new_Bv.append(0)
-        new_off += padded
+        new_off += nnz
     return new_Bd, new_Bc, new_Bv
 
 def count_total_macs(Ad, Ac, Bd, M):
@@ -163,21 +171,28 @@ def compute_golden_c(A_desc, A_col, A_val, B_desc, B_col, B_val, M, N, K):
 #-------------------------------------------------------------------------
 # Instruction schedule builder
 #-------------------------------------------------------------------------
-def build_instructions(Ad, Ac, Bd, M):
-    """Generate address-based instruction schedule from raw A/B CSR data.
+def build_instructions(Ad, Ac, Av, Bd, M):
+    """Generate per-lane instruction groups (128-bit each).
 
-    Instruction word (64-bit):
-      [32:18] b_group    — absolute group index into B_col/val_b0..b3 banks
-      [17: 4] a_val_ptr  — absolute index into A_val flat array
-      [ 3: 0] lane_valid — active MAC lanes for this group
+    Instruction format — 4 × 32-bit per-lane words, lane k at bits [k*32+31:k*32]:
+      [31:16] a_val_fp16  — FP16 A-value embedded directly
+      [15: 1] b_group     — B bank address = abs_B_pos // 4; lane k reads bank k
+      [    0] valid
+
+    Lane k can ONLY carry B elements at abs positions where abs_pos % 4 == k
+    (forced by the 4-bank B storage layout).  Elements from different A non-zeros
+    (different B rows) are mixed greedily into one instruction to keep all 4 MACs
+    busy, eliminating idle lanes at partial B-row boundaries.
 
     Row descriptor (64-bit):
       [63:32] instr_start  — absolute start index into instr_buf
       [31:16] instr_count  — number of instruction groups for this row
       [15: 0] c_row        — C output row id
 
-    Bd must already be 4-align padded (align_b_4wide called first).
+    Bd must already be 4-align padded (align_b_4wide called first) so that
+    b_off is always a multiple of 4 and lane == u % 4 holds exactly.
     """
+    from collections import deque
     row_descs = []
     instrs    = []
     for ri in range(M):
@@ -185,18 +200,34 @@ def build_instructions(Ad, Ac, Bd, M):
         a_nnz       = (Ad[ri] >> 16) & 0xFFFF
         a_off       = (Ad[ri] >> 32) & 0xFFFFFFFF
         instr_start = len(instrs)
+
+        # Per-lane queues: items = (a_val_fp16, b_group).
+        # B element u of B row k_idx is at absolute position abs_pos = b_off + u.
+        # lane = abs_pos % 4 (general; b_off % 4 == r % 4 after align_b_4wide rotation).
+        lane_q = [deque() for _ in range(4)]
         for t in range(a_nnz):
-            a_val_ptr  = a_off + t
-            k          = Ac[a_val_ptr] & 0xFFFF
-            b_nnz_orig = Bd[k] & 0xFFFF
-            b_off      = (Bd[k] >> 32) & 0xFFFFFFFF  # 4-aligned
-            n_groups   = (b_nnz_orig + 3) // 4
-            for g in range(n_groups):
-                remaining  = b_nnz_orig - g * 4
-                valid      = min(4, remaining)
-                lane_valid = (1 << valid) - 1
-                b_group    = b_off // 4 + g
-                instrs.append((b_group << 18) | (a_val_ptr << 4) | lane_valid)
+            a_val_ptr = a_off + t
+            a_fp16    = Av[a_val_ptr]
+            k_idx     = Ac[a_val_ptr] & 0xFFFF
+            b_nnz     = Bd[k_idx] & 0xFFFF
+            b_off     = (Bd[k_idx] >> 32) & 0xFFFFFFFF
+            for u in range(b_nnz):
+                abs_pos = b_off + u
+                lane    = abs_pos % 4
+                b_grp   = abs_pos // 4
+                lane_q[lane].append((a_fp16, b_grp))
+
+        # Emit one 128-bit instruction per cycle until all lane queues are empty.
+        while any(lane_q):
+            word = 0
+            for k in range(4):
+                if lane_q[k]:
+                    a_fp16, b_grp = lane_q[k].popleft()
+                    word |= (a_fp16 & 0xFFFF) << (k * 32 + 16)
+                    word |= (b_grp  & 0x7FFF) << (k * 32 +  1)
+                    word |= 1                  << (k * 32)
+            instrs.append(word)
+
         instr_count = len(instrs) - instr_start
         row_descs.append((instr_start << 32) | (instr_count << 16) | c_row)
     return row_descs, instrs
@@ -344,7 +375,7 @@ async def test_comp_case1_p0(dut):
                       [int(gf[gid][j]) for j in range(min(10, N))])
 
     # Build instruction schedule
-    row_descs, instrs = build_instructions(Ad, Ac, Bd, M)
+    row_descs, instrs = build_instructions(Ad, Ac, Av, Bd, M)
     dut._log.info("Instructions: %d groups total", len(instrs))
 
     # Load and run
@@ -408,7 +439,7 @@ async def test_comp_case1_p1(dut):
                       [int(gf[gid][j]) for j in range(min(6, N))])
 
     # Build instruction schedule
-    row_descs, instrs = build_instructions(Ad, Ac, Bd, M)
+    row_descs, instrs = build_instructions(Ad, Ac, Av, Bd, M)
     dut._log.info("Instructions: %d groups total", len(instrs))
 
     # Load and run
@@ -473,12 +504,14 @@ def partition_a(Ad, Ac, Av, M, n_pe, Bd=None):
 
     Returns (pe_desc, pe_val, pe_instrs):
       pe_desc[pid]   = list of 64-bit row descriptors {instr_start, instr_count, c_row}
-      pe_val[pid]    = flat A_val array (local indexing)
-      pe_instrs[pid] = flat instruction array
+      pe_val[pid]    = flat A_val array (kept for A_val_buf load, unused during exec)
+      pe_instrs[pid] = flat 128-bit instruction array (per-lane format)
 
+    Instruction format: 4 × 32-bit per-lane words (see build_instructions).
     Bd must already be 4-align padded (align_b_4wide called first).
-    Task count = total instruction groups when Bd is supplied, else A-row nnz.
     """
+    from collections import deque
+
     row_tasks = []
     for ri in range(M):
         nnza = (Ad[ri] >> 16) & 0xFFFF
@@ -518,23 +551,36 @@ def partition_a(Ad, Ac, Av, M, n_pe, Bd=None):
         global_row   = Ad[ri] & 0xFFFF
         nnza         = (Ad[ri] >> 16) & 0xFFFF
         global_start = (Ad[ri] >> 32) & 0xFFFFFFFF
-        local_val_off = len(pe_val[pid])
         instr_start  = len(pe_instrs[pid])
+
         for t in range(nnza):
             pe_val[pid].append(Av[global_start + t])
+
         if Bd is not None:
+            # Per-lane queues: items = (a_val_fp16, b_group).
+            # abs_pos = b_off + u; lane = abs_pos % 4 (general form, works with rotation).
+            lane_q = [deque() for _ in range(4)]
             for t in range(nnza):
-                a_val_ptr  = local_val_off + t
-                k          = Ac[global_start + t] & 0xFFFF
-                b_nnz_orig = Bd[k] & 0xFFFF
-                b_off      = (Bd[k] >> 32) & 0xFFFFFFFF
-                n_groups   = (b_nnz_orig + 3) // 4
-                for g in range(n_groups):
-                    rem        = b_nnz_orig - g * 4
-                    valid      = min(4, rem)
-                    lane_valid = (1 << valid) - 1
-                    b_group    = b_off // 4 + g
-                    pe_instrs[pid].append((b_group << 18) | (a_val_ptr << 4) | lane_valid)
+                a_fp16 = Av[global_start + t]
+                k      = Ac[global_start + t] & 0xFFFF
+                b_nnz  = Bd[k] & 0xFFFF
+                b_off  = (Bd[k] >> 32) & 0xFFFFFFFF
+                for u in range(b_nnz):
+                    abs_pos = b_off + u
+                    lane    = abs_pos % 4
+                    b_grp   = abs_pos // 4
+                    lane_q[lane].append((a_fp16, b_grp))
+
+            while any(lane_q):
+                word = 0
+                for k in range(4):
+                    if lane_q[k]:
+                        a_fp16, b_grp = lane_q[k].popleft()
+                        word |= (a_fp16 & 0xFFFF) << (k * 32 + 16)
+                        word |= (b_grp  & 0x7FFF) << (k * 32 +  1)
+                        word |= 1                  << (k * 32)
+                pe_instrs[pid].append(word)
+
         instr_count = len(pe_instrs[pid]) - instr_start
         pe_desc[pid].append((instr_start << 32) | (instr_count << 16) | global_row)
 
@@ -563,7 +609,7 @@ async def LInstr_pe(dut, pid, instrs):
     for i, instr in enumerate(instrs):
         dut.instr_we.value    = 1 << pid
         dut.instr_waddr.value = i << (pid * _INSTR_ADDR_W)
-        dut.instr_wdata.value = instr << (pid * 64)
+        dut.instr_wdata.value = instr << (pid * 128)
         await RisingEdge(dut.aclk)
     dut.instr_we.value = 0; dut.instr_waddr.value = 0; dut.instr_wdata.value = 0
 
