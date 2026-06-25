@@ -109,8 +109,8 @@
 `define TASK_WIDTH        64
 `define TASK_GROUP_WIDTH  (4 + 4 * `TASK_WIDTH)   // 260
 
-`define PRODUCT_WIDTH       48   // {col_id[15:0], fp32_val[31:0]}
-`define PRODUCT_GROUP_WIDTH (4 + 4 * `PRODUCT_WIDTH)  // 196
+`define PRODUCT_WIDTH       32   // {col_id[15:0], fp16_val[15:0]}
+`define PRODUCT_GROUP_WIDTH (4 + 4 * `PRODUCT_WIDTH)  // 132
 
 `define TASK_FIFO_DEPTH     256
 `define TASK_FIFO_DEPTH_LOG 8

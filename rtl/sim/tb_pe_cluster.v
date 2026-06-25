@@ -53,7 +53,7 @@ module tb_pe_cluster;
     // C buffer read (per PE, packed)
     reg  [N_PE-1:0]              c_rd_en;
     reg  [N_PE*17-1:0]           c_rd_addr;
-    wire [N_PE*32-1:0]           c_rd_data;  // FP32 per PE
+    wire [N_PE*16-1:0]           c_rd_data;  // FP16 per PE
 
 `ifndef COCOTB_SIM
     always #5 aclk = ~aclk;

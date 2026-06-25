@@ -50,6 +50,8 @@ module a_group_loader (
     reg started;
     wire [15:0] a_row_count = 16'd16;  // TODO: parameterize
 
+    integer e;  // loop index for AXI beat unrolling (Verilog-2001: declare at module scope)
+
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
             state <= ST_IDLE; phase <= 3'd0; done <= 1'b0; started <= 1'b0;
@@ -81,7 +83,7 @@ module a_group_loader (
 
                 ST_RD_DATA: begin
                     if (m_axi_rvalid && m_axi_rready) begin
-                        for (integer e = 0; e < `N_ELEM_PER_AXI_BEAT; e = e + 1) begin
+                        for (e = 0; e < `N_ELEM_PER_AXI_BEAT; e = e + 1) begin
                             if (elem_cnt + e < elem_total) begin
                                 case (phase)
                                     3'd0: begin
@@ -102,7 +104,7 @@ module a_group_loader (
                         end
                         // Handle desc writes in pairs of 16-bit → 64-bit
                         if (phase == 3'd0) begin
-                            for (integer e = 0; e < `N_ELEM_PER_AXI_BEAT; e = e + 4) begin
+                            for (e = 0; e < `N_ELEM_PER_AXI_BEAT; e = e + 4) begin
                                 if (elem_cnt + e + 3 < elem_total) begin
                                     pe_a_desc_we <= 1'b1;
                                     pe_a_desc_waddr <= (elem_cnt + e) >> 2;

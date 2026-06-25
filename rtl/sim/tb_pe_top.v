@@ -49,7 +49,7 @@ module tb_pe_top;
     // C buffer read port: addr = {local_row_idx[7:0], col[8:0]}  (17-bit)
     reg         c_rd_en;
     reg  [16:0] c_rd_addr;
-    wire [31:0]  c_rd_data;    // FP32 output
+    wire [15:0]  c_rd_data;    // FP16 output
 
 `ifndef COCOTB_SIM
     always #5 aclk = ~aclk;

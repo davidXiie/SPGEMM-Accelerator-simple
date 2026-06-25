@@ -61,7 +61,7 @@ module pe_cluster #(
     // c_rd_addr = {local_row_idx[7:0], col[8:0]}  (17-bit per PE)
     input  wire [N_PE-1:0]        c_rd_en,
     input  wire [N_PE*17-1:0]     c_rd_addr,
-    output wire [N_PE*32-1:0]     c_rd_data   // FP32 per PE
+    output wire [N_PE*16-1:0]     c_rd_data   // FP16 per PE
 );
 
     wire [N_PE-1:0] done_vec;
@@ -102,7 +102,7 @@ module pe_cluster #(
 
                 .c_rd_en   (c_rd_en[i]),
                 .c_rd_addr (c_rd_addr[i*17 +: 17]),
-                .c_rd_data (c_rd_data[i*32 +: 32])
+                .c_rd_data (c_rd_data[i*16 +: 16])
             );
         end
     endgenerate

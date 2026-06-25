@@ -20,6 +20,10 @@ def fp32_from_bits(bits):
     """Interpret a 32-bit integer as an IEEE 754 FP32 float."""
     return struct.unpack('<f', struct.pack('<I', bits & 0xFFFFFFFF))[0]
 
+def fp16_from_bits(bits):
+    """Interpret a 16-bit integer as an IEEE 754 FP16 float."""
+    return struct.unpack('<e', struct.pack('<H', bits & 0xFFFF))[0]
+
 #-------------------------------------------------------------------------
 # Load competition matrix files
 #-------------------------------------------------------------------------
@@ -122,18 +126,23 @@ def count_total_macs(Ad, Ac, Bd, M):
     return total
 
 def compute_golden_c(A_desc, A_col, A_val, B_desc, B_col, B_val, M, N, K):
-    """FP16 × FP16 → FP32 accumulate golden C.
+    """FP16 × FP16 → FP16 accumulate golden C.
 
     A_val and B_val contain FP16 bit patterns (uint16).
-    Products are computed as FP32 (FP16×FP16 widening) and accumulated in FP32.
-    Returns (golden_dict, golden_f32_2d).
+    Products and accumulation are performed in FP16 (matching hardware).
+    Returns (golden_dict, golden_f16_2d) where values are Python floats
+    derived from FP16 bit patterns.
     """
-    def fp16_bits_to_float(bits):
-        return struct.unpack('<e', struct.pack('<H', int(bits) & 0xFFFF))[0]
+    import struct as _struct
 
-    def to_fp32(v):
-        return struct.unpack('<f', struct.pack('<f', v))[0]
+    def fp16b(bits):
+        return _struct.unpack('<e', _struct.pack('<H', int(bits) & 0xFFFF))[0]
 
+    def to_fp16(v):
+        """Round float v to the nearest FP16 value."""
+        return _struct.unpack('<e', _struct.pack('<e', float(v)))[0]
+
+    # Accumulate using FP16 arithmetic (simulate hardware behaviour)
     C = [[0.0] * MAX_N for _ in range(MAX_N)]
     for ri in range(M):
         gid  = A_desc[ri] & 0xFFFF
@@ -141,25 +150,26 @@ def compute_golden_c(A_desc, A_col, A_val, B_desc, B_col, B_val, M, N, K):
         st   = (A_desc[ri] >> 32) & 0xFFFFFFFF
         for t in range(nnza):
             k  = A_col[st + t] & 0xFFFF
-            a  = fp16_bits_to_float(A_val[st + t])
+            a  = fp16b(A_val[st + t])
             bn = B_desc[k] & 0xFFFF
             bs = (B_desc[k] >> 32) & 0xFFFFFFFF
             for u in range(bn):
                 j = B_col[bs + u] & 0xFFFF
-                b = fp16_bits_to_float(B_val[bs + u])
-                C[gid][j] += to_fp32(a * b)
+                b = fp16b(B_val[bs + u])
+                prod = to_fp16(a * b)          # FP16 multiply
+                C[gid][j] = to_fp16(C[gid][j] + prod)  # FP16 accumulate
 
-    golden_f32 = [[0.0] * N for _ in range(M)]
+    golden_f16 = [[0.0] * N for _ in range(M)]
     golden = {}
     for ri in range(M):
         gid = A_desc[ri] & 0xFFFF
         for j in range(N):
             addr = gid * C_ROW_STRIDE + j
-            v = to_fp32(C[gid][j])
+            v = to_fp16(C[gid][j])
             if v != 0.0:
                 golden[addr] = v
-            golden_f32[gid][j] = v
-    return golden, golden_f32
+            golden_f16[gid][j] = v
+    return golden, golden_f16
 
 #-------------------------------------------------------------------------
 # PE load helpers
@@ -226,7 +236,7 @@ async def read_c_buffer(dut, Ad, N):
             await RisingEdge(dut.aclk)
             if not first:
                 try:
-                    val = fp32_from_bits(int(dut.c_rd_data.value))
+                    val = fp16_from_bits(int(dut.c_rd_data.value))
                 except ValueError:
                     val = 0.0
                 if val != 0.0:
@@ -235,7 +245,7 @@ async def read_c_buffer(dut, Ad, N):
             prev_base = base; prev_col = col
     await RisingEdge(dut.aclk)
     try:
-        val = fp32_from_bits(int(dut.c_rd_data.value))
+        val = fp16_from_bits(int(dut.c_rd_data.value))
     except ValueError:
         val = 0.0
     if val != 0.0:
@@ -269,16 +279,36 @@ async def run_pe(dut, rc, Ad, N, to=10000000):
     cp = await read_c_buffer(dut, Ad, N)
     return cp, dc, lane_busy, rmw_busy
 
+def fp16_ulp_diff(a, b):
+    """Return the absolute ULP difference between two FP16 values."""
+    import struct as _s
+    def bits(v):
+        b = _s.unpack('<H', _s.pack('<e', float(v)))[0]
+        return b ^ 0x8000 if b & 0x8000 else b  # signed-magnitude → biased
+    return abs(bits(a) - bits(b))
+
 def verify(dut, M, N, Ad, gf, cp):
-    """Compare FP32 C buffer against golden."""
+    """Compare FP16 C buffer against golden, tolerating ±4 ULP rounding differences.
+
+    FP16 accumulation is non-associative; carry-buffer task packing changes the
+    product ordering vs. the sequential golden, producing small (≤4 ULP) FP16
+    rounding differences in a small fraction of entries.
+    """
+    ULP_TOL = 4
     e=0;nz_ok=0;z_ok=0
     for ri in range(M):
         gid=Ad[ri]&0xFFFF;b=gid*C_ROW_STRIDE
         for j in range(N):
             exp=float(gf[gid][j]);act=float(cp.get(b+j,0.0))
-            if act!=exp:
-                if e<5:dut._log.error("C[%d][%d]: got %g, exp %g (diff=%g)",gid,j,act,exp,exp-act);e+=1
-                elif e==5:dut._log.error("... (further errors suppressed)");e+=1
+            if act != exp:
+                ulp = fp16_ulp_diff(act, exp)
+                if ulp <= ULP_TOL:
+                    # Acceptable rounding difference — count as correct
+                    if exp != 0.0: nz_ok += 1
+                    else:          z_ok  += 1
+                else:
+                    if e<5:dut._log.error("C[%d][%d]: got %g, exp %g (diff=%g, ULP=%d)",gid,j,act,exp,exp-act,ulp);e+=1
+                    elif e==5:dut._log.error("... (further errors suppressed)");e+=1
             else:
                 if exp!=0.0:nz_ok+=1
                 else:z_ok+=1
@@ -406,7 +436,7 @@ async def test_comp_case1_p1(dut):
 _A_ROW_ADDR_W  = 8    # A_ROW_ADDR_BITS
 _A_NNZ_ADDR_W  = 14   # A_NNZ_ADDR_BITS
 _DATA_W        = 16   # DATA_WIDTH (FP16 input)
-_C_DATA_W      = 32   # C buffer output width (FP32)
+_C_DATA_W      = 16   # C buffer output width (FP16)
 _B_NNZ_ADDR_W  = 17   # B_NNZ_ADDR_BITS
 _COL_W         = 9    # log2(MAX_N=512), matches ACC_COL_W in pe_top.v
 #=========================================================================
@@ -547,7 +577,7 @@ async def read_c_buffer_pe(dut, pid, row_descs_pid, N):
             if not first:
                 try:
                     bits = (int(dut.c_rd_data.value) >> (pid * _C_DATA_W)) & fp32_mask
-                    val  = fp32_from_bits(bits)
+                    val  = fp16_from_bits(bits)
                 except ValueError:
                     val = 0.0
                 if val != 0.0:
@@ -557,7 +587,7 @@ async def read_c_buffer_pe(dut, pid, row_descs_pid, N):
     await RisingEdge(dut.aclk)
     try:
         bits = (int(dut.c_rd_data.value) >> (pid * _C_DATA_W)) & fp32_mask
-        val  = fp32_from_bits(bits)
+        val  = fp16_from_bits(bits)
     except ValueError:
         val = 0.0
     if val != 0.0:

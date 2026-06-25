@@ -50,6 +50,8 @@ module b_broadcast_loader (
 
     reg started;
 
+    integer e;  // loop index for AXI beat unrolling (Verilog-2001: declare at module scope)
+
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
             state <= ST_IDLE; phase <= 2'd0; done <= 1'b0; started <= 1'b0;
@@ -83,7 +85,7 @@ module b_broadcast_loader (
                     if (m_axi_rvalid && m_axi_rready) begin
                         // Write desc as 64-bit (4 × 16-bit per entry)
                         if (phase == 2'd0) begin
-                            for (integer e = 0; e < `N_ELEM_PER_AXI_BEAT; e = e + 4) begin
+                            for (e = 0; e < `N_ELEM_PER_AXI_BEAT; e = e + 4) begin
                                 if (elem_cnt + e + 3 < elem_total) begin
                                     pe_b_desc_we <= 1'b1;
                                     pe_b_desc_waddr <= (elem_cnt + e) >> 2;
@@ -96,7 +98,7 @@ module b_broadcast_loader (
                                 end
                             end
                         end else if (phase == 2'd1) begin
-                            for (integer e = 0; e < `N_ELEM_PER_AXI_BEAT; e = e + 1) begin
+                            for (e = 0; e < `N_ELEM_PER_AXI_BEAT; e = e + 1) begin
                                 if (elem_cnt + e < elem_total) begin
                                     pe_b_col_we <= 1'b1;
                                     pe_b_col_waddr <= elem_cnt + e;
@@ -104,7 +106,7 @@ module b_broadcast_loader (
                                 end
                             end
                         end else begin
-                            for (integer e = 0; e < `N_ELEM_PER_AXI_BEAT; e = e + 1) begin
+                            for (e = 0; e < `N_ELEM_PER_AXI_BEAT; e = e + 1) begin
                                 if (elem_cnt + e < elem_total) begin
                                     pe_b_val_we <= 1'b1;
                                     pe_b_val_waddr <= elem_cnt + e;

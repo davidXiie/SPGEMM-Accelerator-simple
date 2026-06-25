@@ -1,11 +1,11 @@
 //=============================================================================
 // File     : pe_mul_array.v
-// Brief    : 4-lane FP16 Multiplier Array with col-delay pipeline.
+// Brief    : 4-lane FP16 Multiplier Array.
 //
-//   Each lane: FP16 × FP16 → FP32 (via fp16_mul combinatorial module).
-//   MUL_LAT register stages delay col_id, fp32_val, and valid.
+//   Each lane: FP16 × FP16 → FP16 (via fp16_mul combinatorial module).
+//   MUL_LAT register stages delay col_id, fp16_val, and valid.
 //
-//   Product format per lane (PRODUCT_WIDTH=48): {col_id[15:0], fp32_val[31:0]}
+//   Product format per lane (PRODUCT_WIDTH=32): {col_id[15:0], fp16_val[15:0]}
 //=============================================================================
 
 `include "defines.vh"
@@ -15,7 +15,7 @@ module pe_mul_array (
     input  wire [`N_MAC-1:0]              lane_valid,
     input  wire [`N_MAC*`TASK_WIDTH-1:0]  lane_task,
 
-    // Product group output (4 lanes); PRODUCT_WIDTH = 48
+    // Product group output (4 lanes); PRODUCT_WIDTH = 32
     output wire [`N_MAC-1:0]                        mul_valid,
     output wire [`N_MAC*`PRODUCT_WIDTH-1:0]         mul_product,
 
@@ -31,17 +31,17 @@ module pe_mul_array (
             wire [`DATA_WIDTH-1:0] mac_b   = lane_task[m*`TASK_WIDTH + 47 -: `DATA_WIDTH];
             wire [`DATA_WIDTH-1:0] mac_col = lane_task[m*`TASK_WIDTH + 15 -: `DATA_WIDTH];
 
-            // FP16 × FP16 → FP32 (combinatorial)
-            wire [31:0] mul_fp32;
+            // FP16 × FP16 → FP16 (combinatorial)
+            wire [15:0] mul_fp16;
             fp16_mul u_fp16_mul (
                 .a (mac_a),
                 .b (mac_b),
-                .z (mul_fp32)
+                .z (mul_fp16)
             );
 
-            // Pipeline: delay col_id, fp32 value, and valid by MUL_LAT cycles
+            // Pipeline: delay col_id, fp16 value, and valid by MUL_LAT cycles
             reg [`DATA_WIDTH-1:0] col_pipe   [0:`MUL_LAT-1];
-            reg [31:0]            val_pipe   [0:`MUL_LAT-1];
+            reg [15:0]            val_pipe   [0:`MUL_LAT-1];
             reg                   valid_pipe [0:`MUL_LAT-1];
 
             integer s;
@@ -54,7 +54,7 @@ module pe_mul_array (
                     end
                 end else begin
                     col_pipe[0]   <= mac_col;
-                    val_pipe[0]   <= mul_fp32;
+                    val_pipe[0]   <= mul_fp16;
                     valid_pipe[0] <= lane_valid[m];
 
                     for (s = 1; s < `MUL_LAT; s = s + 1) begin
@@ -65,10 +65,10 @@ module pe_mul_array (
                 end
             end
 
-            // Output: product = {col_id[15:0], fp32_val[31:0]}  (48-bit)
+            // Output: product = {col_id[15:0], fp16_val[15:0]}  (32-bit)
             wire [`PRODUCT_WIDTH-1:0] product;
-            assign product[31:0]  = val_pipe[`MUL_LAT-1];   // FP32 product value
-            assign product[47:32] = col_pipe[`MUL_LAT-1];   // col_id
+            assign product[15:0]  = val_pipe[`MUL_LAT-1];   // FP16 product value
+            assign product[31:16] = col_pipe[`MUL_LAT-1];   // col_id
 
             assign mul_valid[m]                                     = valid_pipe[`MUL_LAT-1];
             assign mul_product[m*`PRODUCT_WIDTH +: `PRODUCT_WIDTH] = product;

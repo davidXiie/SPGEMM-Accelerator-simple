@@ -24,6 +24,8 @@ module c_dense_buffer (
     // Store as flat array: C[global_row_id * N + col]
     reg [`DATA_WIDTH-1:0] ram [0:`C_DENSE_DEPTH-1];
 
+    integer i;  // loop index for AXI beat read (Verilog-2001: declare at module scope)
+
     // Write: 16-bit per element
     always @(posedge aclk) begin
         if (wr_en) ram[wr_addr] <= wr_data;
@@ -41,7 +43,7 @@ module c_dense_buffer (
             rd_valid_reg <= rd_en;
             if (rd_en) begin
                 // Read 32 consecutive FP16 elements
-                for (integer i = 0; i < `N_ELEM_PER_AXI_BEAT; i = i + 1) begin
+                for (i = 0; i < `N_ELEM_PER_AXI_BEAT; i = i + 1) begin
                     rd_data_reg[i*`DATA_WIDTH +: `DATA_WIDTH]
                         <= ram[rd_addr + i];
                 end

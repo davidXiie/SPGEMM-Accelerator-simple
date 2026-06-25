@@ -106,15 +106,15 @@ module accum_bank #(
     wire [ACC_W-1:0]   s1_old_acc   = s12_hazard ? s2_new_val : acc_mem[s1_addr];
     wire               s1_epoch_hit = s12_hazard ? 1'b1       : (tag_mem[s1_addr] == row_epoch);
 
-    // FP32 accumulation: fp32_add(old_acc, new_product)
-    wire [31:0] fp32_sum;
-    fp32_add u_fp32_add (
-        .a (s1_old_acc),
-        .b (s1_prod),
-        .z (fp32_sum)
+    // FP16 accumulation: fp16_add(old_acc, new_product)
+    wire [15:0] fp16_sum;
+    fp16_add u_fp16_add (
+        .a (s1_old_acc[15:0]),
+        .b (s1_prod[15:0]),
+        .z (fp16_sum)
     );
     // On epoch miss (first write to this col): store product directly (same as 0.0 + prod)
-    wire [ACC_W-1:0]   s1_new_val   = s1_epoch_hit ? fp32_sum : s1_prod;
+    wire [ACC_W-1:0]   s1_new_val   = s1_epoch_hit ? {{(ACC_W-16){1'b0}}, fp16_sum} : s1_prod;
 
     // =========================================================================
     // Tag clear
@@ -222,7 +222,8 @@ module accum_bank #(
 `ifdef SIMULATION
     always @(posedge clk) begin
         if (fifo_cnt > FIFO_DEPTH[FIFO_DEPTH_LOG:0])
-            $error("accum_bank FIFO overflow (cnt=%0d)", fifo_cnt);
+            $display("ERROR accum_bank FIFO overflow (cnt=%0d)", fifo_cnt);
+            $stop;
     end
 `endif
 

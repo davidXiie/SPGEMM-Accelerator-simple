@@ -74,7 +74,7 @@ module pe_top #(
     // C buffer read port (synchronous, 1-cycle latency)
     input  wire                          c_rd_en,
     input  wire [16:0]                   c_rd_addr,
-    output reg  [31:0]                   c_rd_data
+    output reg  [15:0]                   c_rd_data
 );
 
     localparam ACC_COL_W     = 9;
@@ -104,18 +104,18 @@ module pe_top #(
 
     reg [63:0]            B_desc_buf [0:B_DESC_DEPTH-1];
 
-    reg [31:0] c_bank0 [0:C_BANK_DEPTH-1];
-    reg [31:0] c_bank1 [0:C_BANK_DEPTH-1];
-    reg [31:0] c_bank2 [0:C_BANK_DEPTH-1];
-    reg [31:0] c_bank3 [0:C_BANK_DEPTH-1];
+    reg [15:0] c_bank0 [0:C_BANK_DEPTH-1];
+    reg [15:0] c_bank1 [0:C_BANK_DEPTH-1];
+    reg [15:0] c_bank2 [0:C_BANK_DEPTH-1];
+    reg [15:0] c_bank3 [0:C_BANK_DEPTH-1];
 
 `ifdef COCOTB_SIM
     integer _ci;
     initial begin
-        c_rd_data = 32'h0;
+        c_rd_data = 16'h0;
         for (_ci = 0; _ci < C_BANK_DEPTH; _ci = _ci + 1) begin
-            c_bank0[_ci] = 32'h0; c_bank1[_ci] = 32'h0;
-            c_bank2[_ci] = 32'h0; c_bank3[_ci] = 32'h0;
+            c_bank0[_ci] = 16'h0; c_bank1[_ci] = 16'h0;
+            c_bank2[_ci] = 16'h0; c_bank3[_ci] = 16'h0;
         end
     end
 `endif
@@ -574,12 +574,12 @@ module pe_top #(
     wire product_fifo_full;
     wire [`PROD_FIFO_DEPTH_LOG:0] product_fifo_cnt;
 
-    assign product_group_wr_en            = |mul_valid && !product_fifo_full;
-    assign product_group_wr_data[3:0]     = mul_valid;
-    assign product_group_wr_data[51:4]    = mul_product[0*48 +: 48];
-    assign product_group_wr_data[99:52]   = mul_product[1*48 +: 48];
-    assign product_group_wr_data[147:100] = mul_product[2*48 +: 48];
-    assign product_group_wr_data[195:148] = mul_product[3*48 +: 48];
+    assign product_group_wr_en             = |mul_valid && !product_fifo_full;
+    assign product_group_wr_data[3:0]      = mul_valid;
+    assign product_group_wr_data[35:4]     = mul_product[0*32 +: 32];
+    assign product_group_wr_data[67:36]    = mul_product[1*32 +: 32];
+    assign product_group_wr_data[99:68]    = mul_product[2*32 +: 32];
+    assign product_group_wr_data[131:100]  = mul_product[3*32 +: 32];
 
     wire prod_fifo_rd_en;
     wire [`PRODUCT_GROUP_WIDTH-1:0] prod_fifo_rd_data;
@@ -612,7 +612,7 @@ module pe_top #(
     wire [3:0]             drain_valid_0,  drain_valid_1;
     wire [BANK_ADDR_W-1:0] drain_gaddr_0,  drain_gaddr_1;
     wire [`A_ROW_ADDR_BITS-1:0] drain_row_id_0, drain_row_id_1;
-    wire [4*32-1:0]        drain_values_0, drain_values_1;
+    wire [4*16-1:0]        drain_values_0, drain_values_1;
 
     wire acc_issue_ready = comp_sel ? acc_issue_ready_1 : acc_issue_ready_0;
     wire other_acc_busy  = comp_sel ? acc_busy_0        : acc_busy_1;
@@ -630,23 +630,24 @@ module pe_top #(
 
     assign prod_fifo_rd_en = !prod_fifo_empty && acc_issue_ready;
 
-    wire [3:0]   acc_lane_valid;
-    wire [35:0]  acc_lane_col_id;
-    wire [127:0] acc_lane_product;
+    wire [3:0]  acc_lane_valid;
+    wire [35:0] acc_lane_col_id;
+    wire [63:0] acc_lane_product;
 
     assign acc_lane_valid   = prod_fifo_rd_data[3:0];
-    assign acc_lane_col_id  = {prod_fifo_rd_data[4+3*48+32 +: 9],
-                               prod_fifo_rd_data[4+2*48+32 +: 9],
-                               prod_fifo_rd_data[4+1*48+32 +: 9],
-                               prod_fifo_rd_data[4+0*48+32 +: 9]};
-    assign acc_lane_product = {prod_fifo_rd_data[4+3*48 +: 32],
-                               prod_fifo_rd_data[4+2*48 +: 32],
-                               prod_fifo_rd_data[4+1*48 +: 32],
-                               prod_fifo_rd_data[4+0*48 +: 32]};
+    // product format: {col_id[15:0], fp16_val[15:0]} per lane (32-bit each)
+    assign acc_lane_col_id  = {prod_fifo_rd_data[4+3*32+16 +: 9],
+                               prod_fifo_rd_data[4+2*32+16 +: 9],
+                               prod_fifo_rd_data[4+1*32+16 +: 9],
+                               prod_fifo_rd_data[4+0*32+16 +: 9]};
+    assign acc_lane_product = {prod_fifo_rd_data[4+3*32 +: 16],
+                               prod_fifo_rd_data[4+2*32 +: 16],
+                               prod_fifo_rd_data[4+1*32 +: 16],
+                               prod_fifo_rd_data[4+0*32 +: 16]};
 
     row_accumulator_4bank #(
-        .OUT_COLS(512), .COL_W(9), .PROD_W(32),
-        .ACC_W(32), .EPOCH_W(16), .BANK_FIFO_DEPTH(32), .BANK_FIFO_LOG(5),
+        .OUT_COLS(512), .COL_W(9), .PROD_W(16),
+        .ACC_W(16), .EPOCH_W(16), .BANK_FIFO_DEPTH(32), .BANK_FIFO_LOG(5),
         .ROW_W(`A_ROW_ADDR_BITS)
     ) u_row_acc_0 (
         .clk(aclk), .rst_n(aresetn),
@@ -659,8 +660,8 @@ module pe_top #(
     );
 
     row_accumulator_4bank #(
-        .OUT_COLS(512), .COL_W(9), .PROD_W(32),
-        .ACC_W(32), .EPOCH_W(16), .BANK_FIFO_DEPTH(32), .BANK_FIFO_LOG(5),
+        .OUT_COLS(512), .COL_W(9), .PROD_W(16),
+        .ACC_W(16), .EPOCH_W(16), .BANK_FIFO_DEPTH(32), .BANK_FIFO_LOG(5),
         .ROW_W(`A_ROW_ADDR_BITS)
     ) u_row_acc_1 (
         .clk(aclk), .rst_n(aresetn),
@@ -684,14 +685,14 @@ module pe_top #(
     wire [3:0]               c_wr_valid = comp_sel ? drain_valid_0  : drain_valid_1;
     wire [BANK_ADDR_W-1:0]   c_wr_gaddr = comp_sel ? drain_gaddr_0  : drain_gaddr_1;
     wire [`A_ROW_ADDR_BITS-1:0] c_wr_rid = comp_sel ? drain_row_id_0 : drain_row_id_1;
-    wire [4*32-1:0]          c_wr_vals  = comp_sel ? drain_values_0 : drain_values_1;
+    wire [4*16-1:0]          c_wr_vals  = comp_sel ? drain_values_0 : drain_values_1;
     wire [C_BANK_ADDR_W-1:0] c_wr_addr  = {c_wr_rid, c_wr_gaddr};
 
     always @(posedge aclk) begin
-        if (c_wr_valid[0]) c_bank0[c_wr_addr] <= c_wr_vals[0*32 +: 32];
-        if (c_wr_valid[1]) c_bank1[c_wr_addr] <= c_wr_vals[1*32 +: 32];
-        if (c_wr_valid[2]) c_bank2[c_wr_addr] <= c_wr_vals[2*32 +: 32];
-        if (c_wr_valid[3]) c_bank3[c_wr_addr] <= c_wr_vals[3*32 +: 32];
+        if (c_wr_valid[0]) c_bank0[c_wr_addr] <= c_wr_vals[0*16 +: 16];
+        if (c_wr_valid[1]) c_bank1[c_wr_addr] <= c_wr_vals[1*16 +: 16];
+        if (c_wr_valid[2]) c_bank2[c_wr_addr] <= c_wr_vals[2*16 +: 16];
+        if (c_wr_valid[3]) c_bank3[c_wr_addr] <= c_wr_vals[3*16 +: 16];
     end
 
     //=========================================================================
