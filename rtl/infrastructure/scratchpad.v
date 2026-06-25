@@ -143,23 +143,28 @@ module sync_fifo #(
     assign wr_full  = (count >= DEPTH);
     assign rd_empty = (count == 0);
 
+    // Pointers: async reset is fine for plain FFs
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
             wr_ptr <= 0;
             rd_ptr <= 0;
-            rd_data <= 0;
         end else begin
-            if (wr_en && !wr_full) wr_ptr <= wr_ptr + 1'b1;
-            // BRAM inference: always read, then advance pointer conditionally
-            rd_data <= mem[rd_ptr[DEPTH_LOG-1:0]];
-            if (rd_en && !rd_empty)
-                rd_ptr <= rd_ptr + 1'b1;
+            if (wr_en && !wr_full)  wr_ptr <= wr_ptr + 1'b1;
+            if (rd_en && !rd_empty) rd_ptr <= rd_ptr + 1'b1;
         end
     end
 
+    // Memory write (separate block, no reset → clean BRAM write port)
     always @(posedge aclk) begin
         if (wr_en && !wr_full)
             mem[wr_ptr[DEPTH_LOG-1:0]] <= wr_data;
+    end
+
+    // Memory read: SEPARATE block, clock-edge only, NO async reset.
+    // Xilinx BRAM output registers do not support async reset;
+    // mixing rd_data with aresetn prevents BRAM inference.
+    always @(posedge aclk) begin
+        rd_data <= mem[rd_ptr[DEPTH_LOG-1:0]];
     end
 
 endmodule
