@@ -69,19 +69,20 @@ module pe_top #(
     // B row descriptor (broadcast; {b_off[31:0], 0[31:16], b_nnz[15:0]})
     input  wire                          b_desc_we,
     input  wire [`MAX_DIM_BITS-1:0]     b_desc_waddr,
-    input  wire [63:0]                   b_desc_wdata,
+    input  wire [63:0]                   b_desc_wdata
+
 
     // C buffer read port (synchronous, 1-cycle latency)
-    input  wire                          c_rd_en,
-    input  wire [16:0]                   c_rd_addr,
-    output reg  [15:0]                   c_rd_data
+    // input  wire                          c_rd_en,
+    // input  wire [16:0]                   c_rd_addr,
+    // output reg  [15:0]                   c_rd_data
 );
 
     localparam ACC_COL_W     = 9;
     localparam BANK_ADDR_W   = ACC_COL_W - 2;
-    localparam C_BANK_ADDR_W = `A_ROW_ADDR_BITS + BANK_ADDR_W;
-    localparam C_BANK_DEPTH  = 1 << C_BANK_ADDR_W;
-    localparam C_RD_ADDR_W   = `A_ROW_ADDR_BITS + ACC_COL_W;
+    // localparam C_BANK_ADDR_W = `A_ROW_ADDR_BITS + BANK_ADDR_W;
+    // localparam C_BANK_DEPTH  = 32'd1 << C_BANK_ADDR_W;
+    // localparam C_RD_ADDR_W   = `A_ROW_ADDR_BITS + ACC_COL_W;
 
     localparam B_BANK_DEPTH  = `B_NNZ_SLOT / 4;
     localparam B_DESC_DEPTH  = 1 << `MAX_DIM_BITS;
@@ -104,21 +105,21 @@ module pe_top #(
 
     reg [63:0]            B_desc_buf [0:B_DESC_DEPTH-1];
 
-    reg [15:0] c_bank0 [0:C_BANK_DEPTH-1];
-    reg [15:0] c_bank1 [0:C_BANK_DEPTH-1];
-    reg [15:0] c_bank2 [0:C_BANK_DEPTH-1];
-    reg [15:0] c_bank3 [0:C_BANK_DEPTH-1];
+    // reg [15:0] c_bank0 [0:C_BANK_DEPTH-1];
+    // reg [15:0] c_bank1 [0:C_BANK_DEPTH-1];
+    // reg [15:0] c_bank2 [0:C_BANK_DEPTH-1];
+    // reg [15:0] c_bank3 [0:C_BANK_DEPTH-1];
 
-`ifdef COCOTB_SIM
-    integer _ci;
-    initial begin
-        c_rd_data = 16'h0;
-        for (_ci = 0; _ci < C_BANK_DEPTH; _ci = _ci + 1) begin
-            c_bank0[_ci] = 16'h0; c_bank1[_ci] = 16'h0;
-            c_bank2[_ci] = 16'h0; c_bank3[_ci] = 16'h0;
-        end
-    end
-`endif
+//`ifdef COCOTB_SIM
+//    integer _ci;
+//    initial begin
+//        c_rd_data = 16'h0;
+//        for (_ci = 0; _ci < C_BANK_DEPTH; _ci = _ci + 1) begin
+//            c_bank0[_ci] = 16'h0; c_bank1[_ci] = 16'h0;
+//            c_bank2[_ci] = 16'h0; c_bank3[_ci] = 16'h0;
+//        end
+//    end
+//`endif
 
     //=========================================================================
     // SRAM write ports
@@ -535,18 +536,26 @@ module pe_top #(
     wire [`N_MAC-1:0]             mac_lane_valid;
     wire [`N_MAC*`TASK_WIDTH-1:0] mac_lane_task;
 
+    // 1-cycle pipeline for synchronous (BRAM) FIFO read
+    reg                          task_fifo_rd_en_d1;
+    reg [`TASK_GROUP_WIDTH-1:0]  task_fifo_rd_data_d1;
+    always @(posedge aclk) begin
+        task_fifo_rd_en_d1   <= task_fifo_rd_en && !task_fifo_empty;
+        task_fifo_rd_data_d1 <= task_fifo_rd_data;
+    end
+
     reg [`N_MAC-1:0]              mac_lane_valid_r;
     reg [`N_MAC*`TASK_WIDTH-1:0]  mac_lane_task_r;
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
             mac_lane_valid_r <= 0;
             mac_lane_task_r  <= 0;
-        end else if (task_fifo_rd_en) begin
-            mac_lane_valid_r <= task_fifo_rd_data[3:0];
-            mac_lane_task_r[0*`TASK_WIDTH +: `TASK_WIDTH] <= task_fifo_rd_data[67:4];
-            mac_lane_task_r[1*`TASK_WIDTH +: `TASK_WIDTH] <= task_fifo_rd_data[131:68];
-            mac_lane_task_r[2*`TASK_WIDTH +: `TASK_WIDTH] <= task_fifo_rd_data[195:132];
-            mac_lane_task_r[3*`TASK_WIDTH +: `TASK_WIDTH] <= task_fifo_rd_data[259:196];
+        end else if (task_fifo_rd_en_d1) begin
+            mac_lane_valid_r <= task_fifo_rd_data_d1[3:0];
+            mac_lane_task_r[0*`TASK_WIDTH +: `TASK_WIDTH] <= task_fifo_rd_data_d1[67:4];
+            mac_lane_task_r[1*`TASK_WIDTH +: `TASK_WIDTH] <= task_fifo_rd_data_d1[131:68];
+            mac_lane_task_r[2*`TASK_WIDTH +: `TASK_WIDTH] <= task_fifo_rd_data_d1[195:132];
+            mac_lane_task_r[3*`TASK_WIDTH +: `TASK_WIDTH] <= task_fifo_rd_data_d1[259:196];
         end else begin
             mac_lane_valid_r <= 0;
         end
@@ -630,20 +639,28 @@ module pe_top #(
 
     assign prod_fifo_rd_en = !prod_fifo_empty && acc_issue_ready;
 
+    // 1-cycle pipeline for synchronous (BRAM) FIFO read
+    reg                          prod_fifo_rd_en_d1;
+    reg [`PRODUCT_GROUP_WIDTH-1:0] prod_fifo_rd_data_d1;
+    always @(posedge aclk) begin
+        prod_fifo_rd_en_d1   <= prod_fifo_rd_en && !prod_fifo_empty;
+        prod_fifo_rd_data_d1 <= prod_fifo_rd_data;
+    end
+
     wire [3:0]  acc_lane_valid;
     wire [35:0] acc_lane_col_id;
     wire [63:0] acc_lane_product;
 
-    assign acc_lane_valid   = prod_fifo_rd_data[3:0];
+    assign acc_lane_valid   = prod_fifo_rd_data_d1[3:0];
     // product format: {col_id[15:0], fp16_val[15:0]} per lane (32-bit each)
-    assign acc_lane_col_id  = {prod_fifo_rd_data[4+3*32+16 +: 9],
-                               prod_fifo_rd_data[4+2*32+16 +: 9],
-                               prod_fifo_rd_data[4+1*32+16 +: 9],
-                               prod_fifo_rd_data[4+0*32+16 +: 9]};
-    assign acc_lane_product = {prod_fifo_rd_data[4+3*32 +: 16],
-                               prod_fifo_rd_data[4+2*32 +: 16],
-                               prod_fifo_rd_data[4+1*32 +: 16],
-                               prod_fifo_rd_data[4+0*32 +: 16]};
+    assign acc_lane_col_id  = {prod_fifo_rd_data_d1[4+3*32+16 +: 9],
+                               prod_fifo_rd_data_d1[4+2*32+16 +: 9],
+                               prod_fifo_rd_data_d1[4+1*32+16 +: 9],
+                               prod_fifo_rd_data_d1[4+0*32+16 +: 9]};
+    assign acc_lane_product = {prod_fifo_rd_data_d1[4+3*32 +: 16],
+                               prod_fifo_rd_data_d1[4+2*32 +: 16],
+                               prod_fifo_rd_data_d1[4+1*32 +: 16],
+                               prod_fifo_rd_data_d1[4+0*32 +: 16]};
 
     row_accumulator_4bank #(
         .OUT_COLS(512), .COL_W(9), .PROD_W(16),
@@ -680,38 +697,38 @@ module pe_top #(
                              (product_fifo_cnt < (`PROD_FIFO_DEPTH - `MUL_LAT - 1));
 
     //=========================================================================
-    // C buffer write
+    // C buffer write (disabled — c_bank removed)
     //=========================================================================
-    wire [3:0]               c_wr_valid = comp_sel ? drain_valid_0  : drain_valid_1;
-    wire [BANK_ADDR_W-1:0]   c_wr_gaddr = comp_sel ? drain_gaddr_0  : drain_gaddr_1;
-    wire [`A_ROW_ADDR_BITS-1:0] c_wr_rid = comp_sel ? drain_row_id_0 : drain_row_id_1;
-    wire [4*16-1:0]          c_wr_vals  = comp_sel ? drain_values_0 : drain_values_1;
-    wire [C_BANK_ADDR_W-1:0] c_wr_addr  = {c_wr_rid, c_wr_gaddr};
+    // wire [3:0]               c_wr_valid = comp_sel ? drain_valid_0  : drain_valid_1;
+    // wire [BANK_ADDR_W-1:0]   c_wr_gaddr = comp_sel ? drain_gaddr_0  : drain_gaddr_1;
+    // wire [`A_ROW_ADDR_BITS-1:0] c_wr_rid = comp_sel ? drain_row_id_0 : drain_row_id_1;
+    // wire [4*16-1:0]          c_wr_vals  = comp_sel ? drain_values_0 : drain_values_1;
+    // wire [C_BANK_ADDR_W-1:0] c_wr_addr  = {c_wr_rid, c_wr_gaddr};
 
-    always @(posedge aclk) begin
-        if (c_wr_valid[0]) c_bank0[c_wr_addr] <= c_wr_vals[0*16 +: 16];
-        if (c_wr_valid[1]) c_bank1[c_wr_addr] <= c_wr_vals[1*16 +: 16];
-        if (c_wr_valid[2]) c_bank2[c_wr_addr] <= c_wr_vals[2*16 +: 16];
-        if (c_wr_valid[3]) c_bank3[c_wr_addr] <= c_wr_vals[3*16 +: 16];
-    end
+    // always @(posedge aclk) begin
+    //     if (c_wr_valid[0]) c_bank0[c_wr_addr] <= c_wr_vals[0*16 +: 16];
+    //     if (c_wr_valid[1]) c_bank1[c_wr_addr] <= c_wr_vals[1*16 +: 16];
+    //     if (c_wr_valid[2]) c_bank2[c_wr_addr] <= c_wr_vals[2*16 +: 16];
+    //     if (c_wr_valid[3]) c_bank3[c_wr_addr] <= c_wr_vals[3*16 +: 16];
+    // end
 
     //=========================================================================
-    // C buffer read
+    // C buffer read (disabled — c_bank removed)
     //=========================================================================
-    wire [1:0]               rd_bank  = c_rd_addr[1:0];
-    wire [C_BANK_ADDR_W-1:0] rd_baddr = {c_rd_addr[C_RD_ADDR_W-1:ACC_COL_W],
-                                          c_rd_addr[ACC_COL_W-1:2]};
+    // wire [1:0]               rd_bank  = c_rd_addr[1:0];
+    // wire [C_BANK_ADDR_W-1:0] rd_baddr = {c_rd_addr[C_RD_ADDR_W-1:ACC_COL_W],
+    //                                       c_rd_addr[ACC_COL_W-1:2]};
 
-    always @(posedge aclk) begin
-        if (c_rd_en) begin
-            case (rd_bank)
-                2'd0: c_rd_data <= c_bank0[rd_baddr];
-                2'd1: c_rd_data <= c_bank1[rd_baddr];
-                2'd2: c_rd_data <= c_bank2[rd_baddr];
-                2'd3: c_rd_data <= c_bank3[rd_baddr];
-            endcase
-        end
-    end
+    // always @(posedge aclk) begin
+    //     if (c_rd_en) begin
+    //         case (rd_bank)
+    //             2'd0: c_rd_data <= c_bank0[rd_baddr];
+    //             2'd1: c_rd_data <= c_bank1[rd_baddr];
+    //             2'd2: c_rd_data <= c_bank2[rd_baddr];
+    //             2'd3: c_rd_data <= c_bank3[rd_baddr];
+    //         endcase
+    //     end
+    // end
 
     //=========================================================================
     // Main FSM sequential

@@ -50,10 +50,11 @@ module tb_pe_cluster;
     reg [`MAX_DIM_BITS-1:0]     b_desc_waddr;
     reg [63:0]                   b_desc_wdata;
 
-    // C buffer read (per PE, packed)
-    reg  [N_PE-1:0]              c_rd_en;
-    reg  [N_PE*17-1:0]           c_rd_addr;
-    wire [N_PE*16-1:0]           c_rd_data;  // FP16 per PE
+    // C buffer read (per PE, packed) — disabled (c_bank removed)
+    // reg  [N_PE-1:0]              c_rd_en;
+    // reg  [N_PE*17-1:0]           c_rd_addr;
+    // wire [N_PE*16-1:0]           c_rd_data;  // FP16 per PE
+
 
 `ifndef COCOTB_SIM
     always #5 aclk = ~aclk;
@@ -70,11 +71,11 @@ module tb_pe_cluster;
 
         .b_col_we(b_col_we),   .b_col_waddr(b_col_waddr),   .b_col_wdata(b_col_wdata),
         .b_val_we(b_val_we),   .b_val_waddr(b_val_waddr),   .b_val_wdata(b_val_wdata),
-        .b_desc_we(b_desc_we), .b_desc_waddr(b_desc_waddr), .b_desc_wdata(b_desc_wdata),
+        .b_desc_we(b_desc_we), .b_desc_waddr(b_desc_waddr), .b_desc_wdata(b_desc_wdata)
 
-        .c_rd_en  (c_rd_en),
-        .c_rd_addr(c_rd_addr),
-        .c_rd_data(c_rd_data)
+        // .c_rd_en  (c_rd_en),
+        // .c_rd_addr(c_rd_addr),
+        // .c_rd_data(c_rd_data)
     );
 
 `ifdef COCOTB_SIM

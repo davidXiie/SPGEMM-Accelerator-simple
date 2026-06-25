@@ -46,10 +46,11 @@ module tb_pe_top;
     reg [`MAX_DIM_BITS-1:0] b_desc_waddr;
     reg [63:0] b_desc_wdata;
 
-    // C buffer read port: addr = {local_row_idx[7:0], col[8:0]}  (17-bit)
-    reg         c_rd_en;
-    reg  [16:0] c_rd_addr;
-    wire [15:0]  c_rd_data;    // FP16 output
+    // C buffer read port (disabled — c_bank removed)
+    // reg         c_rd_en;
+    // reg  [16:0] c_rd_addr;
+    // wire [15:0]  c_rd_data;    // FP16 output
+
 
 `ifndef COCOTB_SIM
     always #5 aclk = ~aclk;
@@ -86,11 +87,11 @@ module tb_pe_top;
 
         .b_desc_we      (b_desc_we),
         .b_desc_waddr   (b_desc_waddr),
-        .b_desc_wdata   (b_desc_wdata),
+        .b_desc_wdata   (b_desc_wdata)
 
-        .c_rd_en        (c_rd_en),
-        .c_rd_addr      (c_rd_addr),
-        .c_rd_data      (c_rd_data)
+        // .c_rd_en        (c_rd_en),
+        // .c_rd_addr      (c_rd_addr),
+        // .c_rd_data      (c_rd_data)
     );
 
 `ifdef COCOTB_SIM

@@ -107,6 +107,7 @@ module accum_bank #(
     wire               s1_epoch_hit = s12_hazard ? 1'b1       : (tag_mem[s1_addr] == row_epoch);
 
     // FP16 accumulation: fp16_add(old_acc, new_product)
+    // s1_old_acc/s1_prod are ACC_W/PROD_W bits wide; FP16 values in lower 16 bits.
     wire [15:0] fp16_sum;
     fp16_add u_fp16_add (
         .a (s1_old_acc[15:0]),
@@ -114,7 +115,8 @@ module accum_bank #(
         .z (fp16_sum)
     );
     // On epoch miss (first write to this col): store product directly (same as 0.0 + prod)
-    wire [ACC_W-1:0]   s1_new_val   = s1_epoch_hit ? {{(ACC_W-16){1'b0}}, fp16_sum} : s1_prod;
+    // fp16_sum and s1_prod are both 16-bit; ACC_W == 16 for FP16 mode.
+    wire [ACC_W-1:0]   s1_new_val   = s1_epoch_hit ? fp16_sum : s1_prod;
 
     // =========================================================================
     // Tag clear

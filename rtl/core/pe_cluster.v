@@ -54,14 +54,13 @@ module pe_cluster #(
     // B row descriptor (broadcast; {b_off[31:0], 0[31:16], b_nnz[15:0]})
     input  wire                          b_desc_we,
     input  wire [`MAX_DIM_BITS-1:0]     b_desc_waddr,
-    input  wire [63:0]                   b_desc_wdata,
+    input  wire [63:0]                   b_desc_wdata
 
     //=========================================================================
-    // C buffer read (per PE, packed)
-    // c_rd_addr = {local_row_idx[7:0], col[8:0]}  (17-bit per PE)
-    input  wire [N_PE-1:0]        c_rd_en,
-    input  wire [N_PE*17-1:0]     c_rd_addr,
-    output wire [N_PE*16-1:0]     c_rd_data   // FP16 per PE
+    // C buffer read (per PE, packed) — disabled (c_bank removed)
+    // input  wire [N_PE-1:0]        c_rd_en,
+    // input  wire [N_PE*17-1:0]     c_rd_addr,
+    // output wire [N_PE*16-1:0]     c_rd_data   // FP16 per PE
 );
 
     wire [N_PE-1:0] done_vec;
@@ -98,11 +97,11 @@ module pe_cluster #(
 
                 .b_desc_we   (b_desc_we),
                 .b_desc_waddr(b_desc_waddr),
-                .b_desc_wdata(b_desc_wdata),
+                .b_desc_wdata(b_desc_wdata)
 
-                .c_rd_en   (c_rd_en[i]),
-                .c_rd_addr (c_rd_addr[i*17 +: 17]),
-                .c_rd_data (c_rd_data[i*16 +: 16])
+                // .c_rd_en   (c_rd_en[i]),
+                // .c_rd_addr (c_rd_addr[i*17 +: 17]),
+                // .c_rd_data (c_rd_data[i*16 +: 16])
             );
         end
     endgenerate

@@ -119,7 +119,7 @@ module sync_fifo #(
     output wire                  wr_full,
 
     input  wire                  rd_en,
-    output wire [WIDTH-1:0]      rd_data,
+    output reg  [WIDTH-1:0]      rd_data,
     output wire                  rd_empty,
 
     output wire [DEPTH_LOG:0]    count,
@@ -128,21 +128,24 @@ module sync_fifo #(
     input  wire                  aresetn
 );
 
-    reg [WIDTH-1:0] mem [0:DEPTH-1];
+    (* ram_style = "block" *) reg [WIDTH-1:0] mem [0:DEPTH-1];
     reg [DEPTH_LOG:0] wr_ptr, rd_ptr;
 
     assign count    = wr_ptr - rd_ptr;
     assign wr_full  = (count >= DEPTH);
     assign rd_empty = (count == 0);
-    assign rd_data  = mem[rd_ptr[DEPTH_LOG-1:0]];
 
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
             wr_ptr <= 0;
             rd_ptr <= 0;
+            rd_data <= 0;
         end else begin
             if (wr_en && !wr_full) wr_ptr <= wr_ptr + 1'b1;
-            if (rd_en && !rd_empty) rd_ptr <= rd_ptr + 1'b1;
+            if (rd_en && !rd_empty) begin
+                rd_ptr <= rd_ptr + 1'b1;
+                rd_data <= mem[rd_ptr[DEPTH_LOG-1:0]];
+            end
         end
     end
 
