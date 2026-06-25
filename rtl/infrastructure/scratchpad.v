@@ -108,7 +108,11 @@ endmodule
 
 //=============================================================================
 // SyncFIFO: Synchronous FIFO
+//   DEPTH must be a power-of-2.
+//   keep_hierarchy prevents Vivado from flattening this module before BRAM
+//   inference runs, ensuring the ram_style attribute survives optimisation.
 //=============================================================================
+(* keep_hierarchy = "yes" *)
 module sync_fifo #(
     parameter integer WIDTH      = 32,
     parameter integer DEPTH      = 16,
@@ -131,35 +135,42 @@ module sync_fifo #(
     (* ram_style = "block" *) reg [WIDTH-1:0] mem [0:DEPTH-1];
     reg [DEPTH_LOG:0] wr_ptr, rd_ptr;
 
-    // DEPTH must be a power-of-2; wr_full uses MSB of count (count==DEPTH sets bit DEPTH_LOG)
-    assign count    = wr_ptr - rd_ptr;
-    assign wr_full  = count[DEPTH_LOG];
-    assign rd_empty = (count == {(DEPTH_LOG+1){1'b0}});
+`ifndef SYNTHESIS
+    // Simulation only: initialise to 0 so unread slots don't produce X values.
+    // `SYNTHESIS is defined automatically by Vivado; this block is invisible
+    // to the synthesis tool, so it does not affect BRAM inference.
+    integer _sim_i;
+    initial begin
+        for (_sim_i = 0; _sim_i < DEPTH; _sim_i = _sim_i + 1)
+            mem[_sim_i] = {WIDTH{1'b0}};
+    end
+`endif
 
-    // Explicit address/enable wires so Vivado can cleanly map to BRAM port signals
+    assign count    = wr_ptr - rd_ptr;
+    assign wr_full  = count[DEPTH_LOG];   // full when count == DEPTH == 2^DEPTH_LOG
+    assign rd_empty = (count == 0);
+
     wire [DEPTH_LOG-1:0] wr_addr = wr_ptr[DEPTH_LOG-1:0];
     wire [DEPTH_LOG-1:0] rd_addr = rd_ptr[DEPTH_LOG-1:0];
     wire                 wr_en_q = wr_en & ~wr_full;
 
-    // Pointers: async reset is fine for plain FFs
+    // Pointer FFs — async reset is fine; these are plain registers, not BRAM
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
-            wr_ptr <= {(DEPTH_LOG+1){1'b0}};
-            rd_ptr <= {(DEPTH_LOG+1){1'b0}};
+            wr_ptr <= 0;
+            rd_ptr <= 0;
         end else begin
-            if (wr_en_q)            wr_ptr <= wr_ptr + 1'b1;
-            if (rd_en && !rd_empty) rd_ptr <= rd_ptr + 1'b1;
+            if (wr_en_q)             wr_ptr <= wr_ptr + 1'b1;
+            if (rd_en && !rd_empty)  rd_ptr <= rd_ptr + 1'b1;
         end
     end
 
-    // Write port: clock only, no reset — Xilinx BRAM write port pattern
+    // Memory: write and read in a SINGLE always block — the pattern Vivado most
+    // reliably maps to SDP BRAM.  No reset on this block (BRAM has no async reset
+    // on its output register); rd_data is valid one cycle after rd_addr changes.
     always @(posedge aclk) begin
         if (wr_en_q)
             mem[wr_addr] <= wr_data;
-    end
-
-    // Read port: clock only, no reset, unconditional — maps to BRAM output register (REGCE=1)
-    always @(posedge aclk) begin
         rd_data <= mem[rd_addr];
     end
 

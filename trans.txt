@@ -1,4 +1,4 @@
-export HTTP_PROXY=http://127.0.0.1:7897
-export HTTPS_PROXY=http://127.0.0.1:7897
-export http_proxy=http://127.0.0.1:7897
-export https_proxy=http://127.0.0.1:7897
+再综合一次之前，在 Vivado TCL Console 里运行这条命令，把具体原因打出来：
+
+
+report_ram_utilization -detail
