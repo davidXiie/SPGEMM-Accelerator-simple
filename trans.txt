@@ -1,4 +1,4 @@
 再综合一次之前，在 Vivado TCL Console 里运行这条命令，把具体原因打出来：
 
 
-report_ram_utilization -detail
+report_ram_utilization -detailc

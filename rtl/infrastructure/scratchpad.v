@@ -134,7 +134,9 @@ module sync_fifo #(
     input  wire                  aresetn
 );
 
-    (* ram_style = "block" *) reg [WIDTH-1:0] mem [0:DEPTH-1];
+    // rw_addr_collision="no": wr_ptr != rd_ptr is guaranteed by the FIFO pointer
+    // logic, so Vivado does not need to generate WRITE_FIRST forwarding mux trees.
+    (* ram_style = "block" *) (* rw_addr_collision = "no" *) reg [WIDTH-1:0] mem [0:DEPTH-1];
     reg [DEPTH_LOG:0] wr_ptr, rd_ptr;
 
 `ifndef SYNTHESIS
