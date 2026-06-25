@@ -1,12 +1,12 @@
 <testsuites name="results">
   <testsuite name="all" package="all">
-    <property name="random_seed" value="1782375010" />
+    <property name="random_seed" value="1782376842" />
     <testcase name="test_comp_case1_p0" classname="test_comp" file="D:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\pe_sim\test_comp.py" lineno="288" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>
     <testcase name="test_comp_case1_p1" classname="test_comp" file="D:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\pe_sim\test_comp.py" lineno="346" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>
-    <testcase name="test_comp_case1_cluster" classname="test_comp" file="D:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\pe_sim\test_comp.py" lineno="579" time="26.025180339813232" sim_time_ns="328600.0" ratio_time="12626.233352062842" />
+    <testcase name="test_comp_case1_cluster" classname="test_comp" file="D:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\pe_sim\test_comp.py" lineno="579" time="28.606390476226807" sim_time_ns="328550.0" ratio_time="11485.195948543029" />
   </testsuite>
 </testsuites>

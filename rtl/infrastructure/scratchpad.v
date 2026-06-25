@@ -131,6 +131,14 @@ module sync_fifo #(
     (* ram_style = "block" *) reg [WIDTH-1:0] mem [0:DEPTH-1];
     reg [DEPTH_LOG:0] wr_ptr, rd_ptr;
 
+    // Simulation determinism: zero-initialize RAM (ignored by synthesis,
+    // FPGA BRAM initializes to zero on configuration).
+    integer si;
+    initial begin
+        for (si = 0; si < DEPTH; si = si + 1)
+            mem[si] = 0;
+    end
+
     assign count    = wr_ptr - rd_ptr;
     assign wr_full  = (count >= DEPTH);
     assign rd_empty = (count == 0);
@@ -142,10 +150,10 @@ module sync_fifo #(
             rd_data <= 0;
         end else begin
             if (wr_en && !wr_full) wr_ptr <= wr_ptr + 1'b1;
-            if (rd_en && !rd_empty) begin
+            // BRAM inference: always read, then advance pointer conditionally
+            rd_data <= mem[rd_ptr[DEPTH_LOG-1:0]];
+            if (rd_en && !rd_empty)
                 rd_ptr <= rd_ptr + 1'b1;
-                rd_data <= mem[rd_ptr[DEPTH_LOG-1:0]];
-            end
         end
     end
 

@@ -61,15 +61,17 @@ task_fifo 原消耗 12,000 LUT（组合读导致寄存器+MUX 树实现），改
 
 ## 改动内容
 
-### scratchpad.v
-- `assign rd_data = mem[...]` → `reg rd_data`，在 `rd_en` 时钟沿同步更新
-- 端口 `output wire rd_data` → `output reg rd_data`
-- 去除内部重复的 `reg rd_data` 声明（端口已含 reg）
-- 加 `(* ram_style = "block" *)` 属性
+### scratchpad.v（4 次迭代）
+1. `assign rd_data = mem[...]` → `reg rd_data`，在 `rd_en` 时钟沿同步更新
+2. 端口 `output wire rd_data` → `output reg rd_data`，去内部重复 `reg` 声明
+3. 读操作从条件 `if (rd_en && !rd_empty)` 内改为无条件每拍执行 → 启用 BRAM 推断
+4. 加 `initial` 块全零初始化 `mem` 数组 → 消除仿真 X 传播
+5. 加 `(* ram_style = "block" *)` 属性
 
-### pe_top.v
-- task_fifo 消费者：加 `task_fifo_rd_en_d1`/`task_fifo_rd_data_d1` 1 拍延迟
-- product_fifo 消费者：加 `prod_fifo_rd_en_d1`/`prod_fifo_rd_data_d1` 1 拍延迟
+### pe_top.v（2 次迭代）
+1. task_fifo 消费者：加 `task_fifo_rd_en_d1`/`task_fifo_rd_data_d1` 1 拍延迟
+2. product_fifo 消费者：加 `prod_fifo_rd_en_d1`/`prod_fifo_rd_data_d1` 1 拍延迟
+3. 两对 d1 寄存器加 `negedge aresetn` 异步复位 → 消除仿真 X 传播
 
 ## 预期效果
 - task_fifo: 12,000 LUT → ~200 LUT + 8 BRAM36

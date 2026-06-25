@@ -539,9 +539,14 @@ module pe_top #(
     // 1-cycle pipeline for synchronous (BRAM) FIFO read
     reg                          task_fifo_rd_en_d1;
     reg [`TASK_GROUP_WIDTH-1:0]  task_fifo_rd_data_d1;
-    always @(posedge aclk) begin
-        task_fifo_rd_en_d1   <= task_fifo_rd_en && !task_fifo_empty;
-        task_fifo_rd_data_d1 <= task_fifo_rd_data;
+    always @(posedge aclk or negedge aresetn) begin
+        if (!aresetn) begin
+            task_fifo_rd_en_d1   <= 1'b0;
+            task_fifo_rd_data_d1 <= 0;
+        end else begin
+            task_fifo_rd_en_d1   <= task_fifo_rd_en && !task_fifo_empty;
+            task_fifo_rd_data_d1 <= task_fifo_rd_data;
+        end
     end
 
     reg [`N_MAC-1:0]              mac_lane_valid_r;
@@ -642,9 +647,14 @@ module pe_top #(
     // 1-cycle pipeline for synchronous (BRAM) FIFO read
     reg                          prod_fifo_rd_en_d1;
     reg [`PRODUCT_GROUP_WIDTH-1:0] prod_fifo_rd_data_d1;
-    always @(posedge aclk) begin
-        prod_fifo_rd_en_d1   <= prod_fifo_rd_en && !prod_fifo_empty;
-        prod_fifo_rd_data_d1 <= prod_fifo_rd_data;
+    always @(posedge aclk or negedge aresetn) begin
+        if (!aresetn) begin
+            prod_fifo_rd_en_d1   <= 1'b0;
+            prod_fifo_rd_data_d1 <= 0;
+        end else begin
+            prod_fifo_rd_en_d1   <= prod_fifo_rd_en && !prod_fifo_empty;
+            prod_fifo_rd_data_d1 <= prod_fifo_rd_data;
+        end
     end
 
     wire [3:0]  acc_lane_valid;
