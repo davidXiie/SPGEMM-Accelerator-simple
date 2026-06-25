@@ -112,11 +112,11 @@
 `define PRODUCT_WIDTH       32   // {col_id[15:0], fp16_val[15:0]}
 `define PRODUCT_GROUP_WIDTH (4 + 4 * `PRODUCT_WIDTH)  // 132
 
-`define TASK_FIFO_DEPTH     256
-`define TASK_FIFO_DEPTH_LOG 8
+`define TASK_FIFO_DEPTH     512    // matches RAMB36E2 SDP 72-bit natural depth (100% utilized)
+`define TASK_FIFO_DEPTH_LOG 9
 
-`define PROD_FIFO_DEPTH     256
-`define PROD_FIFO_DEPTH_LOG  8
+`define PROD_FIFO_DEPTH     512    // same: 2×RAMB36E2 at 100% depth utilization
+`define PROD_FIFO_DEPTH_LOG  9
 
 //=============================================================================
 // C_dense_buffer

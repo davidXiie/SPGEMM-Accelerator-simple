@@ -131,40 +131,36 @@ module sync_fifo #(
     (* ram_style = "block" *) reg [WIDTH-1:0] mem [0:DEPTH-1];
     reg [DEPTH_LOG:0] wr_ptr, rd_ptr;
 
-    // Simulation determinism: zero-initialize RAM (ignored by synthesis,
-    // FPGA BRAM initializes to zero on configuration).
-    integer si;
-    initial begin
-        for (si = 0; si < DEPTH; si = si + 1)
-            mem[si] = 0;
-    end
-
+    // DEPTH must be a power-of-2; wr_full uses MSB of count (count==DEPTH sets bit DEPTH_LOG)
     assign count    = wr_ptr - rd_ptr;
-    assign wr_full  = (count >= DEPTH);
-    assign rd_empty = (count == 0);
+    assign wr_full  = count[DEPTH_LOG];
+    assign rd_empty = (count == {(DEPTH_LOG+1){1'b0}});
+
+    // Explicit address/enable wires so Vivado can cleanly map to BRAM port signals
+    wire [DEPTH_LOG-1:0] wr_addr = wr_ptr[DEPTH_LOG-1:0];
+    wire [DEPTH_LOG-1:0] rd_addr = rd_ptr[DEPTH_LOG-1:0];
+    wire                 wr_en_q = wr_en & ~wr_full;
 
     // Pointers: async reset is fine for plain FFs
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
-            wr_ptr <= 0;
-            rd_ptr <= 0;
+            wr_ptr <= {(DEPTH_LOG+1){1'b0}};
+            rd_ptr <= {(DEPTH_LOG+1){1'b0}};
         end else begin
-            if (wr_en && !wr_full)  wr_ptr <= wr_ptr + 1'b1;
+            if (wr_en_q)            wr_ptr <= wr_ptr + 1'b1;
             if (rd_en && !rd_empty) rd_ptr <= rd_ptr + 1'b1;
         end
     end
 
-    // Memory write (separate block, no reset → clean BRAM write port)
+    // Write port: clock only, no reset — Xilinx BRAM write port pattern
     always @(posedge aclk) begin
-        if (wr_en && !wr_full)
-            mem[wr_ptr[DEPTH_LOG-1:0]] <= wr_data;
+        if (wr_en_q)
+            mem[wr_addr] <= wr_data;
     end
 
-    // Memory read: SEPARATE block, clock-edge only, NO async reset.
-    // Xilinx BRAM output registers do not support async reset;
-    // mixing rd_data with aresetn prevents BRAM inference.
+    // Read port: clock only, no reset, unconditional — maps to BRAM output register (REGCE=1)
     always @(posedge aclk) begin
-        rd_data <= mem[rd_ptr[DEPTH_LOG-1:0]];
+        rd_data <= mem[rd_addr];
     end
 
 endmodule
