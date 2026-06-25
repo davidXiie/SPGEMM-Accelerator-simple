@@ -128,14 +128,13 @@ module accum_bank #(
     // =========================================================================
     // FIFO process
     // =========================================================================
-    integer fi;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             fifo_tail <= {FIFO_DEPTH_LOG{1'b0}};
             fifo_head <= {FIFO_DEPTH_LOG{1'b0}};
             fifo_cnt  <= {(FIFO_DEPTH_LOG+1){1'b0}};
-            for (fi = 0; fi < FIFO_DEPTH; fi = fi + 1)
-                fifo_mem[fi] <= {ENTRY_W{1'b0}};
+            // fifo_mem is not reset here; DRAM initialises to 0 and is never
+            // read before a valid entry is written (fifo_empty guards reads).
         end else begin
             // Multi-write: each valid port appends to the burst sequence
             if (wr_valid[0])
@@ -163,6 +162,7 @@ module accum_bank #(
         end
     end
 
+    // Pipeline control registers — async reset is fine here (no memory writes).
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             s1_valid   <= 1'b0;
@@ -172,11 +172,6 @@ module accum_bank #(
             s2_addr    <= {BANK_ADDR_W{1'b0}};
             s2_new_val <= {ACC_W{1'b0}};
         end else begin
-            // S2: write result to memories
-            if (s2_valid) begin
-                tag_mem[s2_addr] <= row_epoch;
-                acc_mem[s2_addr] <= s2_new_val;
-            end
             // Advance S1 → S2
             s2_valid   <= s1_valid;
             s2_addr    <= s1_addr;
@@ -195,28 +190,54 @@ module accum_bank #(
     // =========================================================================
     // Tag clear (sequential; only triggered after all RMW done)
     // =========================================================================
-    integer ci;
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             clr_active <= 1'b0;
             clr_idx    <= {BANK_ADDR_W{1'b0}};
-            for (ci = 0; ci < BANK_DEPTH; ci = ci + 1)
-                tag_mem[ci] <= {EPOCH_W{1'b0}};
+            // tag_mem is not reset here: DRAM initialises to 0, matching the
+            // initial row_epoch of 0, so the epoch mechanism works on first use.
         end else begin
             if (tag_clear_en && !clr_active) begin
                 clr_active <= 1'b1;
                 clr_idx    <= {BANK_ADDR_W{1'b0}};
             end
             if (clr_active) begin
-                tag_mem[clr_idx] <= {EPOCH_W{1'b0}};
-                if (clr_idx == BANK_LAST[BANK_ADDR_W-1:0]) begin
+                if (clr_idx == BANK_LAST[BANK_ADDR_W-1:0])
                     clr_active <= 1'b0;
-                end else begin
+                else
                     clr_idx <= clr_idx + {{(BANK_ADDR_W-1){1'b0}}, 1'b1};
-                end
             end
         end
     end
+
+    // Memory writes — clock only (no async reset) so Vivado can infer DRAM.
+    // tag_mem: priority between tag_clear and S2 (mutually exclusive in practice).
+    // acc_mem: single writer (S2 only).
+    always @(posedge clk) begin
+        if (clr_active)
+            tag_mem[clr_idx] <= {EPOCH_W{1'b0}};
+        else if (s2_valid)
+            tag_mem[s2_addr] <= row_epoch;
+
+        if (s2_valid)
+            acc_mem[s2_addr] <= s2_new_val;
+    end
+
+    // =========================================================================
+    // Simulation only: initialise memories to 0 (matches FPGA power-up state).
+    // Vivado defines SYNTHESIS automatically; these blocks are invisible to it.
+    // =========================================================================
+`ifndef SYNTHESIS
+    integer _ci, _fi;
+    initial begin
+        for (_ci = 0; _ci < BANK_DEPTH; _ci = _ci + 1) begin
+            tag_mem[_ci] = {EPOCH_W{1'b0}};
+            acc_mem[_ci] = {ACC_W{1'b0}};
+        end
+        for (_fi = 0; _fi < FIFO_DEPTH; _fi = _fi + 1)
+            fifo_mem[_fi] = {ENTRY_W{1'b0}};
+    end
+`endif
 
     // =========================================================================
     // Simulation assertions

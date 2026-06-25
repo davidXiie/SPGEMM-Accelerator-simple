@@ -27,22 +27,23 @@ module std_scratchpad #(
     input  wire                  aresetn
 );
 
-    reg [DATA_WIDTH-1:0] ram [0:DEPTH-1];
+    (* ram_style = "block" *) reg [DATA_WIDTH-1:0] ram [0:DEPTH-1];
     reg [DATA_WIDTH-1:0] rd_data_reg;
     reg rd_valid_reg;
 
+    // Write + registered read in one block — most reliable BRAM SDP pattern.
+    // No async reset on this block: BRAM output register cannot have async reset.
     always @(posedge aclk) begin
         if (wr_en) ram[wr_addr] <= wr_data;
+        if (rd_en) rd_data_reg <= ram[rd_addr];
     end
 
+    // Valid flag only — a plain control register, fine with async reset.
     always @(posedge aclk or negedge aresetn) begin
-        if (!aresetn) begin
-            rd_data_reg  <= 0;
+        if (!aresetn)
             rd_valid_reg <= 1'b0;
-        end else begin
+        else
             rd_valid_reg <= rd_en;
-            if (rd_en) rd_data_reg <= ram[rd_addr];
-        end
     end
 
     assign rd_data  = rd_data_reg;
@@ -77,25 +78,26 @@ module banked_scratchpad #(
     genvar b;
     generate
         for (b = 0; b < N_BANKS; b = b + 1) begin : gen_bank
-            reg [BANK_WIDTH-1:0] ram [0:DEPTH-1];
+            (* ram_style = "block" *) reg [BANK_WIDTH-1:0] ram [0:DEPTH-1];
             reg [BANK_WIDTH-1:0] rd_reg;
             reg rd_valid_reg;
 
             wire [DEPTH_LOG-1:0] rd_addr_b = rd_addr[b*DEPTH_LOG +: DEPTH_LOG];
 
+            // Write + registered read: single clock-only block for BRAM SDP inference.
             always @(posedge aclk) begin
                 if (wr_en)
                     ram[wr_addr] <= wr_data[(b+1)*BANK_WIDTH-1 -: BANK_WIDTH];
+                if (rd_en[b])
+                    rd_reg <= ram[rd_addr_b];
             end
 
+            // Valid flag: control register, async reset is fine here.
             always @(posedge aclk or negedge aresetn) begin
-                if (!aresetn) begin
-                    rd_reg       <= 0;
+                if (!aresetn)
                     rd_valid_reg <= 1'b0;
-                end else begin
+                else
                     rd_valid_reg <= rd_en[b];
-                    if (rd_en[b]) rd_reg <= ram[rd_addr_b];
-                end
             end
 
             assign rd_data[(b+1)*BANK_WIDTH-1 -: BANK_WIDTH] = rd_reg;

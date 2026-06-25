@@ -1,7 +1,7 @@
 <testsuites name="results">
   <testsuite name="all" package="all">
-    <property name="random_seed" value="1782385314" />
-    <testcase name="test_comp_case1_p0" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="288" time="15.608307123184204" sim_time_ns="791930.0" ratio_time="50737.72535034797" />
+    <property name="random_seed" value="1782393759" />
+    <testcase name="test_comp_case1_p0" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="288" time="15.862034559249878" sim_time_ns="791930.0" ratio_time="49926.1300334382" />
     <testcase name="test_comp_case1_p1" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="346" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>
