@@ -89,7 +89,8 @@ iverilog -g2012 \
     "$PROJ_ROOT/rtl/core/fp16_mul.v" \
     "$PROJ_ROOT/rtl/core/fp16_add.v" \
     "$PROJ_ROOT/rtl/core/accum_bank.v" \
-    "$PROJ_ROOT/rtl/core/row_accumulator_8bank.v" \
+    "$PROJ_ROOT/rtl/core/accum_bank_16.v" \
+    "$PROJ_ROOT/rtl/core/row_accumulator_16bank.v" \
     "$PROJ_ROOT/rtl/infrastructure/scratchpad.v"
 
 echo "[OK] Compile passed."

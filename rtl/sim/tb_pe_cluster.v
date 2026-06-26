@@ -1,9 +1,14 @@
 //=============================================================================
 // File     : tb_pe_cluster.v
-// Project  : SPGEMM-Accelerator v2
-// Brief    : Cocotb wrapper for the N_PE-wide PE cluster.
-//            n_pe_sig is exposed so Python can read N_PE at runtime without
-//            hardcoding the count in the test.
+// Brief    : Cocotb wrapper for the N_PE-wide PE cluster (N_PE <= 8).
+//
+//   Per-PE A descriptor streaming signals are exposed with individual names
+//   (a_desc_valid_0 .. a_desc_valid_7) so Cocotb can drive them via
+//   getattr(dut, f"a_desc_valid_{pid}").  Only the first N_PE signals are
+//   wired into the cluster; the rest are declared but unused.
+//
+//   To change PE count: edit `define N_PE in defines.vh (1..8).
+//   No changes to this file are needed.
 //=============================================================================
 
 `include "defines.vh"
@@ -12,32 +17,69 @@ module tb_pe_cluster;
 
     localparam N_PE = `N_PE;
 
-    // Expose N_PE so cocotb can read it without hardcoding the value in Python.
     reg [7:0] n_pe_sig;
     initial n_pe_sig = N_PE;
 
     reg aclk;
     reg aresetn;
-    reg        start;
-    wire       done;
+    reg  start;
+    wire done;
 
-    reg [N_PE*16-1:0]  row_count;
-    reg [`MAX_DIM_BITS-1:0] M, K, N;
+    reg [N_PE*16-1:0]         row_count;
+    reg [`MAX_DIM_BITS-1:0]   M, K, N;
 
-    // A write ports (packed)
-    reg [N_PE-1:0]                    a_desc_we;
-    reg [N_PE*`A_ROW_ADDR_BITS-1:0]  a_desc_waddr;
-    reg [N_PE*64-1:0]                 a_desc_wdata;
+    //=========================================================================
+    // Per-PE A descriptor streaming — always 8 individual signals.
+    // Only indices 0..N_PE-1 are connected to the cluster.
+    //=========================================================================
+    reg  a_desc_valid_0, a_desc_valid_1, a_desc_valid_2, a_desc_valid_3;
+    reg  a_desc_valid_4, a_desc_valid_5, a_desc_valid_6, a_desc_valid_7;
+
+    wire a_desc_ready_0, a_desc_ready_1, a_desc_ready_2, a_desc_ready_3;
+    wire a_desc_ready_4, a_desc_ready_5, a_desc_ready_6, a_desc_ready_7;
+
+    reg [35:0] a_desc_data_0, a_desc_data_1, a_desc_data_2, a_desc_data_3;
+    reg [35:0] a_desc_data_4, a_desc_data_5, a_desc_data_6, a_desc_data_7;
+
+    // Collect into 8-wide buses, then slice to N_PE bits for pe_cluster.
+    wire [7:0]      a_valid_w8 = {a_desc_valid_7, a_desc_valid_6,
+                                   a_desc_valid_5, a_desc_valid_4,
+                                   a_desc_valid_3, a_desc_valid_2,
+                                   a_desc_valid_1, a_desc_valid_0};
+    wire [8*36-1:0] a_data_w8  = {a_desc_data_7,  a_desc_data_6,
+                                   a_desc_data_5,  a_desc_data_4,
+                                   a_desc_data_3,  a_desc_data_2,
+                                   a_desc_data_1,  a_desc_data_0};
+
+    wire [N_PE-1:0]    a_desc_valid_bus = a_valid_w8[N_PE-1:0];
+    wire [N_PE-1:0]    a_desc_ready_bus;
+    wire [N_PE*36-1:0] a_desc_data_bus  = a_data_w8[N_PE*36-1:0];
+
+    // Fan out ready: active PEs get their signal; extras are tied 0.
+    wire [7:0] a_ready_w8 = {{(8-N_PE){1'b0}}, a_desc_ready_bus};
+    assign a_desc_ready_0 = a_ready_w8[0];
+    assign a_desc_ready_1 = a_ready_w8[1];
+    assign a_desc_ready_2 = a_ready_w8[2];
+    assign a_desc_ready_3 = a_ready_w8[3];
+    assign a_desc_ready_4 = a_ready_w8[4];
+    assign a_desc_ready_5 = a_ready_w8[5];
+    assign a_desc_ready_6 = a_ready_w8[6];
+    assign a_desc_ready_7 = a_ready_w8[7];
+
+    //=========================================================================
+    // A value / column write ports (per PE, packed)
+    //=========================================================================
     reg [N_PE-1:0]                    a_val_we;
     reg [N_PE*`A_NNZ_ADDR_BITS-1:0]  a_val_waddr;
     reg [N_PE*`DATA_WIDTH-1:0]        a_val_wdata;
 
-    // A column index buffer (packed, per PE)
     reg [N_PE-1:0]                    a_col_we;
     reg [N_PE*`A_NNZ_ADDR_BITS-1:0]  a_col_waddr;
     reg [N_PE*`DATA_WIDTH-1:0]        a_col_wdata;
 
+    //=========================================================================
     // B write ports (broadcast)
+    //=========================================================================
     reg                          b_col_we;
     reg [`B_NNZ_ADDR_BITS-1:0]  b_col_waddr;
     reg [`DATA_WIDTH-1:0]        b_col_wdata;
@@ -45,16 +87,9 @@ module tb_pe_cluster;
     reg [`B_NNZ_ADDR_BITS-1:0]  b_val_waddr;
     reg [`DATA_WIDTH-1:0]        b_val_wdata;
 
-    // B row descriptor (broadcast)
     reg                          b_desc_we;
-    reg [`MAX_DIM_BITS-1:0]     b_desc_waddr;
-    reg [63:0]                   b_desc_wdata;
-
-    // C buffer read (per PE, packed) — disabled (c_bank removed)
-    // reg  [N_PE-1:0]              c_rd_en;
-    // reg  [N_PE*17-1:0]           c_rd_addr;
-    // wire [N_PE*16-1:0]           c_rd_data;  // FP16 per PE
-
+    reg [`B_ROW_ADDR_BITS-1:0]  b_desc_waddr;
+    reg [31:0]                   b_desc_wdata;
 
 `ifndef COCOTB_SIM
     always #5 aclk = ~aclk;
@@ -65,17 +100,16 @@ module tb_pe_cluster;
         .start(start), .row_count(row_count), .done(done),
         .M(M), .K(K), .N(N),
 
-        .a_desc_we(a_desc_we), .a_desc_waddr(a_desc_waddr), .a_desc_wdata(a_desc_wdata),
+        .a_desc_valid(a_desc_valid_bus),
+        .a_desc_ready(a_desc_ready_bus),
+        .a_desc_data (a_desc_data_bus),
+
         .a_val_we(a_val_we),   .a_val_waddr(a_val_waddr),   .a_val_wdata(a_val_wdata),
         .a_col_we(a_col_we),   .a_col_waddr(a_col_waddr),   .a_col_wdata(a_col_wdata),
 
         .b_col_we(b_col_we),   .b_col_waddr(b_col_waddr),   .b_col_wdata(b_col_wdata),
         .b_val_we(b_val_we),   .b_val_waddr(b_val_waddr),   .b_val_wdata(b_val_wdata),
         .b_desc_we(b_desc_we), .b_desc_waddr(b_desc_waddr), .b_desc_wdata(b_desc_wdata)
-
-        // .c_rd_en  (c_rd_en),
-        // .c_rd_addr(c_rd_addr),
-        // .c_rd_data(c_rd_data)
     );
 
 `ifdef COCOTB_SIM

@@ -21,9 +21,9 @@
 //=============================================================================
 // PE & MAC Configuration
 //=============================================================================
-`define N_PE          16      // cluster size — change here to scale
-`define N_MAC         8
-`define N_MAC_BITS    3       // log2(8)
+`define N_PE          4      // cluster size — change here to scale
+`define N_MAC         16
+`define N_MAC_BITS    4       // log2(16)
 
 // FP16 multiplier pipeline latency (1 = registered output)
 `define MUL_LAT       1

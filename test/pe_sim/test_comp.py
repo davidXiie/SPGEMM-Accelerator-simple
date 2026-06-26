@@ -106,19 +106,19 @@ def load_comp_matrix(index_file, matrix_file, is_B=False):
             offset += row_nnz; cur_row += 1; row_nnz = 0
         return row_desc, col_arr, val_arr, offset, B_rows, B_cols
 
-def align_b_8wide(Bd, Bc, Bv):
-    """Lay out B elements in 8-bank storage with per-row rotation.
+def align_b_16wide(Bd, Bc, Bv):
+    """Lay out B elements in 16-bank storage with per-row rotation.
 
-    Row r starts at absolute position b_off where b_off % 8 == r % 8.
-    This distributes the tail element of partial rows evenly across 8 lanes.
-    The hardware generator uses lane = (b_off + u) % 8 (general form).
+    Row r starts at absolute position b_off where b_off % 16 == r % 16.
+    This distributes the tail element of partial rows evenly across 16 lanes.
+    The hardware generator uses lane = (b_off + u) % 16 (general form).
     """
     new_Bc = []; new_Bv = []; new_Bd = []; new_off = 0
     for r, d in enumerate(Bd):
         start  = b_desc_off(d)
         nnz    = b_desc_nnz(d)
-        target_mod = r % 8
-        gap = (target_mod - new_off % 8) % 8
+        target_mod = r % 16
+        gap = (target_mod - new_off % 16) % 16
         for _ in range(gap):
             new_Bc.append(0); new_Bv.append(0)
         new_off += gap
@@ -140,12 +140,12 @@ def compute_col_perm(Bc_raw, N):
     for c in Bc_raw:
         col_nnz[int(c) & 0xFFFF] += 1
     sorted_cols = sorted(range(N), key=lambda c: -col_nnz[c])
-    heap = [(0, 0, b) for b in range(8)]   # (total_nnz, col_count, bank_id)
+    heap = [(0, 0, b) for b in range(16)]   # (total_nnz, col_count, bank_id)
     heapq.heapify(heap)
     perm = [0] * N
     for j in sorted_cols:
         total, cnt, b = heapq.heappop(heap)
-        perm[j] = b + 8 * cnt             # bank b, slot cnt within bank
+        perm[j] = b + 16 * cnt             # bank b, slot cnt within bank
         heapq.heappush(heap, (total + col_nnz[j], cnt + 1, b))
     return perm
 
@@ -282,7 +282,7 @@ async def run_pe(dut, rc, Ad, N, to=10000000):
     cocotb.start_soon(stream_a_desc(dut, Ad))
     dut.row_count.value = rc
     dut.start.value=1; await RisingEdge(dut.aclk); dut.start.value=0
-    dc=0; lane_busy=[0]*8; rmw_busy=[0]*8
+    dc=0; lane_busy=[0]*16; rmw_busy=[0]*16
     # PE state names (indices match pe_top.v localparams)
     PE_STATE_NAMES = ['IDLE','LOAD_ROW_DESC','CLEAR_ACC','STREAM_INSTRS',
                       'WAIT_TASK_DRAIN','WAIT_PRODUCT_DRAIN','NEXT_ROW','DONE']
@@ -296,12 +296,14 @@ async def run_pe(dut, rc, Ad, N, to=10000000):
     gen_state  = dut.u_pe.gen_state
     iry0       = dut.u_pe.acc_issue_ready_0
     iry1       = dut.u_pe.acc_issue_ready_1
-    task_cnt   = dut.u_pe.u_task_fifo.count
-    tfifo_rd   = dut.u_pe.task_fifo_rd_en
-    tg_wr      = dut.u_pe.task_group_wr_en
-    prd_cnt0   = dut.u_pe.product_fifo_cnt_0
-    prd_cnt1   = dut.u_pe.product_fifo_cnt_1
-    c_sel      = dut.u_pe.comp_sel
+    task_cnt        = dut.u_pe.u_task_fifo.count
+    tg_wr           = dut.u_pe.task_group_wr_en
+    prd_cnt0        = dut.u_pe.product_fifo_cnt_0
+    prd_cnt1        = dut.u_pe.product_fifo_cnt_1
+    c_sel           = dut.u_pe.comp_sel
+    exec_state_sig  = dut.u_pe.exec_state
+    exec_safe_sig   = dut.u_pe.exec_prod_safe
+    ptr_empty_sig   = dut.u_pe.ptr_fifo_empty
     rmw_sigs_0 = [dut.u_pe.u_row_acc_0.u_bank0.rmw_busy,
                   dut.u_pe.u_row_acc_0.u_bank1.rmw_busy,
                   dut.u_pe.u_row_acc_0.u_bank2.rmw_busy,
@@ -309,7 +311,15 @@ async def run_pe(dut, rc, Ad, N, to=10000000):
                   dut.u_pe.u_row_acc_0.u_bank4.rmw_busy,
                   dut.u_pe.u_row_acc_0.u_bank5.rmw_busy,
                   dut.u_pe.u_row_acc_0.u_bank6.rmw_busy,
-                  dut.u_pe.u_row_acc_0.u_bank7.rmw_busy]
+                  dut.u_pe.u_row_acc_0.u_bank7.rmw_busy,
+                  dut.u_pe.u_row_acc_0.u_bank8.rmw_busy,
+                  dut.u_pe.u_row_acc_0.u_bank9.rmw_busy,
+                  dut.u_pe.u_row_acc_0.u_bank10.rmw_busy,
+                  dut.u_pe.u_row_acc_0.u_bank11.rmw_busy,
+                  dut.u_pe.u_row_acc_0.u_bank12.rmw_busy,
+                  dut.u_pe.u_row_acc_0.u_bank13.rmw_busy,
+                  dut.u_pe.u_row_acc_0.u_bank14.rmw_busy,
+                  dut.u_pe.u_row_acc_0.u_bank15.rmw_busy]
     rmw_sigs_1 = [dut.u_pe.u_row_acc_1.u_bank0.rmw_busy,
                   dut.u_pe.u_row_acc_1.u_bank1.rmw_busy,
                   dut.u_pe.u_row_acc_1.u_bank2.rmw_busy,
@@ -317,14 +327,32 @@ async def run_pe(dut, rc, Ad, N, to=10000000):
                   dut.u_pe.u_row_acc_1.u_bank4.rmw_busy,
                   dut.u_pe.u_row_acc_1.u_bank5.rmw_busy,
                   dut.u_pe.u_row_acc_1.u_bank6.rmw_busy,
-                  dut.u_pe.u_row_acc_1.u_bank7.rmw_busy]
+                  dut.u_pe.u_row_acc_1.u_bank7.rmw_busy,
+                  dut.u_pe.u_row_acc_1.u_bank8.rmw_busy,
+                  dut.u_pe.u_row_acc_1.u_bank9.rmw_busy,
+                  dut.u_pe.u_row_acc_1.u_bank10.rmw_busy,
+                  dut.u_pe.u_row_acc_1.u_bank11.rmw_busy,
+                  dut.u_pe.u_row_acc_1.u_bank12.rmw_busy,
+                  dut.u_pe.u_row_acc_1.u_bank13.rmw_busy,
+                  dut.u_pe.u_row_acc_1.u_bank14.rmw_busy,
+                  dut.u_pe.u_row_acc_1.u_bank15.rmw_busy]
+    drain_v0 = dut.u_pe.drain_valid_0
+    drain_g0 = dut.u_pe.drain_gaddr_0
+    drain_r0 = dut.u_pe.drain_row_id_0
+    drain_d0 = dut.u_pe.drain_values_0
+    drain_v1 = dut.u_pe.drain_valid_1
+    drain_g1 = dut.u_pe.drain_gaddr_1
+    drain_r1 = dut.u_pe.drain_row_id_1
+    drain_d1 = dut.u_pe.drain_values_1
+    cp = {}
     prev_gs = -1; prev_s = -1
     task_cnt_at_row_done = []; wait_task_drain_cyc = []
     wt_start = -1
     # Additional counters
-    gen_emit_no_write   = 0   # GEN_EMIT cycles where no task written (accumulate case)
-    task_empty_in_stream = 0  # STREAM_INSTRS cycles: task_fifo_empty AND task_fifo_rd_en=0
-    prod_full_in_stream  = 0  # STREAM_INSTRS cycles: prod FIFO hit threshold
+    gen_emit_no_write    = 0   # GEN_EMIT cycles where no task written (accumulate case)
+    task_empty_in_stream = 0   # STREAM_INSTRS + MAC idle: both FIFOs empty (gen2 catching up)
+    prod_full_task_stall = 0   # STREAM_INSTRS + MAC idle: task FIFO has data, prod full
+    ptr_exec_prod_stall  = 0   # STREAM_INSTRS + MAC idle: exec_state=PTR, prod full
     for cy in range(to):
         await RisingEdge(dut.aclk)
         mlv = int(mac_sig.value)
@@ -332,24 +360,30 @@ async def run_pe(dut, rc, Ad, N, to=10000000):
         gs  = int(gen_state.value)
         state_cycles[s] += 1
         if gs < 5: gen_state_cyc[gs] += 1
-        for i in range(8):
+        for i in range(16):
             if (mlv >> i) & 1: lane_busy[i] += 1
             if int(rmw_sigs_0[i].value) or int(rmw_sigs_1[i].value): rmw_busy[i] += 1
         # MAC idle within STREAM_INSTRS
-        if s == 3 and mlv == 0: mac_idle_in_stream += 1
+        if s == 3 and mlv == 0:
+            mac_idle_in_stream += 1
+            es  = int(exec_state_sig.value)
+            eps = int(exec_safe_sig.value)
+            pe  = int(ptr_empty_sig.value)
+            tc  = int(task_cnt.value)
+            if es == 1 and not eps:
+                ptr_exec_prod_stall += 1   # ptr executor has work, prod FIFO full
+            elif es == 0 and not pe:
+                pass                        # IDLE→PTR transition bubble (1 cycle)
+            elif tc > 0 and not eps:
+                prod_full_task_stall += 1  # task FIFO has data, prod FIFO full
+            else:
+                task_empty_in_stream += 1  # truly nothing to do (gen2 catching up)
         # issue_ready stalls on ACTIVE acc only
         cs = int(c_sel.value)
         if cs == 0 and not int(iry0.value): issue_rdy_stall += 1
         if cs == 1 and not int(iry1.value): issue_rdy_stall += 1
         # GEN_EMIT with no task written (accumulate case)
         if gs == 2 and not int(tg_wr.value): gen_emit_no_write += 1
-        # task FIFO empty vs prod FIFO full in STREAM_INSTRS
-        if s == 3 and not int(tfifo_rd.value):
-            tc = int(task_cnt.value)
-            if tc == 0:
-                task_empty_in_stream += 1
-            else:
-                prod_full_in_stream += 1
         # Detect GEN_ROW_DONE transition
         if gs == 3 and prev_gs != 3:
             task_cnt_at_row_done.append(int(task_cnt.value))
@@ -358,6 +392,22 @@ async def run_pe(dut, rc, Ad, N, to=10000000):
         if s != 4 and prev_s == 4 and wt_start >= 0:
             wait_task_drain_cyc.append(cy - wt_start)
             wt_start = -1
+        for dv_sig, dg_sig, dr_sig, dd_sig in [
+                (drain_v0, drain_g0, drain_r0, drain_d0),
+                (drain_v1, drain_g1, drain_r1, drain_d1)]:
+            dv = int(dv_sig.value)
+            if dv:
+                gaddr  = int(dg_sig.value)
+                row_id = int(dr_sig.value)
+                vals   = int(dd_sig.value)
+                for b in range(16):
+                    if (dv >> b) & 1:
+                        fp16_bits = (vals >> (b * 16)) & 0xFFFF
+                        j = gaddr * 16 + b
+                        v = fp16_from_bits(fp16_bits)
+                        if row_id == 0 and len(cp) < 20:
+                            dut._log.info("  DBG drain row0 cy=%d gaddr=%d b=%d j=%d fp16=0x%04x val=%s", cy, gaddr, b, j, fp16_bits, v)
+                        cp[row_id * C_ROW_STRIDE + j] = v
         prev_gs = gs; prev_s = s
         if int(dut.done.value): dc=cy; break
     else: assert False, f"timeout {to}"
@@ -370,8 +420,9 @@ async def run_pe(dut, rc, Ad, N, to=10000000):
         dut._log.info("  GEN_%s: %d cycles", n, gen_state_cyc[i])
     dut._log.info("  GEN_EMIT no-write (accumulate): %d cycles", gen_emit_no_write)
     dut._log.info("  MAC idle in STREAM_INSTRS: %d cycles", mac_idle_in_stream)
-    dut._log.info("    due to task_fifo empty:  %d", task_empty_in_stream)
-    dut._log.info("    due to prod_fifo full:   %d", prod_full_in_stream)
+    dut._log.info("    ptr executor prod_full:  %d", ptr_exec_prod_stall)
+    dut._log.info("    task path prod_full:     %d", prod_full_task_stall)
+    dut._log.info("    gen2 catching up (idle): %d", task_empty_in_stream)
     dut._log.info("  issue_ready stall (active acc): %d cycles", issue_rdy_stall)
     if task_cnt_at_row_done:
         avg_tc = sum(task_cnt_at_row_done)/len(task_cnt_at_row_done)
@@ -382,7 +433,6 @@ async def run_pe(dut, rc, Ad, N, to=10000000):
         dut._log.info("  PE_WAIT_TASK_DRAIN cycles: avg=%.1f max=%d min=%d",
                       avg_wt, max(wait_task_drain_cyc), min(wait_task_drain_cyc))
     await ClockCycles(dut.aclk, 10)
-    cp = await read_c_buffer(dut, Ad, N)
     return cp, dc, lane_busy, rmw_busy
 
 def fp16_ulp_diff(a, b):
@@ -430,17 +480,17 @@ async def test_comp_case1_p0(dut):
 
     col_perm = compute_col_perm(Bc, N)   # compute from raw Bc before alignment
     Bc_raw = Bc                           # keep reference for bank nnz stats
-    Bd, Bc, Bv = align_b_8wide(Bd, Bc, Bv)
+    Bd, Bc, Bv = align_b_16wide(Bd, Bc, Bv)
     Bc_hw = [col_perm[int(c) & 0xFFFF] for c in Bc]   # permuted for hardware
 
-    gv, _ = compute_golden_c(Ad, Ac, Av, Bd, Bc, Bv, M, N, K)
+    gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc_hw, Bv, M, N, K)
 
     # Bank nnz distribution before/after permutation (use raw Bc, no padding)
-    orig_bank_nnz = [0] * 8
-    perm_bank_nnz = [0] * 8
+    orig_bank_nnz = [0] * 16
+    perm_bank_nnz = [0] * 16
     for c in Bc_raw:
-        orig_bank_nnz[int(c) & 0x7] += 1
-        perm_bank_nnz[col_perm[int(c) & 0xFFFF] & 0x7] += 1
+        orig_bank_nnz[int(c) & 0xF] += 1
+        perm_bank_nnz[col_perm[int(c) & 0xFFFF] & 0xF] += 1
 
     dut._log.info("=" * 70)
     dut._log.info("COMPETITION TEST: A(%d,%d) × B(%d,%d) → C(%d,%d)", M, K, K2, N, M, N)
@@ -463,11 +513,12 @@ async def test_comp_case1_p0(dut):
 
     dut._log.info("PE done at cycle %d, C buffer entries=%d", cyc, len(cp))
 
-    # C buffer disabled — skip verification
-    dut._log.info("Verification: SKIPPED (c_bank disabled)")
-    # e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp)
-    # total = M * N
-    # assert e == 0, f"{e} mismatches"
+    e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp)
+    if e == 0:
+        dut._log.info("Verification: PASSED (%d nz correct, %d z correct)", nz_ok, z_ok)
+    else:
+        dut._log.error("Verification: FAILED (%d mismatches)", e)
+    assert e == 0, f"{e} mismatches in C"
 
     total_macs = count_total_macs(Ad, Ac, Bd, M)
     lane_utils = [lb / cyc * 100 if cyc > 0 else 0.0 for lb in lane_busy]
@@ -478,13 +529,13 @@ async def test_comp_case1_p0(dut):
     dut._log.info("  Total cycles:      %d", cyc)
     dut._log.info("  Total MAC ops:     %d  (exact)", total_macs)
     dut._log.info("  Per-lane MAC utilization (mac_lane_valid):")
-    for i in range(8):
+    for i in range(16):
         dut._log.info("    Lane %d: %6d busy cycles  →  %.2f%%", i, lane_busy[i], lane_utils[i])
-    dut._log.info("  Average MAC util:  %.2f%%", sum(lane_utils) / 8)
+    dut._log.info("  Average MAC util:  %.2f%%", sum(lane_utils) / 16)
     dut._log.info("  Per-bank accumulator RMW utilization (rmw_busy):")
-    for i in range(8):
+    for i in range(16):
         dut._log.info("    Bank %d: %6d RMW cycles   →  %.2f%%", i, rmw_busy[i], rmw_utils[i])
-    dut._log.info("  Average RMW util:  %.2f%%", sum(rmw_utils) / 8)
+    dut._log.info("  Average RMW util:  %.2f%%", sum(rmw_utils) / 16)
     dut._log.info("=" * 70)
     dut._log.info("COMPETITION TEST PASSED")
 
@@ -495,7 +546,7 @@ async def test_comp_case1_p1(dut):
     Ad, Ac, Av, An, M, K = load_comp_matrix('A_1_Index.txt', 'A_1_Matrix.txt', False)
     Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_1_Index.txt', 'B_1_Matrix.txt', True)
     assert K == K2, f"K mismatch: {K} vs {K2}"
-    Bd, Bc, Bv = align_b_8wide(Bd, Bc, Bv)
+    Bd, Bc, Bv = align_b_16wide(Bd, Bc, Bv)
 
     gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc, Bv, M, N, K)
 
@@ -520,11 +571,12 @@ async def test_comp_case1_p1(dut):
 
     dut._log.info("PE done at cycle %d, C buffer entries=%d", cyc, len(cp))
 
-    # C buffer disabled — skip verification
-    dut._log.info("Verification: SKIPPED (c_bank disabled)")
-    # e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp)
-    # total = M * N
-    # assert e == 0, f"{e} mismatches"
+    e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp)
+    if e == 0:
+        dut._log.info("Verification: PASSED (%d nz correct, %d z correct)", nz_ok, z_ok)
+    else:
+        dut._log.error("Verification: FAILED (%d mismatches)", e)
+    assert e == 0, f"{e} mismatches in C"
 
     total_macs = count_total_macs(Ad, Ac, Bd, M)
     lane_utils = [lb / cyc * 100 if cyc > 0 else 0.0 for lb in lane_busy]
@@ -535,13 +587,13 @@ async def test_comp_case1_p1(dut):
     dut._log.info("  Total cycles:      %d", cyc)
     dut._log.info("  Total MAC ops:     %d  (exact)", total_macs)
     dut._log.info("  Per-lane MAC utilization (mac_lane_valid):")
-    for i in range(8):
+    for i in range(16):
         dut._log.info("    Lane %d: %6d busy cycles  →  %.2f%%", i, lane_busy[i], lane_utils[i])
-    dut._log.info("  Average MAC util:  %.2f%%", sum(lane_utils) / 8)
+    dut._log.info("  Average MAC util:  %.2f%%", sum(lane_utils) / 16)
     dut._log.info("  Per-bank accumulator RMW utilization (rmw_busy):")
-    for i in range(8):
+    for i in range(16):
         dut._log.info("    Bank %d: %6d RMW cycles   →  %.2f%%", i, rmw_busy[i], rmw_utils[i])
-    dut._log.info("  Average RMW util:  %.2f%%", sum(rmw_utils) / 8)
+    dut._log.info("  Average RMW util:  %.2f%%", sum(rmw_utils) / 16)
     dut._log.info("=" * 70)
     dut._log.info("COMPETITION TEST PASSED")
 
@@ -570,7 +622,7 @@ def partition_a(Ad, Ac, Av, M, n_pe, Bd=None):
         nnza = a_desc_nnz(Ad[ri])
         st   = a_desc_off(Ad[ri])
         if Bd is not None:
-            t = sum((b_desc_nnz(Bd[Ac[st + ti] & 0xFFFF]) + 7) // 8 for ti in range(nnza))
+            t = sum((b_desc_nnz(Bd[Ac[st + ti] & 0xFFFF]) + 15) // 16 for ti in range(nnza))
         else:
             t = nnza
         row_tasks.append(t)
@@ -620,13 +672,21 @@ async def stream_a_desc_pe(dut, pid, row_descs):
     a_ready = getattr(dut, f"a_desc_ready_{pid}")
     a_data  = getattr(dut, f"a_desc_data_{pid}")
     a_valid.value = 0
-    for d in row_descs:
-        while not int(a_ready.value):
+    if not row_descs:
+        return
+    # Pre-load first descriptor
+    a_data.value = row_descs[0]
+    a_valid.value = 1
+    for i in range(len(row_descs)):
+        while True:
             await RisingEdge(dut.aclk)
-        a_data.value = d
-        a_valid.value = 1
-        await RisingEdge(dut.aclk)
-        a_valid.value = 0
+            if int(a_ready.value):
+                break
+        if i + 1 < len(row_descs):
+            a_data.value = row_descs[i + 1]
+            a_valid.value = 1
+        else:
+            a_valid.value = 0
 
 async def LA_val_pe(dut, pid, Av):
     """Load A_val into PE pid."""
@@ -666,10 +726,14 @@ async def LBdesc_cluster(dut, Bd):
 
 async def rst_cluster(dut):
     dut.aresetn.value=0; cocotb.start_soon(Clock(dut.aclk,10,units='ns').start())
-    await ClockCycles(dut.aclk,10); dut.aresetn.value=1; await ClockCycles(dut.aclk,5)
+    await ClockCycles(dut.aclk,3)
+    n_pe = int(dut.n_pe_sig.value)   # read after clock is running
+    await ClockCycles(dut.aclk,7); dut.aresetn.value=1; await ClockCycles(dut.aclk,5)
     dut.start.value     = 0
     dut.row_count.value = 0
-    dut.a_desc_valid.value = 0; dut.a_desc_data.value = 0
+    for pid in range(n_pe):
+        getattr(dut, f"a_desc_valid_{pid}").value = 0
+        getattr(dut, f"a_desc_data_{pid}").value  = 0
     dut.a_val_we.value  = 0; dut.a_val_waddr.value  = 0; dut.a_val_wdata.value  = 0
     dut.a_col_we.value  = 0; dut.a_col_waddr.value  = 0; dut.a_col_wdata.value  = 0
     dut.b_col_we.value  = 0; dut.b_val_we.value     = 0
@@ -683,6 +747,10 @@ async def run_cluster(dut, row_counts, n_pe, pe_desc, N, to=50000000):
     """Start all n_pe PEs, wait for done, collect stats, read C buffers."""
     rc_packed = sum(row_counts[p] << (p * 16) for p in range(n_pe))
     dut.row_count.value = rc_packed
+    # Launch per-PE descriptor streaming; they'll handshake with the PEs
+    # after start fires and a_desc_ready goes high.
+    for pid in range(n_pe):
+        cocotb.start_soon(stream_a_desc_pe(dut, pid, pe_desc[pid]))
     dut.start.value=1; await RisingEdge(dut.aclk); dut.start.value=0
     dc = 0
 
@@ -694,7 +762,15 @@ async def run_cluster(dut, row_counts, n_pe, pe_desc, N, to=50000000):
                  dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank4.rmw_busy,
                  dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank5.rmw_busy,
                  dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank6.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank7.rmw_busy]
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank7.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank8.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank9.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank10.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank11.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank12.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank13.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank14.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank15.rmw_busy]
                 for pid in range(n_pe)]
     rmw_acc1 = [[dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank0.rmw_busy,
                  dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank1.rmw_busy,
@@ -703,30 +779,55 @@ async def run_cluster(dut, row_counts, n_pe, pe_desc, N, to=50000000):
                  dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank4.rmw_busy,
                  dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank5.rmw_busy,
                  dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank6.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank7.rmw_busy]
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank7.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank8.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank9.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank10.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank11.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank12.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank13.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank14.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank15.rmw_busy]
                 for pid in range(n_pe)]
 
-    lane_busy = [0] * 8
-    rmw_busy  = [0] * 8
+    drain_sigs = []
+    for pid in range(n_pe):
+        pe = dut.u_cluster.gen_pe[pid].u_pe
+        drain_sigs.append((
+            pe.drain_valid_0, pe.drain_gaddr_0, pe.drain_row_id_0, pe.drain_values_0,
+            pe.drain_valid_1, pe.drain_gaddr_1, pe.drain_row_id_1, pe.drain_values_1,
+        ))
+    cp = {}
+    lane_busy = [0] * 16
+    rmw_busy  = [0] * 16
 
     for cy in range(to):
         await RisingEdge(dut.aclk)
         for pid in range(n_pe):
             mlv = int(mac_sigs[pid].value)
-            for i in range(8):
+            for i in range(16):
                 if (mlv >> i) & 1: lane_busy[i] += 1
-            for i in range(8):
+            for i in range(16):
                 if int(rmw_acc0[pid][i].value) or int(rmw_acc1[pid][i].value):
                     rmw_busy[i] += 1
+            dv0s, dg0s, dr0s, dd0s, dv1s, dg1s, dr1s, dd1s = drain_sigs[pid]
+            for dv_sig, dg_sig, dr_sig, dd_sig in [
+                    (dv0s, dg0s, dr0s, dd0s), (dv1s, dg1s, dr1s, dd1s)]:
+                dv = int(dv_sig.value)
+                if dv:
+                    gaddr  = int(dg_sig.value)
+                    row_id = int(dr_sig.value)
+                    vals   = int(dd_sig.value)
+                    for b in range(16):
+                        if (dv >> b) & 1:
+                            fp16_bits = (vals >> (b * 16)) & 0xFFFF
+                            j = gaddr * 16 + b
+                            cp[row_id * C_ROW_STRIDE + j] = fp16_from_bits(fp16_bits)
         if int(dut.done.value): dc=cy; break
     else:
         assert False, f"cluster timeout at {to} cycles"
 
     await ClockCycles(dut.aclk, 10)
-    cp = {}
-    for pid in range(n_pe):
-        pe_cp = await read_c_buffer_pe(dut, pid, pe_desc[pid], N)
-        cp.update(pe_cp)
     return cp, dc, lane_busy, rmw_busy
 
 #=========================================================================
@@ -736,7 +837,7 @@ async def test_comp_case1_cluster(dut):
     Ad, Ac, Av, An, M, K  = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False)
     Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True)
     assert K == K2
-    Bd, Bc, Bv = align_b_8wide(Bd, Bc, Bv)
+    Bd, Bc, Bv = align_b_16wide(Bd, Bc, Bv)
 
     gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc, Bv, M, N, K)
 
@@ -754,7 +855,6 @@ async def test_comp_case1_cluster(dut):
     dut.M.value=M; dut.K.value=K; dut.N.value=N
 
     for pid in range(n_pe):
-        await stream_a_desc_pe(dut, pid, pe_desc[pid])
         await LA_val_pe(dut, pid, pe_val[pid])
         await LAcol_pe(dut, pid, pe_col[pid])
     await LBdata_cluster(dut, Bc, Bv)
@@ -764,10 +864,12 @@ async def test_comp_case1_cluster(dut):
     cp, cyc, lane_busy, rmw_busy = await run_cluster(dut, row_counts, n_pe, pe_desc, N)
     dut._log.info("Cluster done at cycle %d, C buffer entries=%d", cyc, len(cp))
 
-    # C buffer disabled — skip verification
-    dut._log.info("Verification: SKIPPED (c_bank disabled)")
-    # e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp)
-    # assert e == 0, f"{e} mismatches"
+    e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp)
+    if e == 0:
+        dut._log.info("Verification: PASSED (%d nz correct, %d z correct)", nz_ok, z_ok)
+    else:
+        dut._log.error("Verification: FAILED (%d mismatches)", e)
+    assert e == 0, f"{e} mismatches in C"
 
     total_macs = count_total_macs(Ad, Ac, Bd, M)
     lane_utils = [lb / (n_pe * cyc) * 100 for lb in lane_busy]
@@ -779,12 +881,12 @@ async def test_comp_case1_cluster(dut):
     dut._log.info("  Cluster wall-time cycles:  %d", cyc)
     dut._log.info("  Total MAC ops:             %d", total_macs)
     dut._log.info("  Per-lane MAC utilization (summed across %d PEs):", n_pe)
-    for i in range(8):
+    for i in range(16):
         dut._log.info("    Lane %d: %7d PE-cycles  →  %.2f%%", i, lane_busy[i], lane_utils[i])
-    dut._log.info("  Average MAC util:          %.2f%%", sum(lane_utils) / 8)
+    dut._log.info("  Average MAC util:          %.2f%%", sum(lane_utils) / 16)
     dut._log.info("  Per-bank RMW utilization (summed across %d PEs):", n_pe)
-    for i in range(8):
+    for i in range(16):
         dut._log.info("    Bank %d: %7d PE-cycles  →  %.2f%%", i, rmw_busy[i], rmw_utils[i])
-    dut._log.info("  Average RMW util:          %.2f%%", sum(rmw_utils) / 8)
+    dut._log.info("  Average RMW util:          %.2f%%", sum(rmw_utils) / 16)
     dut._log.info("=" * 70)
     dut._log.info("%d-PE CLUSTER TEST PASSED", n_pe)

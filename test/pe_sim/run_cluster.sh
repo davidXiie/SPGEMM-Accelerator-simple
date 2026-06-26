@@ -36,6 +36,7 @@ mkdir -p sim_build
 
 iverilog -g2012 \
     -DCOCOTB_SIM=1 \
+    -DSIMULATION \
     -I"$PROJ_ROOT/rtl/include" \
     -s "$COCOTB_TOPLEVEL" \
     -o sim_build/sim_cluster.vvp \
@@ -46,7 +47,8 @@ iverilog -g2012 \
     "$PROJ_ROOT/rtl/core/fp16_mul.v" \
     "$PROJ_ROOT/rtl/core/fp16_add.v" \
     "$PROJ_ROOT/rtl/core/accum_bank.v" \
-    "$PROJ_ROOT/rtl/core/row_accumulator_4bank.v" \
+    "$PROJ_ROOT/rtl/core/accum_bank_16.v" \
+    "$PROJ_ROOT/rtl/core/row_accumulator_16bank.v" \
     "$PROJ_ROOT/rtl/infrastructure/scratchpad.v"
 
 echo "[OK] Compile passed."

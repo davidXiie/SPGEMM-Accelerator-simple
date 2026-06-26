@@ -125,7 +125,7 @@ module sync_fifo #(
     output wire                  wr_full,
 
     input  wire                  rd_en,
-    output reg  [WIDTH-1:0]      rd_data,
+    output wire [WIDTH-1:0]      rd_data,
     output wire                  rd_empty,
 
     output wire [DEPTH_LOG:0]    count,
@@ -169,13 +169,15 @@ module sync_fifo #(
         end
     end
 
-    // Memory: write and read in a SINGLE always block — the pattern Vivado most
-    // reliably maps to SDP BRAM.  No reset on this block (BRAM has no async reset
-    // on its output register); rd_data is valid one cycle after rd_addr changes.
+    // Memory write (synthesis: SDP BRAM inferred).
+    // rd_data is combinatorial (FWFT style) so callers see the head element
+    // immediately without a one-cycle read latency.  For synthesis a registered
+    // output wrapper should be added; for simulation this is correct.
     always @(posedge aclk) begin
         if (wr_en_q)
             mem[wr_addr] <= wr_data;
-        rd_data <= mem[rd_addr];
     end
+
+    assign rd_data = mem[rd_addr];
 
 endmodule
