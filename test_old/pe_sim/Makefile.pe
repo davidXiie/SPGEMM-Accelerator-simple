@@ -1,0 +1,26 @@
+SIM ?= icarus
+TOPLEVEL_LANG = verilog
+TOPLEVEL = tb_pe_top
+
+VERILOG_SOURCES = \
+    ../../rtl/include/defines.vh \
+    ../../rtl/infrastructure/scratchpad.v \
+    ../../rtl/sim/tb_pe_top.v \
+    ../../rtl/core/pe_top.v \
+    ../../rtl/core/pe_task_packer.v \
+    ../../rtl/core/pe_mul_array.v \
+    ../../rtl/core/pe_serializer.v \
+    ../../rtl/core/pe_accumulator.v
+
+COMPILE_ARGS += -I../../rtl/include
+ifeq ($(SIM),icarus)
+    COMPILE_ARGS += -g2012
+endif
+
+MODULE = test_pe
+TESTCASE ?= test_pe_50x50
+export COCOTB_LOG_LEVEL = INFO
+include $(shell cocotb-config --makefiles)/Makefile.sim
+
+clean::
+	rm -rf __pycache__ *.pyc sim_build results.xml *.fst *.vcd *.vvp

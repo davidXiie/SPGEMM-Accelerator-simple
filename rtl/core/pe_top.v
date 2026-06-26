@@ -69,20 +69,19 @@ module pe_top #(
     // B row descriptor (broadcast; {b_off[31:0], 0[31:16], b_nnz[15:0]})
     input  wire                          b_desc_we,
     input  wire [`MAX_DIM_BITS-1:0]     b_desc_waddr,
-    input  wire [63:0]                   b_desc_wdata
-
+    input  wire [63:0]                   b_desc_wdata,
 
     // C buffer read port (synchronous, 1-cycle latency)
-    // input  wire                          c_rd_en,
-    // input  wire [16:0]                   c_rd_addr,
-    // output reg  [15:0]                   c_rd_data
+    input  wire                          c_rd_en,
+    input  wire [16:0]                   c_rd_addr,
+    output reg  [15:0]                   c_rd_data
 );
 
     localparam ACC_COL_W     = 9;
     localparam BANK_ADDR_W   = ACC_COL_W - 2;
-    // localparam C_BANK_ADDR_W = `A_ROW_ADDR_BITS + BANK_ADDR_W;
-    // localparam C_BANK_DEPTH  = 32'd1 << C_BANK_ADDR_W;
-    // localparam C_RD_ADDR_W   = `A_ROW_ADDR_BITS + ACC_COL_W;
+    localparam C_BANK_ADDR_W = `A_ROW_ADDR_BITS + BANK_ADDR_W;
+    localparam C_BANK_DEPTH  = 32'd1 << C_BANK_ADDR_W;
+    localparam C_RD_ADDR_W   = `A_ROW_ADDR_BITS + ACC_COL_W;
 
     localparam B_BANK_DEPTH  = `B_NNZ_SLOT / 4;
     localparam B_DESC_DEPTH  = 1 << `MAX_DIM_BITS;
@@ -105,21 +104,21 @@ module pe_top #(
 
     reg [63:0]            B_desc_buf [0:B_DESC_DEPTH-1];
 
-    // reg [15:0] c_bank0 [0:C_BANK_DEPTH-1];
-    // reg [15:0] c_bank1 [0:C_BANK_DEPTH-1];
-    // reg [15:0] c_bank2 [0:C_BANK_DEPTH-1];
-    // reg [15:0] c_bank3 [0:C_BANK_DEPTH-1];
+    reg [15:0] c_bank0 [0:C_BANK_DEPTH-1];
+    reg [15:0] c_bank1 [0:C_BANK_DEPTH-1];
+    reg [15:0] c_bank2 [0:C_BANK_DEPTH-1];
+    reg [15:0] c_bank3 [0:C_BANK_DEPTH-1];
 
-//`ifdef COCOTB_SIM
-//    integer _ci;
-//    initial begin
-//        c_rd_data = 16'h0;
-//        for (_ci = 0; _ci < C_BANK_DEPTH; _ci = _ci + 1) begin
-//            c_bank0[_ci] = 16'h0; c_bank1[_ci] = 16'h0;
-//            c_bank2[_ci] = 16'h0; c_bank3[_ci] = 16'h0;
-//        end
-//    end
-//`endif
+`ifdef COCOTB_SIM
+    integer _ci;
+    initial begin
+        c_rd_data = 16'h0;
+        for (_ci = 0; _ci < C_BANK_DEPTH; _ci = _ci + 1) begin
+            c_bank0[_ci] = 16'h0; c_bank1[_ci] = 16'h0;
+            c_bank2[_ci] = 16'h0; c_bank3[_ci] = 16'h0;
+        end
+    end
+`endif
 
     //=========================================================================
     // SRAM write ports
@@ -707,38 +706,38 @@ module pe_top #(
                              (product_fifo_cnt < (`PROD_FIFO_DEPTH - `MUL_LAT - 1));
 
     //=========================================================================
-    // C buffer write (disabled — c_bank removed)
+    // C buffer write
     //=========================================================================
-    // wire [3:0]               c_wr_valid = comp_sel ? drain_valid_0  : drain_valid_1;
-    // wire [BANK_ADDR_W-1:0]   c_wr_gaddr = comp_sel ? drain_gaddr_0  : drain_gaddr_1;
-    // wire [`A_ROW_ADDR_BITS-1:0] c_wr_rid = comp_sel ? drain_row_id_0 : drain_row_id_1;
-    // wire [4*16-1:0]          c_wr_vals  = comp_sel ? drain_values_0 : drain_values_1;
-    // wire [C_BANK_ADDR_W-1:0] c_wr_addr  = {c_wr_rid, c_wr_gaddr};
+    wire [3:0]               c_wr_valid = comp_sel ? drain_valid_0  : drain_valid_1;
+    wire [BANK_ADDR_W-1:0]   c_wr_gaddr = comp_sel ? drain_gaddr_0  : drain_gaddr_1;
+    wire [`A_ROW_ADDR_BITS-1:0] c_wr_rid = comp_sel ? drain_row_id_0 : drain_row_id_1;
+    wire [4*16-1:0]          c_wr_vals  = comp_sel ? drain_values_0 : drain_values_1;
+    wire [C_BANK_ADDR_W-1:0] c_wr_addr  = {c_wr_rid, c_wr_gaddr};
 
-    // always @(posedge aclk) begin
-    //     if (c_wr_valid[0]) c_bank0[c_wr_addr] <= c_wr_vals[0*16 +: 16];
-    //     if (c_wr_valid[1]) c_bank1[c_wr_addr] <= c_wr_vals[1*16 +: 16];
-    //     if (c_wr_valid[2]) c_bank2[c_wr_addr] <= c_wr_vals[2*16 +: 16];
-    //     if (c_wr_valid[3]) c_bank3[c_wr_addr] <= c_wr_vals[3*16 +: 16];
-    // end
+    always @(posedge aclk) begin
+        if (c_wr_valid[0]) c_bank0[c_wr_addr] <= c_wr_vals[0*16 +: 16];
+        if (c_wr_valid[1]) c_bank1[c_wr_addr] <= c_wr_vals[1*16 +: 16];
+        if (c_wr_valid[2]) c_bank2[c_wr_addr] <= c_wr_vals[2*16 +: 16];
+        if (c_wr_valid[3]) c_bank3[c_wr_addr] <= c_wr_vals[3*16 +: 16];
+    end
 
     //=========================================================================
-    // C buffer read (disabled — c_bank removed)
+    // C buffer read
     //=========================================================================
-    // wire [1:0]               rd_bank  = c_rd_addr[1:0];
-    // wire [C_BANK_ADDR_W-1:0] rd_baddr = {c_rd_addr[C_RD_ADDR_W-1:ACC_COL_W],
-    //                                       c_rd_addr[ACC_COL_W-1:2]};
+    wire [1:0]               rd_bank  = c_rd_addr[1:0];
+    wire [C_BANK_ADDR_W-1:0] rd_baddr = {c_rd_addr[C_RD_ADDR_W-1:ACC_COL_W],
+                                          c_rd_addr[ACC_COL_W-1:2]};
 
-    // always @(posedge aclk) begin
-    //     if (c_rd_en) begin
-    //         case (rd_bank)
-    //             2'd0: c_rd_data <= c_bank0[rd_baddr];
-    //             2'd1: c_rd_data <= c_bank1[rd_baddr];
-    //             2'd2: c_rd_data <= c_bank2[rd_baddr];
-    //             2'd3: c_rd_data <= c_bank3[rd_baddr];
-    //         endcase
-    //     end
-    // end
+    always @(posedge aclk) begin
+        if (c_rd_en) begin
+            case (rd_bank)
+                2'd0: c_rd_data <= c_bank0[rd_baddr];
+                2'd1: c_rd_data <= c_bank1[rd_baddr];
+                2'd2: c_rd_data <= c_bank2[rd_baddr];
+                2'd3: c_rd_data <= c_bank3[rd_baddr];
+            endcase
+        end
+    end
 
     //=========================================================================
     // Main FSM sequential

@@ -1,0 +1,14 @@
+# IDE / editor
+.vscode/
+.codebuddy/
+# Simulation artifacts
+sim_build/
+*.vvp
+*.vcd
+*.fst
+*.pb
+*.dcp
+
+# Python
+__pycache__/
+*.pyc

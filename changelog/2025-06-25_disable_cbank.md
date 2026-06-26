@@ -76,3 +76,4 @@ task_fifo 原消耗 12,000 LUT（组合读导致寄存器+MUX 树实现），改
 ## 预期效果
 - task_fifo: 12,000 LUT → ~200 LUT + 8 BRAM36
 - product_fifo: ~800 LUT → ~150 LUT + 6 BRAM36
+

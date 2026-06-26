@@ -1,50 +1,50 @@
 # SPGEMM-Accelerator v2
 
-基于 Verilog 的稀疏矩阵乘法加速器（SpGEMM: C = A × B），compact row-desc 输入，dense FP16 输出。
+FP16 稀疏矩阵乘法加速器（SpGEMM: C = A × B），硬件在线指令生成，单 PE + 4 MAC，AXI DDR 接口。
 
 ---
 
 ## 目录结构
 
 ```
-├── rtl/                          # Verilog RTL
+├── rtl/                              # 当前版本 RTL
 │   ├── include/
-│   │   └── defines.vh            # 全局参数 (PE=1, MAC=4, MAX_DIM=512, FIFO=256)
+│   │   └── defines.vh                # 全局参数
 │   ├── infrastructure/
-│   │   ├── axi_interface.v       # AXI-Lite CR 从设备 + AXI-Full 读 MUX/写通道
-│   │   └── scratchpad.v          # SRAM 模型 (std_scratchpad / banked / sync_fifo)
-│   ├── core/                     # SpGEMM 核心
-│   │   ├── core_top.v            # 顶层 FSM (Load_B→Load_A→Start_PE→Wait→Write_C)
-│   │   ├── pe_top.v              # PE 顶层 (FSM + A/B buffer + 全子模块集成)
-│   │   ├── pe_task_packer.v      # 任务打包 (4 task → 1 group)
-│   │   ├── pe_mul_array.v        # 4-lane 乘法器阵列 (3-stage pipeline)
-│   │   ├── pe_serializer.v       # 产品串行化 (4-lane → 1 product/cycle)
-│   │   ├── pe_accumulator.v      # 串行累加器 (acc_buf[N], IDLE→ADD→WRITE)
-│   │   ├── a_group_loader.v      # A 矩阵加载 (DDR → PE A buffer)
-│   │   ├── b_broadcast_loader.v  # B 矩阵广播加载 (DDR → PE B buffer)
-│   │   ├── descriptor_loader.v   # 描述符加载
-│   │   ├── c_dense_buffer.v      # 片上 Dense C 缓冲 (512×512×16b)
-│   │   ├── c_dense_write_arbiter.v # 多 PE 写仲裁
-│   │   └── c_dense_ddr_writer.v  # Dense C 写回 DDR
-│   ├── sim/
-│   │   └── tb_pe_top.v           # PE 单元测试 Testbench
-│   ├── wrapper.v                 # 顶层封装 (CR slave + core_top)
-│   └── filelist.f                # 仿真文件列表
+│   │   └── scratchpad.v              # sync_fifo (BRAM 推断)
+│   ├── core/
+│   │   ├── core_top_1pe.v            # 单 PE 顶层 FSM (8 态)
+│   │   ├── pe_top.v                  # PE 核心 (硬件在线指令生成)
+│   │   ├── pe_mul_array.v            # 4-lane FP16×FP16→FP16 乘法阵列
+│   │   ├── row_accumulator_4bank.v   # 4-bank 行累加器 (乒乓)
+│   │   ├── accum_bank.v              # 单 bank 累加器 (RMW 流水线)
+│   │   ├── fp16_mul.v                # FP16 乘法器 (组合逻辑)
+│   │   ├── fp16_add.v                # FP16 加法器 (组合逻辑)
+│   │   ├── descriptor_loader.v       # 描述符加载 (AXI→参数)
+│   │   ├── a_group_loader.v          # A 矩阵加载 (DDR→PE A buffer)
+│   │   ├── b_broadcast_loader.v      # B 矩阵广播加载 (DDR→PE B buffer)
+│   │   ├── pe_c_to_densebuf.v        # PE C buffer→c_dense_buffer
+│   │   ├── c_dense_buffer.v          # 片上 Dense C 缓冲 (512×512 FP16)
+│   │   └── c_dense_ddr_writer.v      # Dense C 写回 DDR
+│   └── filelist.f
 │
-├── test/                         # 测试
-│   ├── pe_sim/                   # PE 单元仿真
-│   │   ├── test_pe.py            # 随机矩阵测试 (2×2 ~ 50×50)
-│   │   ├── test_comp.py          # 赛题参考用例测试
-│   │   ├── Makefile.pe / Makefile.comp
-│   │   └── run_pe_test.bat / run_comp.bat
-│   └── test_case_for_reference/  # 赛题参考矩阵
+├── test/                             # 测试 (当前版本)
+│   └── pe_sim/
+│       ├── tb_core_top_1pe.v         # AXI DDR 模型 Testbench
+│       ├── test_core_top_1pe.py      # cocotb 测试 (DDR→PE→DDR)
+│       └── run_core_top_1pe.bat      # 一键运行
 │
-├── note/                         # 设计文档
-│   ├── 精简架构.md               # 架构方案
-│   ├── pe架构设计2026年6月16日.md # PE 详细设计
-│   └── PE性能分析报告.md         # 性能分析报告
+├── rtl_old/                          # 旧版 RTL (多 PE / CSR 输出 / ISA)
+├── test_old/                         # 旧版测试 (PE 单元测试 / 赛题用例)
 │
-└── rtl_old/                      # 旧版 RTL (ISA + CSR 输出, 已停用)
+├── changelog/                        # 修改记录
+│   ├── 2025-06-25_disable_cbank.md   # C bank 禁用/恢复 + FIFO BRAM 优化
+│   └── 2025-06-26_single_pe_core.md  # 单 PE core_top_1pe 创建
+│
+└── note/                             # 设计文档
+    ├── 精简架构.md
+    ├── pe架构设计2026年6月16日.md
+    └── PE性能分析报告.md
 ```
 
 ---
@@ -53,57 +53,55 @@
 
 | 特性 | 说明 |
 |------|------|
-| A 输入格式 | Compact row-desc (64-bit desc + 16-bit col/val) |
-| B 输入格式 | Compact row-desc (B 广播到所有 PE) |
-| C 输出格式 | Dense FP16 (512×512 stride) |
-| PE 数量 | 1 (可配, 最大 8) |
-| MAC/PE  | 4 |
-| 数据宽度 | 16-bit integer (仿真) / FP16 (目标) |
-| 调度器 | Host 端预计算, PE 端固定 row_count |
-| acc_buf | 串行单端口, 3 cycles/product |
+| A/B 输入格式 | Compact row-desc (64-bit desc + 16-bit col/val) |
+| C 输出格式 | Dense FP16 (512×512 stride)，通过 c_dense_buffer 缓存后 AXI 写回 DDR |
+| PE 数量 | **1** |
+| MAC/PE | **4** (4-lane 并行乘法) |
+| 数据类型 | **FP16** (乘/加均为 FP16) |
+| 指令生成 | **硬件在线生成** (Generator FSM 遍历 A_col→B_desc) |
+| 累加器 | **4-bank 乒乓** (row_accumulator_4bank ×2，epoch/tag 免清零) |
+| FIFO | **BRAM** (同步读，ram_style=block) |
+| 接口 | **AXI4-Full** (512-bit 读/写) |
 
 ---
 
 ## PE 数据流
 
 ```
-A_row_desc ──→ A iterator ──→ task_packer ──→ task_fifo(256) ──→ 4×MAC
-A_col/val      B streamer ←── B_row_desc                            │
-B_col/val                  B_col/val                         product_fifo(256)
-                                                                   │
-                                                             serializer(4→1)
-                                                                   │
-                                                             accumulator
-                                                             (IDLE→ADD→WRITE, 3c/prod)
-                                                                   │
-                                                             row_writeback → C_dense
+A_col_buf ──┐
+A_val_buf ──┤
+B_desc_buf ─┤──→ [Generator FSM] ──→ task_fifo (BRAM) ──→ pe_mul_array
+            └──  硬件在线生成 4-wide task          (260b)    (4×FP16×FP16)
+                                                               │
+                                                        product_fifo (BRAM)
+                                                               │
+                                                row_accumulator_4bank ×2 (乒乓)
+                                                               │
+                                                            c_bank[4] (FP16, 256KB)
+                                                               │
+                                                        pe_c_to_densebuf
+                                                               │
+                                                        c_dense_buffer (512KB)
+                                                               │
+                                                        c_dense_ddr_writer → AXI → DDR
 ```
 
 ---
 
 ## 快速开始
 
-### PE 单元仿真
+### core_top_1pe 全链路仿真
 
 ```bash
 cd test/pe_sim
-
-# 50×50 随机矩阵测试
-run_pe_test.bat
-
-# 赛题用例测试
-run_comp.bat
-
-# 或使用 cocotb Makefile
-make -f Makefile.pe TESTCASE=test_pe_50x50
+run_core_top_1pe.bat
 ```
 
-### 全系统编译（Icarus Verilog）
+测试 A(16,16)×B(16,4) 小矩阵，覆盖 DDR→loader→PE 计算→c_dense_buffer→DDR 全链路。
 
-```bash
-cd rtl
-iverilog -g2012 -I include -o compile_test.vvp -f filelist.f
-```
+### Vivado 综合
+
+以 `core_top_1pe.v` 为顶层，添加 rtl/core/ 下全部 .v 文件和 rtl/infrastructure/scratchpad.v。
 
 ---
 
@@ -111,52 +109,25 @@ iverilog -g2012 -I include -o compile_test.vvp -f filelist.f
 
 | 参数 | 默认值 | 说明 |
 |------|--------|------|
-| `N_PE` | 1 | PE 数量 |
-| `N_MAC` | 4 | 每 PE 乘法器数 |
 | `MAX_M/K/N` | 512 | 最大矩阵维度 |
-| `DATA_WIDTH` | 16 | 数据位宽 |
-| `TASK_FIFO_DEPTH` | 256 | 任务 FIFO 深度 |
-| `PROD_FIFO_DEPTH` | 256 | 产品 FIFO 深度 |
-| `A_ROW_SLOT_PER_PE` | 128 | A 最大行数/PE |
+| `DATA_WIDTH` | 16 | 数据位宽 (FP16) |
+| `N_MAC` | 4 | 每 PE 乘法器数 |
+| `MUL_LAT` | 1 | 乘法流水线级数 |
+| `TASK_FIFO_DEPTH` | 16 | 任务 FIFO 深度 |
+| `PROD_FIFO_DEPTH` | 16 | 产品 FIFO 深度 |
+| `A_ROW_SLOT_PER_PE` | 256 | A 最大行数/PE |
 | `A_NNZ_SLOT_PER_PE` | 16384 | A 最大 nnz/PE |
 | `B_ROW_SLOT` | 512 | B 最大行数 |
 | `B_NNZ_SLOT` | 78848 | B 最大 nnz |
+| `AXI_DATA_WIDTH` | 512 | AXI 数据位宽 |
 
 ---
 
-## 测试结果
+## PE 单芯片资源 (xcku035, Vivado 2023.1)
 
-| 测试 | 规模 | 周期 | MAC利用率 | 状态 |
-|------|------|------|----------|------|
-| 2×2 | A(2,3)×B(3,2) | 2,095 | — | ✅ |
-| 4×4 | 30% sparse | 4,277 | — | ✅ |
-| 20×20 | 30% sparse | 24,541 | — | ✅ |
-| 50×50 | 30% sparse | 40,451 | 7.9% | ✅ |
-| 赛题 Case1 P1 | A(32,317)×B(317,6) | 48,237 | 2.2% | ⚠️ 97.4% |
-
----
-
-## 性能瓶颈
-
-| 瓶颈 | 占比 | 提升空间 |
-|------|------|---------|
-| 串行累加器 (3c/product) | 42% | 4-bank → 4× |
-| FSM 排空等待 | 42% | 更大 FIFO + 连续流 |
-| CLEAR + WRITE | 12% | 已按 N 裁剪 |
-
-**当前主要限制**: 累加器单端口 SRAM → 1 product/3 cycles，是 MAC 产出速度 (4/cycle) 的 1/12。
-
----
-
-## 已修复的 Bug（开发历程）
-
-| # | 根因 | 症状 |
-|---|------|------|
-| 1 | 序列化器握手时序 | acc_in_valid 永不为 1 |
-| 2 | MAC col/val 同步 | 列号错位 |
-| 3 | state_stable 双递增 | row_idx 跳行 |
-| 4 | a_nnz_left 下溢 | 0→0xFFFF 死循环 |
-| 5 | write_global_row 延迟 | C 行列地址错 |
-| 6 | a_nnz 连减两次 | 部分 product 丢失 |
-| 7 | MAC 读组合 FIFO 旧数据 | product FIFO 重复填充死锁 |
-| 8 | flush_done 死锁 | pack_count=0 永不等 |
+| 资源 | 用量 | 说明 |
+|------|------|------|
+| LUT | ~15,500 | 含 B buffer LUTRAM |
+| BRAM36 | 13 | task/product FIFO + A_val_buf |
+| DSP48 | 4 | 4 × fp16_mul |
+| FF | ~1,000 | 寄存器 |
