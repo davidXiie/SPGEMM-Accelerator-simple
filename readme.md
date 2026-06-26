@@ -122,12 +122,3 @@ run_core_top_1pe.bat
 | `AXI_DATA_WIDTH` | 512 | AXI 数据位宽 |
 
 ---
-
-## PE 单芯片资源 (xcku035, Vivado 2023.1)
-
-| 资源 | 用量 | 说明 |
-|------|------|------|
-| LUT | ~15,500 | 含 B buffer LUTRAM |
-| BRAM36 | 13 | task/product FIFO + A_val_buf |
-| DSP48 | 4 | 4 × fp16_mul |
-| FF | ~1,000 | 寄存器 |
