@@ -21,10 +21,10 @@ module accum_bank #(
     input  wire                         rst_n,
     input  wire [EPOCH_W-1:0]           row_epoch,
 
-    // 4 independent write ports (only active when wr_valid[i]=1)
-    input  wire [3:0]                   wr_valid,
-    input  wire [4*BANK_ADDR_W-1:0]     wr_addr_flat,  // {addr3,addr2,addr1,addr0}
-    input  wire [4*PROD_W-1:0]          wr_data_flat,  // {dat3,dat2,dat1,dat0}
+    // 8 independent write ports (only active when wr_valid[i]=1)
+    input  wire [7:0]                   wr_valid,
+    input  wire [8*BANK_ADDR_W-1:0]     wr_addr_flat,  // {addr7..addr0}
+    input  wire [8*PROD_W-1:0]          wr_data_flat,  // {dat7..dat0}
     output wire [FIFO_DEPTH_LOG:0]      free_count,    // 0..FIFO_DEPTH
 
     output wire                         rmw_busy,
@@ -58,20 +58,30 @@ module accum_bank #(
     reg [FIFO_DEPTH_LOG-1:0]  fifo_head;
     reg [FIFO_DEPTH_LOG:0]    fifo_cnt;    // 0 .. FIFO_DEPTH (needs one extra bit)
 
-    // Burst write count this cycle
-    wire [2:0] wr_cnt = {2'b0, wr_valid[0]} + {2'b0, wr_valid[1]}
-                      + {2'b0, wr_valid[2]} + {2'b0, wr_valid[3]};
+    // Burst write count this cycle (up to 8)
+    wire [3:0] wr_cnt = {3'b0, wr_valid[0]} + {3'b0, wr_valid[1]}
+                      + {3'b0, wr_valid[2]} + {3'b0, wr_valid[3]}
+                      + {3'b0, wr_valid[4]} + {3'b0, wr_valid[5]}
+                      + {3'b0, wr_valid[6]} + {3'b0, wr_valid[7]};
 
     // Per-port write offset within burst (compact the valid ports)
-    wire [1:0] slot1 = {1'b0, wr_valid[0]};
-    wire [1:0] slot2 = {1'b0, wr_valid[0]} + {1'b0, wr_valid[1]};
-    wire [1:0] slot3 = slot2 + {1'b0, wr_valid[2]};
+    wire [2:0] slot1 = {2'b0, wr_valid[0]};
+    wire [2:0] slot2 = slot1 + {2'b0, wr_valid[1]};
+    wire [2:0] slot3 = slot2 + {2'b0, wr_valid[2]};
+    wire [2:0] slot4 = slot3 + {2'b0, wr_valid[3]};
+    wire [2:0] slot5 = slot4 + {2'b0, wr_valid[4]};
+    wire [2:0] slot6 = slot5 + {2'b0, wr_valid[5]};
+    wire [2:0] slot7 = slot6 + {2'b0, wr_valid[6]};
 
-    // Write addresses (3-bit, wraps at FIFO_DEPTH)
+    // Write addresses (wraps at FIFO_DEPTH)
     wire [FIFO_DEPTH_LOG-1:0] waddr0 = fifo_tail;
     wire [FIFO_DEPTH_LOG-1:0] waddr1 = fifo_tail + slot1;
     wire [FIFO_DEPTH_LOG-1:0] waddr2 = fifo_tail + slot2;
     wire [FIFO_DEPTH_LOG-1:0] waddr3 = fifo_tail + slot3;
+    wire [FIFO_DEPTH_LOG-1:0] waddr4 = fifo_tail + slot4;
+    wire [FIFO_DEPTH_LOG-1:0] waddr5 = fifo_tail + slot5;
+    wire [FIFO_DEPTH_LOG-1:0] waddr6 = fifo_tail + slot6;
+    wire [FIFO_DEPTH_LOG-1:0] waddr7 = fifo_tail + slot7;
 
     assign fifo_empty  = (fifo_cnt == {(FIFO_DEPTH_LOG+1){1'b0}});
     assign free_count  = FIFO_DEPTH[FIFO_DEPTH_LOG:0] - fifo_cnt;
@@ -149,15 +159,27 @@ module accum_bank #(
             if (wr_valid[3])
                 fifo_mem[waddr3] <= {wr_addr_flat[3*BANK_ADDR_W +: BANK_ADDR_W],
                                      wr_data_flat[3*PROD_W      +: PROD_W]};
+            if (wr_valid[4])
+                fifo_mem[waddr4] <= {wr_addr_flat[4*BANK_ADDR_W +: BANK_ADDR_W],
+                                     wr_data_flat[4*PROD_W      +: PROD_W]};
+            if (wr_valid[5])
+                fifo_mem[waddr5] <= {wr_addr_flat[5*BANK_ADDR_W +: BANK_ADDR_W],
+                                     wr_data_flat[5*PROD_W      +: PROD_W]};
+            if (wr_valid[6])
+                fifo_mem[waddr6] <= {wr_addr_flat[6*BANK_ADDR_W +: BANK_ADDR_W],
+                                     wr_data_flat[6*PROD_W      +: PROD_W]};
+            if (wr_valid[7])
+                fifo_mem[waddr7] <= {wr_addr_flat[7*BANK_ADDR_W +: BANK_ADDR_W],
+                                     wr_data_flat[7*PROD_W      +: PROD_W]};
 
-            fifo_tail <= fifo_tail + wr_cnt;
+            fifo_tail <= fifo_tail + wr_cnt[FIFO_DEPTH_LOG-1:0];
 
             if (deq_fire)
                 fifo_head <= fifo_head + {{(FIFO_DEPTH_LOG-1){1'b0}}, 1'b1};
 
             // Count update: +wr_cnt, -deq_fire  (both happen independently)
             fifo_cnt  <= fifo_cnt
-                       + {1'b0, wr_cnt}          // zero-extend 3→4 bits
+                       + {{(FIFO_DEPTH_LOG-3){1'b0}}, wr_cnt}  // zero-extend 4→(LOG+1) bits
                        - {{FIFO_DEPTH_LOG{1'b0}}, deq_fire};
         end
     end
@@ -244,9 +266,10 @@ module accum_bank #(
     // =========================================================================
 `ifdef SIMULATION
     always @(posedge clk) begin
-        if (fifo_cnt > FIFO_DEPTH[FIFO_DEPTH_LOG:0])
+        if (fifo_cnt > FIFO_DEPTH[FIFO_DEPTH_LOG:0]) begin
             $display("ERROR accum_bank FIFO overflow (cnt=%0d)", fifo_cnt);
             $stop;
+        end
     end
 `endif
 

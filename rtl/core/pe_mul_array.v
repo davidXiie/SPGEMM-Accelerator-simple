@@ -1,11 +1,18 @@
 //=============================================================================
 // File     : pe_mul_array.v
-// Brief    : 4-lane FP16 Multiplier Array.
+// Brief    : N_MAC-lane FP16 Multiplier Array.
 //
 //   Each lane: FP16 × FP16 → FP16 (via fp16_mul combinatorial module).
 //   MUL_LAT register stages delay col_id, fp16_val, and valid.
 //
-//   Product format per lane (PRODUCT_WIDTH=32): {col_id[15:0], fp16_val[15:0]}
+//   Task format per lane (TASK_WIDTH=41):
+//     [8:0]   = col_id (9-bit, MAX_N=512)
+//     [24:9]  = a_val  (FP16)
+//     [40:25] = b_val  (FP16)
+//
+//   Product format per lane (PRODUCT_WIDTH=25):
+//     [15:0]  = fp16_val (FP16 product)
+//     [24:16] = col_id   (9-bit)
 //=============================================================================
 
 `include "defines.vh"
@@ -23,13 +30,13 @@ module pe_mul_array (
     input  wire                           aresetn
 );
 
-    // Unpack task: {reserved[15:0], b_val[15:0], a_val[15:0], col_id[15:0]}
+    // Unpack task: {b_val[40:25], a_val[24:9], col_id[8:0]}  (41-bit)
     genvar m;
     generate
         for (m = 0; m < `N_MAC; m = m + 1) begin : gen_lane
-            wire [`DATA_WIDTH-1:0] mac_a   = lane_task[m*`TASK_WIDTH + 31 -: `DATA_WIDTH];
-            wire [`DATA_WIDTH-1:0] mac_b   = lane_task[m*`TASK_WIDTH + 47 -: `DATA_WIDTH];
-            wire [`DATA_WIDTH-1:0] mac_col = lane_task[m*`TASK_WIDTH + 15 -: `DATA_WIDTH];
+            wire [8:0]             mac_col = lane_task[m*`TASK_WIDTH +: 9];       // [8:0]
+            wire [`DATA_WIDTH-1:0] mac_a   = lane_task[m*`TASK_WIDTH + 9 +: 16]; // [24:9]
+            wire [`DATA_WIDTH-1:0] mac_b   = lane_task[m*`TASK_WIDTH + 25 +: 16];// [40:25]
 
             // FP16 × FP16 → FP16 (combinatorial)
             wire [15:0] mul_fp16;
@@ -40,9 +47,9 @@ module pe_mul_array (
             );
 
             // Pipeline: delay col_id, fp16 value, and valid by MUL_LAT cycles
-            reg [`DATA_WIDTH-1:0] col_pipe   [0:`MUL_LAT-1];
-            reg [15:0]            val_pipe   [0:`MUL_LAT-1];
-            reg                   valid_pipe [0:`MUL_LAT-1];
+            reg [8:0]  col_pipe   [0:`MUL_LAT-1];
+            reg [15:0] val_pipe   [0:`MUL_LAT-1];
+            reg        valid_pipe [0:`MUL_LAT-1];
 
             integer s;
             always @(posedge aclk or negedge aresetn) begin
@@ -65,10 +72,10 @@ module pe_mul_array (
                 end
             end
 
-            // Output: product = {col_id[15:0], fp16_val[15:0]}  (32-bit)
+            // Output: product = {col_id[8:0], fp16_val[15:0]}  (25-bit)
             wire [`PRODUCT_WIDTH-1:0] product;
             assign product[15:0]  = val_pipe[`MUL_LAT-1];   // FP16 product value
-            assign product[31:16] = col_pipe[`MUL_LAT-1];   // col_id
+            assign product[24:16] = col_pipe[`MUL_LAT-1];   // col_id (9-bit)
 
             assign mul_valid[m]                                     = valid_pipe[`MUL_LAT-1];
             assign mul_product[m*`PRODUCT_WIDTH +: `PRODUCT_WIDTH] = product;

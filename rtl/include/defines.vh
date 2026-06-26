@@ -22,8 +22,8 @@
 // PE & MAC Configuration
 //=============================================================================
 `define N_PE          16      // cluster size — change here to scale
-`define N_MAC         4
-`define N_MAC_BITS    2       // log2(4)
+`define N_MAC         8
+`define N_MAC_BITS    3       // log2(8)
 
 // FP16 multiplier pipeline latency (1 = registered output)
 `define MUL_LAT       1
@@ -101,22 +101,24 @@
 
 //=============================================================================
 // Task & Product Group FIFO parameters
-//   task        = {reserved[15:0], b_val[15:0], a_val[15:0], col_id[15:0]}  64-bit
-//   task_group  = {lane_valid[3:0], task3..task0}                            260-bit
-//   product     = {col_id[15:0], product_val[15:0]}                          32-bit
-//   prod_group  = {lane_valid[3:0], prod3..prod0}                            132-bit
+//   task        = {b_val[15:0], a_val[15:0], col_id[8:0]}    41-bit
+//   task_group  = {lane_valid[7:0], task7..task0}             336-bit
+//   product     = {col_id[8:0], fp16_val[15:0]}              25-bit
+//   prod_group  = {lane_valid[7:0], prod7..prod0}            208-bit
+//
+//   col_id is 9-bit because MAX_N=512 needs only log2(512)=9 bits.
 //=============================================================================
-`define TASK_WIDTH        64
-`define TASK_GROUP_WIDTH  (4 + 4 * `TASK_WIDTH)   // 260
+`define TASK_WIDTH        41   // 9 + 16 + 16
+`define TASK_GROUP_WIDTH  (`N_MAC + `N_MAC * `TASK_WIDTH)   // 336
 
-`define PRODUCT_WIDTH       32   // {col_id[15:0], fp16_val[15:0]}
-`define PRODUCT_GROUP_WIDTH (4 + 4 * `PRODUCT_WIDTH)  // 132
+`define PRODUCT_WIDTH       25   // {col_id[8:0], fp16_val[15:0]}
+`define PRODUCT_GROUP_WIDTH (`N_MAC + `N_MAC * `PRODUCT_WIDTH)  // 208
 
 `define TASK_FIFO_DEPTH     512    // matches RAMB36E2 SDP 72-bit natural depth (100% utilized)
 `define TASK_FIFO_DEPTH_LOG 9
 
-`define PROD_FIFO_DEPTH     512    // same: 2×RAMB36E2 at 100% depth utilization
-`define PROD_FIFO_DEPTH_LOG  9
+`define PROD_FIFO_DEPTH     32     // per-acc FIFO; only needs MAC-pipeline + bank-FIFO backpressure buffering
+`define PROD_FIFO_DEPTH_LOG  5
 
 //=============================================================================
 // C_dense_buffer

@@ -6,11 +6,26 @@ Loads TC1_RAW pattern 1, converts to compact row-desc, runs PE, collects stats.
 Hardware online generation: PE reads A_col_buf + B_desc_buf on-chip and emits
 4-wide groups each cycle.  No pre-computed instruction buffer required.
 """
-import os, random, struct, cocotb
+import os, random, struct, heapq, cocotb
 from cocotb.clock import Clock
 from cocotb.triggers import RisingEdge, ClockCycles
 
 MAX_N=512; C_ROW_STRIDE=MAX_N
+
+# ---------------------------------------------------------------------------
+# Descriptor packing/unpacking helpers (must match pe_top.v bit layout)
+#
+# A desc (36-bit): {3'b0, a_off[13:0], a_nnz[9:0], c_row[8:0]}
+def a_desc(off, nnz, crow): return (int(off) << 19) | (int(nnz) << 9) | int(crow)
+def a_desc_crow(d): return int(d) & 0x1FF
+def a_desc_nnz(d):  return (int(d) >> 9) & 0x3FF
+def a_desc_off(d):  return (int(d) >> 19) & 0x3FFF
+
+# B desc (32-bit): {5'b0, b_off[16:0], b_nnz[9:0]}
+def b_desc(off, nnz): return (int(off) << 10) | int(nnz)
+def b_desc_nnz(d):  return int(d) & 0x3FF
+def b_desc_off(d):  return (int(d) >> 10) & 0x1FFFF
+# ---------------------------------------------------------------------------
 
 def int_to_fp16_bits(v):
     """Convert integer v to its FP16 bit pattern (uint16 value). Uses struct '<e' (Python 3.6+)."""
@@ -63,7 +78,7 @@ def load_comp_matrix(index_file, matrix_file, is_B=False):
             for c in cols:
                 v = (r * 37 + c * 13 + 1) % 7 + 1
                 col_arr.append(c); val_arr.append(int_to_fp16_bits(v))
-            row_desc.append((offset << 32) | (nnz << 16) | r)
+            row_desc.append(a_desc(offset, nnz, r))
             offset += nnz
         return row_desc, col_arr, val_arr, offset, rows, K
 
@@ -83,7 +98,7 @@ def load_comp_matrix(index_file, matrix_file, is_B=False):
         cur_row = 0; row_nnz = 0
         for (r, c, v) in coo:
             while cur_row < r:
-                row_desc.append((offset << 32) | row_nnz)
+                row_desc.append(b_desc(offset, row_nnz))
                 offset += row_nnz; cur_row += 1; row_nnz = 0
             col_arr.append(c); val_arr.append(v); row_nnz += 1
         while cur_row < B_rows:
@@ -91,38 +106,58 @@ def load_comp_matrix(index_file, matrix_file, is_B=False):
             offset += row_nnz; cur_row += 1; row_nnz = 0
         return row_desc, col_arr, val_arr, offset, B_rows, B_cols
 
-def align_b_4wide(Bd, Bc, Bv):
-    """Lay out B elements in 4-bank storage with per-row rotation.
+def align_b_8wide(Bd, Bc, Bv):
+    """Lay out B elements in 8-bank storage with per-row rotation.
 
-    Row r starts at absolute position b_off where b_off % 4 == r % 4.
-    This distributes the tail element of partial rows evenly across 4 lanes.
-    The hardware generator uses lane = (b_off + u) % 4 (general form).
+    Row r starts at absolute position b_off where b_off % 8 == r % 8.
+    This distributes the tail element of partial rows evenly across 8 lanes.
+    The hardware generator uses lane = (b_off + u) % 8 (general form).
     """
     new_Bc = []; new_Bv = []; new_Bd = []; new_off = 0
     for r, d in enumerate(Bd):
-        start  = (d >> 32) & 0xFFFFFFFF
-        nnz    = d & 0xFFFF
-        target_mod = r % 4
-        gap = (target_mod - new_off % 4) % 4
+        start  = b_desc_off(d)
+        nnz    = b_desc_nnz(d)
+        target_mod = r % 8
+        gap = (target_mod - new_off % 8) % 8
         for _ in range(gap):
             new_Bc.append(0); new_Bv.append(0)
         new_off += gap
-        new_Bd.append((new_off << 32) | nnz)
+        new_Bd.append(b_desc(new_off, nnz))
         for t in range(nnz):
             new_Bc.append(Bc[start + t])
             new_Bv.append(Bv[start + t])
         new_off += nnz
     return new_Bd, new_Bc, new_Bv
 
+def compute_col_perm(Bc_raw, N):
+    """Greedy column→bank assignment to balance RMW load.
+
+    Sorts B columns by nnz descending, then assigns each to the bank with
+    the least accumulated nnz so far (min-heap). Returns perm[original_col]
+    = new_col_id where new_col_id % 8 == assigned_bank.
+    """
+    col_nnz = [0] * N
+    for c in Bc_raw:
+        col_nnz[int(c) & 0xFFFF] += 1
+    sorted_cols = sorted(range(N), key=lambda c: -col_nnz[c])
+    heap = [(0, 0, b) for b in range(8)]   # (total_nnz, col_count, bank_id)
+    heapq.heapify(heap)
+    perm = [0] * N
+    for j in sorted_cols:
+        total, cnt, b = heapq.heappop(heap)
+        perm[j] = b + 8 * cnt             # bank b, slot cnt within bank
+        heapq.heappush(heap, (total + col_nnz[j], cnt + 1, b))
+    return perm
+
 def count_total_macs(Ad, Ac, Bd, M):
     """Exact count of MAC operations: for each A[i,k] nonzero, add B row k's nnz."""
     total = 0
     for ri in range(M):
-        nnza = (Ad[ri] >> 16) & 0xFFFF
-        st   = (Ad[ri] >> 32) & 0xFFFFFFFF
+        nnza = a_desc_nnz(Ad[ri])
+        st   = a_desc_off(Ad[ri])
         for t in range(nnza):
             k = Ac[st + t] & 0xFFFF
-            total += Bd[k] & 0xFFFF
+            total += b_desc_nnz(Bd[k])
     return total
 
 def compute_golden_c(A_desc, A_col, A_val, B_desc, B_col, B_val, M, N, K):
@@ -145,14 +180,14 @@ def compute_golden_c(A_desc, A_col, A_val, B_desc, B_col, B_val, M, N, K):
     # Accumulate using FP16 arithmetic (simulate hardware behaviour)
     C = [[0.0] * MAX_N for _ in range(MAX_N)]
     for ri in range(M):
-        gid  = A_desc[ri] & 0xFFFF
-        nnza = (A_desc[ri] >> 16) & 0xFFFF
-        st   = (A_desc[ri] >> 32) & 0xFFFFFFFF
+        gid  = a_desc_crow(A_desc[ri])
+        nnza = a_desc_nnz(A_desc[ri])
+        st   = a_desc_off(A_desc[ri])
         for t in range(nnza):
             k  = A_col[st + t] & 0xFFFF
             a  = fp16b(A_val[st + t])
-            bn = B_desc[k] & 0xFFFF
-            bs = (B_desc[k] >> 32) & 0xFFFFFFFF
+            bn = b_desc_nnz(B_desc[k])
+            bs = b_desc_off(B_desc[k])
             for u in range(bn):
                 j = B_col[bs + u] & 0xFFFF
                 b = fp16b(B_val[bs + u])
@@ -162,7 +197,7 @@ def compute_golden_c(A_desc, A_col, A_val, B_desc, B_col, B_val, M, N, K):
     golden_f16 = [[0.0] * N for _ in range(M)]
     golden = {}
     for ri in range(M):
-        gid = A_desc[ri] & 0xFFFF
+        gid = a_desc_crow(A_desc[ri])
         for j in range(N):
             addr = gid * C_ROW_STRIDE + j
             v = to_fp16(C[gid][j])
@@ -174,12 +209,23 @@ def compute_golden_c(A_desc, A_col, A_val, B_desc, B_col, B_val, M, N, K):
 #-------------------------------------------------------------------------
 # PE load helpers
 #-------------------------------------------------------------------------
-async def LRD(dut, Ad):
-    """Load A row descriptors {a_off, a_nnz, c_row} directly from Ad."""
-    for i, d in enumerate(Ad):
-        dut.a_desc_we.value=1; dut.a_desc_waddr.value=i; dut.a_desc_wdata.value=d
+async def stream_a_desc(dut, Ad):
+    """Stream A row descriptors to PE on-demand via valid/ready handshake.
+
+    Always sample a_desc_ready AFTER a rising edge so cocotb reads the
+    post-delta-settled value (not a stale combinatorial value).
+    """
+    dut.a_desc_valid.value = 0
+    for d in Ad:
+        while True:
+            await RisingEdge(dut.aclk)
+            if int(dut.a_desc_ready.value):
+                break
+        dut.a_desc_data.value = d
+        dut.a_desc_valid.value = 1
         await RisingEdge(dut.aclk)
-    dut.a_desc_we.value=0
+        dut.a_desc_valid.value = 0
+
 
 async def LA_val(dut, Av):
     for i, v in enumerate(Av):
@@ -215,8 +261,8 @@ async def rst(dut):
     dut.aresetn.value=0; cocotb.start_soon(Clock(dut.aclk,10,unit='ns').start())
     await ClockCycles(dut.aclk,10); dut.aresetn.value=1; await ClockCycles(dut.aclk,5)
     dut.start.value=0; dut.row_count.value=0
-    # dut.c_rd_en.value=0; dut.c_rd_addr.value=0  (disabled — c_bank removed)
-    dut.a_desc_we.value=0; dut.a_val_we.value=0; dut.a_col_we.value=0
+    dut.a_desc_valid.value=0; dut.a_desc_data.value=0
+    dut.a_val_we.value=0; dut.a_col_we.value=0
     dut.b_col_we.value=0; dut.b_val_we.value=0; dut.b_desc_we.value=0
 
 async def read_c_buffer(dut, Ad, N):
@@ -225,22 +271,31 @@ async def read_c_buffer(dut, Ad, N):
 
 async def run_pe(dut, rc, Ad, N, to=10000000):
     """Run PE for rc rows, collect stats, then read C buffer."""
+    cocotb.start_soon(stream_a_desc(dut, Ad))
     dut.row_count.value = rc
     dut.start.value=1; await RisingEdge(dut.aclk); dut.start.value=0
-    dc=0; lane_busy=[0,0,0,0]; rmw_busy=[0,0,0,0]
+    dc=0; lane_busy=[0]*8; rmw_busy=[0]*8
     mac_sig    = dut.u_pe.mac_lane_valid
     rmw_sigs_0 = [dut.u_pe.u_row_acc_0.u_bank0.rmw_busy,
                   dut.u_pe.u_row_acc_0.u_bank1.rmw_busy,
                   dut.u_pe.u_row_acc_0.u_bank2.rmw_busy,
-                  dut.u_pe.u_row_acc_0.u_bank3.rmw_busy]
+                  dut.u_pe.u_row_acc_0.u_bank3.rmw_busy,
+                  dut.u_pe.u_row_acc_0.u_bank4.rmw_busy,
+                  dut.u_pe.u_row_acc_0.u_bank5.rmw_busy,
+                  dut.u_pe.u_row_acc_0.u_bank6.rmw_busy,
+                  dut.u_pe.u_row_acc_0.u_bank7.rmw_busy]
     rmw_sigs_1 = [dut.u_pe.u_row_acc_1.u_bank0.rmw_busy,
                   dut.u_pe.u_row_acc_1.u_bank1.rmw_busy,
                   dut.u_pe.u_row_acc_1.u_bank2.rmw_busy,
-                  dut.u_pe.u_row_acc_1.u_bank3.rmw_busy]
+                  dut.u_pe.u_row_acc_1.u_bank3.rmw_busy,
+                  dut.u_pe.u_row_acc_1.u_bank4.rmw_busy,
+                  dut.u_pe.u_row_acc_1.u_bank5.rmw_busy,
+                  dut.u_pe.u_row_acc_1.u_bank6.rmw_busy,
+                  dut.u_pe.u_row_acc_1.u_bank7.rmw_busy]
     for cy in range(to):
         await RisingEdge(dut.aclk)
         mlv = int(mac_sig.value)
-        for i in range(4):
+        for i in range(8):
             if (mlv >> i) & 1: lane_busy[i] += 1
             if int(rmw_sigs_0[i].value) or int(rmw_sigs_1[i].value): rmw_busy[i] += 1
         if int(dut.done.value): dc=cy; break
@@ -267,7 +322,7 @@ def verify(dut, M, N, Ad, gf, cp):
     ULP_TOL = 4
     e=0;nz_ok=0;z_ok=0
     for ri in range(M):
-        gid=Ad[ri]&0xFFFF;b=gid*C_ROW_STRIDE
+        gid=a_desc_crow(Ad[ri]);b=gid*C_ROW_STRIDE
         for j in range(N):
             exp=float(gf[gid][j]);act=float(cp.get(b+j,0.0))
             if act != exp:
@@ -291,25 +346,35 @@ async def test_comp_case1_p0(dut):
     Ad, Ac, Av, An, M, K = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False)
     Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True)
     assert K == K2, f"K mismatch: {K} vs {K2}"
-    Bd, Bc, Bv = align_b_4wide(Bd, Bc, Bv)
 
-    gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc, Bv, M, N, K)
+    col_perm = compute_col_perm(Bc, N)   # compute from raw Bc before alignment
+    Bc_raw = Bc                           # keep reference for bank nnz stats
+    Bd, Bc, Bv = align_b_8wide(Bd, Bc, Bv)
+    Bc_hw = [col_perm[int(c) & 0xFFFF] for c in Bc]   # permuted for hardware
+
+    gv, _ = compute_golden_c(Ad, Ac, Av, Bd, Bc, Bv, M, N, K)
+
+    # Bank nnz distribution before/after permutation (use raw Bc, no padding)
+    orig_bank_nnz = [0] * 8
+    perm_bank_nnz = [0] * 8
+    for c in Bc_raw:
+        orig_bank_nnz[int(c) & 0x7] += 1
+        perm_bank_nnz[col_perm[int(c) & 0xFFFF] & 0x7] += 1
 
     dut._log.info("=" * 70)
     dut._log.info("COMPETITION TEST: A(%d,%d) × B(%d,%d) → C(%d,%d)", M, K, K2, N, M, N)
     dut._log.info("A: %d rows, %d nnz (%.1f%% density)", M, An, 100*An/(M*K))
     dut._log.info("B: %d rows, %d nnz (%.1f%% density)", K2, Bn, 100*Bn/(K2*N))
+    dut._log.info("Bank nnz (before perm): %s  range=%d",
+                  orig_bank_nnz, max(orig_bank_nnz) - min(orig_bank_nnz))
+    dut._log.info("Bank nnz (after  perm): %s  range=%d",
+                  perm_bank_nnz, max(perm_bank_nnz) - min(perm_bank_nnz))
     dut._log.info("Golden C: %d non-zero entries", len(gv))
-    for ri in range(min(3, M)):
-        gid = Ad[ri] & 0xFFFF
-        dut._log.info("  C[%d] samples: %s", gid,
-                      [int(gf[gid][j]) for j in range(min(10, N))])
 
     await rst(dut); dut.M.value=M; dut.K.value=K; dut.N.value=N
-    await LRD(dut, Ad)
     await LA_val(dut, Av)
     await LAcol(dut, Ac)
-    await LBdata(dut, Bc, Bv)
+    await LBdata(dut, Bc_hw, Bv)
     await LBdesc(dut, Bd)
 
     dut._log.info("Starting PE, row_count=%d...", M)
@@ -332,13 +397,13 @@ async def test_comp_case1_p0(dut):
     dut._log.info("  Total cycles:      %d", cyc)
     dut._log.info("  Total MAC ops:     %d  (exact)", total_macs)
     dut._log.info("  Per-lane MAC utilization (mac_lane_valid):")
-    for i in range(4):
+    for i in range(8):
         dut._log.info("    Lane %d: %6d busy cycles  →  %.2f%%", i, lane_busy[i], lane_utils[i])
-    dut._log.info("  Average MAC util:  %.2f%%", sum(lane_utils) / 4)
+    dut._log.info("  Average MAC util:  %.2f%%", sum(lane_utils) / 8)
     dut._log.info("  Per-bank accumulator RMW utilization (rmw_busy):")
-    for i in range(4):
+    for i in range(8):
         dut._log.info("    Bank %d: %6d RMW cycles   →  %.2f%%", i, rmw_busy[i], rmw_utils[i])
-    dut._log.info("  Average RMW util:  %.2f%%", sum(rmw_utils) / 4)
+    dut._log.info("  Average RMW util:  %.2f%%", sum(rmw_utils) / 8)
     dut._log.info("=" * 70)
     dut._log.info("COMPETITION TEST PASSED")
 
@@ -349,7 +414,7 @@ async def test_comp_case1_p1(dut):
     Ad, Ac, Av, An, M, K = load_comp_matrix('A_1_Index.txt', 'A_1_Matrix.txt', False)
     Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_1_Index.txt', 'B_1_Matrix.txt', True)
     assert K == K2, f"K mismatch: {K} vs {K2}"
-    Bd, Bc, Bv = align_b_4wide(Bd, Bc, Bv)
+    Bd, Bc, Bv = align_b_8wide(Bd, Bc, Bv)
 
     gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc, Bv, M, N, K)
 
@@ -359,12 +424,11 @@ async def test_comp_case1_p1(dut):
     dut._log.info("B: %d rows, %d nnz (%.1f%% sparsity)", K2, Bn, 100*Bn/(K2*N))
     dut._log.info("Golden C: %d non-zero entries", len(gv))
     for ri in range(min(3, M)):
-        gid = Ad[ri] & 0xFFFF
+        gid = a_desc_crow(Ad[ri])
         dut._log.info("  C[%d] samples: %s", gid,
                       [int(gf[gid][j]) for j in range(min(6, N))])
 
     await rst(dut); dut.M.value=M; dut.K.value=K; dut.N.value=N
-    await LRD(dut, Ad)
     await LA_val(dut, Av)
     await LAcol(dut, Ac)
     await LBdata(dut, Bc, Bv)
@@ -390,13 +454,13 @@ async def test_comp_case1_p1(dut):
     dut._log.info("  Total cycles:      %d", cyc)
     dut._log.info("  Total MAC ops:     %d  (exact)", total_macs)
     dut._log.info("  Per-lane MAC utilization (mac_lane_valid):")
-    for i in range(4):
+    for i in range(8):
         dut._log.info("    Lane %d: %6d busy cycles  →  %.2f%%", i, lane_busy[i], lane_utils[i])
-    dut._log.info("  Average MAC util:  %.2f%%", sum(lane_utils) / 4)
+    dut._log.info("  Average MAC util:  %.2f%%", sum(lane_utils) / 8)
     dut._log.info("  Per-bank accumulator RMW utilization (rmw_busy):")
-    for i in range(4):
+    for i in range(8):
         dut._log.info("    Bank %d: %6d RMW cycles   →  %.2f%%", i, rmw_busy[i], rmw_utils[i])
-    dut._log.info("  Average RMW util:  %.2f%%", sum(rmw_utils) / 4)
+    dut._log.info("  Average RMW util:  %.2f%%", sum(rmw_utils) / 8)
     dut._log.info("=" * 70)
     dut._log.info("COMPETITION TEST PASSED")
 
@@ -405,11 +469,8 @@ async def test_comp_case1_p1(dut):
 # Cluster helpers — packed-bus interface, N_PE-parametric
 #
 # Width constants must stay in sync with defines.vh:
-_A_ROW_ADDR_W  = 8    # A_ROW_ADDR_BITS
 _A_NNZ_ADDR_W  = 14   # A_NNZ_ADDR_BITS
 _DATA_W        = 16   # DATA_WIDTH (FP16 input)
-_C_DATA_W      = 16   # C buffer output width (FP16)
-_B_NNZ_ADDR_W  = 17   # B_NNZ_ADDR_BITS
 _COL_W         = 9    # log2(MAX_N=512), matches ACC_COL_W in pe_top.v
 #=========================================================================
 
@@ -425,10 +486,10 @@ def partition_a(Ad, Ac, Av, M, n_pe, Bd=None):
     """
     row_tasks = []
     for ri in range(M):
-        nnza = (Ad[ri] >> 16) & 0xFFFF
-        st   = (Ad[ri] >> 32) & 0xFFFFFFFF
+        nnza = a_desc_nnz(Ad[ri])
+        st   = a_desc_off(Ad[ri])
         if Bd is not None:
-            t = sum(((Bd[Ac[st + ti] & 0xFFFF] & 0xFFFF) + 3) // 4 for ti in range(nnza))
+            t = sum((b_desc_nnz(Bd[Ac[st + ti] & 0xFFFF]) + 7) // 8 for ti in range(nnza))
         else:
             t = nnza
         row_tasks.append(t)
@@ -459,27 +520,32 @@ def partition_a(Ad, Ac, Av, M, n_pe, Bd=None):
 
     for ri in range(M):
         pid          = assignment[ri]
-        global_row   = Ad[ri] & 0xFFFF
-        nnza         = (Ad[ri] >> 16) & 0xFFFF
-        global_start = (Ad[ri] >> 32) & 0xFFFFFFFF
+        global_row   = a_desc_crow(Ad[ri])
+        nnza         = a_desc_nnz(Ad[ri])
+        global_start = a_desc_off(Ad[ri])
         local_start  = len(pe_val[pid])
 
         for t in range(nnza):
             pe_val[pid].append(Av[global_start + t])
             pe_col[pid].append(Ac[global_start + t] & 0xFFFF)
 
-        pe_desc[pid].append((local_start << 32) | (nnza << 16) | global_row)
+        pe_desc[pid].append(a_desc(local_start, nnza, global_row))
 
     return pe_desc, pe_val, pe_col
 
-async def LRD_pe(dut, pid, row_descs):
-    """Load row descriptors into PE pid."""
-    for i, d in enumerate(row_descs):
-        dut.a_desc_we.value    = 1 << pid
-        dut.a_desc_waddr.value = i << (pid * _A_ROW_ADDR_W)
-        dut.a_desc_wdata.value = d << (pid * 64)
+async def stream_a_desc_pe(dut, pid, row_descs):
+    """Stream A row descriptors into cluster PE pid via valid/ready handshake."""
+    a_valid = getattr(dut, f"a_desc_valid_{pid}")
+    a_ready = getattr(dut, f"a_desc_ready_{pid}")
+    a_data  = getattr(dut, f"a_desc_data_{pid}")
+    a_valid.value = 0
+    for d in row_descs:
+        while not int(a_ready.value):
+            await RisingEdge(dut.aclk)
+        a_data.value = d
+        a_valid.value = 1
         await RisingEdge(dut.aclk)
-    dut.a_desc_we.value = 0; dut.a_desc_waddr.value = 0; dut.a_desc_wdata.value = 0
+        a_valid.value = 0
 
 async def LA_val_pe(dut, pid, Av):
     """Load A_val into PE pid."""
@@ -522,8 +588,7 @@ async def rst_cluster(dut):
     await ClockCycles(dut.aclk,10); dut.aresetn.value=1; await ClockCycles(dut.aclk,5)
     dut.start.value     = 0
     dut.row_count.value = 0
-    # dut.c_rd_en.value   = 0; dut.c_rd_addr.value = 0  (disabled — c_bank removed)
-    dut.a_desc_we.value = 0; dut.a_desc_waddr.value = 0; dut.a_desc_wdata.value = 0
+    dut.a_desc_valid.value = 0; dut.a_desc_data.value = 0
     dut.a_val_we.value  = 0; dut.a_val_waddr.value  = 0; dut.a_val_wdata.value  = 0
     dut.a_col_we.value  = 0; dut.a_col_waddr.value  = 0; dut.a_col_wdata.value  = 0
     dut.b_col_we.value  = 0; dut.b_val_we.value     = 0
@@ -544,24 +609,32 @@ async def run_cluster(dut, row_counts, n_pe, pe_desc, N, to=50000000):
     rmw_acc0 = [[dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank0.rmw_busy,
                  dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank1.rmw_busy,
                  dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank2.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank3.rmw_busy]
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank3.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank4.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank5.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank6.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank7.rmw_busy]
                 for pid in range(n_pe)]
     rmw_acc1 = [[dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank0.rmw_busy,
                  dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank1.rmw_busy,
                  dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank2.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank3.rmw_busy]
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank3.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank4.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank5.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank6.rmw_busy,
+                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank7.rmw_busy]
                 for pid in range(n_pe)]
 
-    lane_busy = [0] * 4
-    rmw_busy  = [0] * 4
+    lane_busy = [0] * 8
+    rmw_busy  = [0] * 8
 
     for cy in range(to):
         await RisingEdge(dut.aclk)
         for pid in range(n_pe):
             mlv = int(mac_sigs[pid].value)
-            for i in range(4):
+            for i in range(8):
                 if (mlv >> i) & 1: lane_busy[i] += 1
-            for i in range(4):
+            for i in range(8):
                 if int(rmw_acc0[pid][i].value) or int(rmw_acc1[pid][i].value):
                     rmw_busy[i] += 1
         if int(dut.done.value): dc=cy; break
@@ -582,7 +655,7 @@ async def test_comp_case1_cluster(dut):
     Ad, Ac, Av, An, M, K  = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False)
     Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True)
     assert K == K2
-    Bd, Bc, Bv = align_b_4wide(Bd, Bc, Bv)
+    Bd, Bc, Bv = align_b_8wide(Bd, Bc, Bv)
 
     gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc, Bv, M, N, K)
 
@@ -600,7 +673,7 @@ async def test_comp_case1_cluster(dut):
     dut.M.value=M; dut.K.value=K; dut.N.value=N
 
     for pid in range(n_pe):
-        await LRD_pe(dut, pid, pe_desc[pid])
+        await stream_a_desc_pe(dut, pid, pe_desc[pid])
         await LA_val_pe(dut, pid, pe_val[pid])
         await LAcol_pe(dut, pid, pe_col[pid])
     await LBdata_cluster(dut, Bc, Bv)
@@ -625,12 +698,12 @@ async def test_comp_case1_cluster(dut):
     dut._log.info("  Cluster wall-time cycles:  %d", cyc)
     dut._log.info("  Total MAC ops:             %d", total_macs)
     dut._log.info("  Per-lane MAC utilization (summed across %d PEs):", n_pe)
-    for i in range(4):
+    for i in range(8):
         dut._log.info("    Lane %d: %7d PE-cycles  →  %.2f%%", i, lane_busy[i], lane_utils[i])
-    dut._log.info("  Average MAC util:          %.2f%%", sum(lane_utils) / 4)
+    dut._log.info("  Average MAC util:          %.2f%%", sum(lane_utils) / 8)
     dut._log.info("  Per-bank RMW utilization (summed across %d PEs):", n_pe)
-    for i in range(4):
+    for i in range(8):
         dut._log.info("    Bank %d: %7d PE-cycles  →  %.2f%%", i, rmw_busy[i], rmw_utils[i])
-    dut._log.info("  Average RMW util:          %.2f%%", sum(rmw_utils) / 4)
+    dut._log.info("  Average RMW util:          %.2f%%", sum(rmw_utils) / 8)
     dut._log.info("=" * 70)
     dut._log.info("%d-PE CLUSTER TEST PASSED", n_pe)

@@ -18,10 +18,10 @@ module tb_pe_top;
     reg [`MAX_DIM_BITS-1:0] K;
     reg [`MAX_DIM_BITS-1:0] N;
 
-    // Row descriptor load port
-    reg        a_desc_we;
-    reg [`A_ROW_ADDR_BITS-1:0] a_desc_waddr;
-    reg [63:0] a_desc_wdata;
+    // A row descriptor stream port
+    reg        a_desc_valid;
+    wire       a_desc_ready;
+    reg [35:0] a_desc_data;
 
     // A value buffer load port
     reg        a_val_we;
@@ -43,8 +43,8 @@ module tb_pe_top;
 
     // B row descriptor load port
     reg        b_desc_we;
-    reg [`MAX_DIM_BITS-1:0] b_desc_waddr;
-    reg [63:0] b_desc_wdata;
+    reg [`B_ROW_ADDR_BITS-1:0] b_desc_waddr;
+    reg [31:0] b_desc_wdata;
 
     // C buffer read port (disabled — c_bank removed)
     // reg         c_rd_en;
@@ -66,9 +66,9 @@ module tb_pe_top;
         .K              (K),
         .N              (N),
 
-        .a_desc_we      (a_desc_we),
-        .a_desc_waddr   (a_desc_waddr),
-        .a_desc_wdata   (a_desc_wdata),
+        .a_desc_valid   (a_desc_valid),
+        .a_desc_ready   (a_desc_ready),
+        .a_desc_data    (a_desc_data),
 
         .a_val_we       (a_val_we),
         .a_val_waddr    (a_val_waddr),
