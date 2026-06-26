@@ -102,7 +102,7 @@ def load_comp_matrix(index_file, matrix_file, is_B=False):
                 offset += row_nnz; cur_row += 1; row_nnz = 0
             col_arr.append(c); val_arr.append(v); row_nnz += 1
         while cur_row < B_rows:
-            row_desc.append((offset << 32) | row_nnz)
+            row_desc.append(b_desc(offset, row_nnz))
             offset += row_nnz; cur_row += 1; row_nnz = 0
         return row_desc, col_arr, val_arr, offset, B_rows, B_cols
 
@@ -478,10 +478,9 @@ async def test_comp_case1_p0(dut):
     Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True)
     assert K == K2, f"K mismatch: {K} vs {K2}"
 
-    col_perm = compute_col_perm(Bc, N)   # compute from raw Bc before alignment
-    Bc_raw = Bc                           # keep reference for bank nnz stats
-    Bd, Bc, Bv = align_b_16wide(Bd, Bc, Bv)
-    Bc_hw = [col_perm[int(c) & 0xFFFF] for c in Bc]   # permuted for hardware
+    col_perm = compute_col_perm(Bc, N)
+    Bc_raw = Bc
+    Bc_hw = [col_perm[int(c) & 0xFFFF] for c in Bc]
 
     gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc_hw, Bv, M, N, K)
 
@@ -546,8 +545,6 @@ async def test_comp_case1_p1(dut):
     Ad, Ac, Av, An, M, K = load_comp_matrix('A_1_Index.txt', 'A_1_Matrix.txt', False)
     Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_1_Index.txt', 'B_1_Matrix.txt', True)
     assert K == K2, f"K mismatch: {K} vs {K2}"
-    Bd, Bc, Bv = align_b_16wide(Bd, Bc, Bv)
-
     gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc, Bv, M, N, K)
 
     dut._log.info("=" * 70)
@@ -837,8 +834,6 @@ async def test_comp_case1_cluster(dut):
     Ad, Ac, Av, An, M, K  = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False)
     Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True)
     assert K == K2
-    Bd, Bc, Bv = align_b_16wide(Bd, Bc, Bv)
-
     gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc, Bv, M, N, K)
 
     await rst_cluster(dut)
