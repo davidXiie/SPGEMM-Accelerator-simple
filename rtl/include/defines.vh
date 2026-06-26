@@ -114,11 +114,16 @@
 `define PRODUCT_WIDTH       25   // {col_id[8:0], fp16_val[15:0]}
 `define PRODUCT_GROUP_WIDTH (`N_MAC + `N_MAC * `PRODUCT_WIDTH)  // 208
 
-`define TASK_FIFO_DEPTH     512    // matches RAMB36E2 SDP 72-bit natural depth (100% utilized)
+`define TASK_FIFO_DEPTH     512
 `define TASK_FIFO_DEPTH_LOG 9
 
-`define PROD_FIFO_DEPTH     32     // per-acc FIFO; only needs MAC-pipeline + bank-FIFO backpressure buffering
-`define PROD_FIFO_DEPTH_LOG  5
+`define PROD_FIFO_DEPTH     256
+`define PROD_FIFO_DEPTH_LOG  8
+
+// Pointer-task FIFO: one entry per A-nonzero (a_val[15:0], b_off[16:0], num_groups[6:0])
+`define PTR_TASK_WIDTH      40
+`define PTR_FIFO_DEPTH      512
+`define PTR_FIFO_DEPTH_LOG  9
 
 //=============================================================================
 // C_dense_buffer

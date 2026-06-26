@@ -210,21 +210,29 @@ def compute_golden_c(A_desc, A_col, A_val, B_desc, B_col, B_val, M, N, K):
 # PE load helpers
 #-------------------------------------------------------------------------
 async def stream_a_desc(dut, Ad):
-    """Stream A row descriptors to PE on-demand via valid/ready handshake.
+    """Stream A row descriptors to PE using eager pre-assertion.
 
-    Always sample a_desc_ready AFTER a rising edge so cocotb reads the
-    post-delta-settled value (not a stale combinatorial value).
+    Keeps a_desc_valid=1 whenever a descriptor is available, so the PE
+    captures it in 1 cycle instead of 2 (reduces LOAD_ROW_DESC by 1/row).
     """
-    dut.a_desc_valid.value = 0
-    for d in Ad:
+    if not Ad:
+        dut.a_desc_valid.value = 0
+        return
+    # Pre-load the first descriptor before PE starts requesting
+    dut.a_desc_data.value = Ad[0]
+    dut.a_desc_valid.value = 1
+    for i in range(len(Ad)):
+        # Wait until PE consumes this descriptor (a_desc_ready=1 on rising edge)
         while True:
             await RisingEdge(dut.aclk)
             if int(dut.a_desc_ready.value):
                 break
-        dut.a_desc_data.value = d
-        dut.a_desc_valid.value = 1
-        await RisingEdge(dut.aclk)
-        dut.a_desc_valid.value = 0
+        # Immediately load the next descriptor (or de-assert if last)
+        if i + 1 < len(Ad):
+            dut.a_desc_data.value = Ad[i + 1]
+            dut.a_desc_valid.value = 1
+        else:
+            dut.a_desc_valid.value = 0
 
 
 async def LA_val(dut, Av):
@@ -275,7 +283,25 @@ async def run_pe(dut, rc, Ad, N, to=10000000):
     dut.row_count.value = rc
     dut.start.value=1; await RisingEdge(dut.aclk); dut.start.value=0
     dc=0; lane_busy=[0]*8; rmw_busy=[0]*8
+    # PE state names (indices match pe_top.v localparams)
+    PE_STATE_NAMES = ['IDLE','LOAD_ROW_DESC','CLEAR_ACC','STREAM_INSTRS',
+                      'WAIT_TASK_DRAIN','WAIT_PRODUCT_DRAIN','NEXT_ROW','DONE']
+    GEN_STATE_NAMES = ['IDLE','FETCH','EMIT','ROW_DONE','FLUSH']
+    state_cycles    = [0] * 8   # cycles spent in each PE state
+    gen_state_cyc   = [0] * 5   # cycles in each generator state
+    mac_idle_in_stream = 0      # MAC idle cycles within PE_STREAM_INSTRS
+    issue_rdy_stall = 0         # cycles issue_ready=0 in any acc (product FIFO backpressure)
     mac_sig    = dut.u_pe.mac_lane_valid
+    pe_state   = dut.u_pe.state
+    gen_state  = dut.u_pe.gen_state
+    iry0       = dut.u_pe.acc_issue_ready_0
+    iry1       = dut.u_pe.acc_issue_ready_1
+    task_cnt   = dut.u_pe.u_task_fifo.count
+    tfifo_rd   = dut.u_pe.task_fifo_rd_en
+    tg_wr      = dut.u_pe.task_group_wr_en
+    prd_cnt0   = dut.u_pe.product_fifo_cnt_0
+    prd_cnt1   = dut.u_pe.product_fifo_cnt_1
+    c_sel      = dut.u_pe.comp_sel
     rmw_sigs_0 = [dut.u_pe.u_row_acc_0.u_bank0.rmw_busy,
                   dut.u_pe.u_row_acc_0.u_bank1.rmw_busy,
                   dut.u_pe.u_row_acc_0.u_bank2.rmw_busy,
@@ -292,14 +318,69 @@ async def run_pe(dut, rc, Ad, N, to=10000000):
                   dut.u_pe.u_row_acc_1.u_bank5.rmw_busy,
                   dut.u_pe.u_row_acc_1.u_bank6.rmw_busy,
                   dut.u_pe.u_row_acc_1.u_bank7.rmw_busy]
+    prev_gs = -1; prev_s = -1
+    task_cnt_at_row_done = []; wait_task_drain_cyc = []
+    wt_start = -1
+    # Additional counters
+    gen_emit_no_write   = 0   # GEN_EMIT cycles where no task written (accumulate case)
+    task_empty_in_stream = 0  # STREAM_INSTRS cycles: task_fifo_empty AND task_fifo_rd_en=0
+    prod_full_in_stream  = 0  # STREAM_INSTRS cycles: prod FIFO hit threshold
     for cy in range(to):
         await RisingEdge(dut.aclk)
         mlv = int(mac_sig.value)
+        s   = int(pe_state.value)
+        gs  = int(gen_state.value)
+        state_cycles[s] += 1
+        if gs < 5: gen_state_cyc[gs] += 1
         for i in range(8):
             if (mlv >> i) & 1: lane_busy[i] += 1
             if int(rmw_sigs_0[i].value) or int(rmw_sigs_1[i].value): rmw_busy[i] += 1
+        # MAC idle within STREAM_INSTRS
+        if s == 3 and mlv == 0: mac_idle_in_stream += 1
+        # issue_ready stalls on ACTIVE acc only
+        cs = int(c_sel.value)
+        if cs == 0 and not int(iry0.value): issue_rdy_stall += 1
+        if cs == 1 and not int(iry1.value): issue_rdy_stall += 1
+        # GEN_EMIT with no task written (accumulate case)
+        if gs == 2 and not int(tg_wr.value): gen_emit_no_write += 1
+        # task FIFO empty vs prod FIFO full in STREAM_INSTRS
+        if s == 3 and not int(tfifo_rd.value):
+            tc = int(task_cnt.value)
+            if tc == 0:
+                task_empty_in_stream += 1
+            else:
+                prod_full_in_stream += 1
+        # Detect GEN_ROW_DONE transition
+        if gs == 3 and prev_gs != 3:
+            task_cnt_at_row_done.append(int(task_cnt.value))
+        # Track WAIT_TASK_DRAIN duration
+        if s == 4 and prev_s != 4: wt_start = cy
+        if s != 4 and prev_s == 4 and wt_start >= 0:
+            wait_task_drain_cyc.append(cy - wt_start)
+            wt_start = -1
+        prev_gs = gs; prev_s = s
         if int(dut.done.value): dc=cy; break
     else: assert False, f"timeout {to}"
+    # Print state breakdown
+    dut._log.info("--- PE State Cycle Breakdown ---")
+    for i,n in enumerate(PE_STATE_NAMES):
+        dut._log.info("  %s: %d cycles", n, state_cycles[i])
+    dut._log.info("--- Generator State Breakdown ---")
+    for i,n in enumerate(GEN_STATE_NAMES):
+        dut._log.info("  GEN_%s: %d cycles", n, gen_state_cyc[i])
+    dut._log.info("  GEN_EMIT no-write (accumulate): %d cycles", gen_emit_no_write)
+    dut._log.info("  MAC idle in STREAM_INSTRS: %d cycles", mac_idle_in_stream)
+    dut._log.info("    due to task_fifo empty:  %d", task_empty_in_stream)
+    dut._log.info("    due to prod_fifo full:   %d", prod_full_in_stream)
+    dut._log.info("  issue_ready stall (active acc): %d cycles", issue_rdy_stall)
+    if task_cnt_at_row_done:
+        avg_tc = sum(task_cnt_at_row_done)/len(task_cnt_at_row_done)
+        dut._log.info("  task_fifo count at GEN_ROW_DONE: avg=%.1f max=%d min=%d",
+                      avg_tc, max(task_cnt_at_row_done), min(task_cnt_at_row_done))
+    if wait_task_drain_cyc:
+        avg_wt = sum(wait_task_drain_cyc)/len(wait_task_drain_cyc)
+        dut._log.info("  PE_WAIT_TASK_DRAIN cycles: avg=%.1f max=%d min=%d",
+                      avg_wt, max(wait_task_drain_cyc), min(wait_task_drain_cyc))
     await ClockCycles(dut.aclk, 10)
     cp = await read_c_buffer(dut, Ad, N)
     return cp, dc, lane_busy, rmw_busy
