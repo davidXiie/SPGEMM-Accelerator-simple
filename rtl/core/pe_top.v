@@ -937,7 +937,9 @@ module pe_top #(
     localparam C_BANK_ADDR_W = `C_ROW_ADDR_BITS + 5;     // local_row + gaddr
     localparam C_BANK_DEPTH  = 1 << C_BANK_ADDR_W;
 
-    reg [15:0]               C_bank [0:15][0:C_BANK_DEPTH-1];
+    // C_bank is declared per-sub-bank INSIDE the generate loop below so each is
+    // a separate variable (<= C_BANK_DEPTH*16 bits) — a single 16x deep 2D array
+    // exceeds Vivado's 1 Mbit per-variable behavioral-memory limit (Synth 8-4556).
     reg [`MAX_DIM_BITS-1:0]  C_row_map [0:`C_ROW_SLOTS-1];   // local → global C row
 
     // Record the global row for each local slot as descriptors are loaded.
@@ -965,14 +967,15 @@ module pe_top #(
     genvar cb;
     generate
         for (cb = 0; cb < 16; cb = cb + 1) begin : gen_c_bank
+            reg [15:0] mem [0:C_BANK_DEPTH-1];   // one sub-bank (own variable)
             always @(posedge aclk) begin
                 if (c_wr_en)
-                    C_bank[cb][c_wr_addr] <= c_wr_dv[cb] ? c_wr_dat[cb*16 +: 16]
-                                                         : 16'h0000;
+                    mem[c_wr_addr] <= c_wr_dv[cb] ? c_wr_dat[cb*16 +: 16]
+                                                  : 16'h0000;
             end
             always @(posedge aclk) begin
                 if (c_rd_en)
-                    c_rd_data[cb*16 +: 16] <= C_bank[cb][c_rd_addr];
+                    c_rd_data[cb*16 +: 16] <= mem[c_rd_addr];
             end
         end
     endgenerate
