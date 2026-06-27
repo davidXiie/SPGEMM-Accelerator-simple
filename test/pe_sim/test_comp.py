@@ -149,6 +149,34 @@ def compute_col_perm(Bc_raw, N):
         heapq.heappush(heap, (total + col_nnz[j], cnt + 1, b))
     return perm
 
+def compute_col_perm_online(Bc, N):
+    """Online column→bank assignment during B loading (hardware-simulated).
+
+    Processes B column indices in CSR storage order (row by row).
+    On first occurrence of a column, assigns it to the bank with the fewest
+    columns assigned so far (argmin over 16 counters = combinational tree in HW).
+    Hardware cost: 512-bit col_assigned bitmap + 16 bank_cnt counters + 512×9-bit perm SRAM.
+    Extra latency vs plain B loading: 0 cycles.
+    """
+    col_assigned = [False] * N
+    bank_cnt = [0] * 16      # columns assigned per bank (used for both argmin and perm slot)
+    perm = [0] * N
+    for c in Bc:
+        col_id = int(c) & 0xFFFF
+        if col_id >= N or col_assigned[col_id]:
+            continue
+        b = bank_cnt.index(min(bank_cnt))    # argmin → 16-way comparator tree in HW
+        perm[col_id] = b + 16 * bank_cnt[b]
+        bank_cnt[b] += 1
+        col_assigned[col_id] = True
+    # Zero-NNZ columns: assign to remaining slots in round-robin order
+    for col_id in range(N):
+        if not col_assigned[col_id]:
+            b = bank_cnt.index(min(bank_cnt))
+            perm[col_id] = b + 16 * bank_cnt[b]
+            bank_cnt[b] += 1
+    return perm
+
 def count_total_macs(Ad, Ac, Bd, M):
     """Exact count of MAC operations: for each A[i,k] nonzero, add B row k's nnz."""
     total = 0
@@ -478,7 +506,7 @@ async def test_comp_case1_p0(dut):
     Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True)
     assert K == K2, f"K mismatch: {K} vs {K2}"
 
-    col_perm = compute_col_perm(Bc, N)
+    col_perm = compute_col_perm_online(Bc, N)
     Bc_raw = Bc
     Bc_hw = [col_perm[int(c) & 0xFFFF] for c in Bc]
 

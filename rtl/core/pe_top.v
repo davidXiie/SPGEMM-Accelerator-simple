@@ -154,6 +154,7 @@ module pe_top #(
 
     reg comp_sel;
     reg [`A_ROW_ADDR_BITS-1:0] row_idx;
+    reg [`A_ROW_ADDR_BITS-1:0] cur_c_row;
     reg [31:0]                 cur_a_off;
     reg [15:0]                 cur_a_nnz;
 
@@ -777,77 +778,114 @@ module pe_top #(
         else begin
             if (pe_drain_done&&!comp_sel) mac_done_latch_0<=1;
             if (pe_drain_done&& comp_sel) mac_done_latch_1<=1;
-            if (mac_done_latch_0&&prod_fifo_empty_0) mac_done_latch_0<=0;
-            if (mac_done_latch_1&&prod_fifo_empty_1) mac_done_latch_1<=0;
+            if (mac_done_latch_0&&prod_fifo_empty_0&&!prd_hold_0&&!prd_rd_d1_0) mac_done_latch_0<=0;
+            if (mac_done_latch_1&&prod_fifo_empty_1&&!prd_hold_1&&!prd_rd_d1_1) mac_done_latch_1<=0;
         end
     end
 
-    wire acc_inp_done_0 = mac_done_latch_0 && prod_fifo_empty_0;
-    wire acc_inp_done_1 = mac_done_latch_1 && prod_fifo_empty_1;
+    // Hold registers: save a product when accumulator stalls (issue_ready drops
+    // after the FIFO read pointer already advanced). Cleared when re-issued.
+    reg prd_hold_0, prd_hold_1;
+    reg [`PRODUCT_GROUP_WIDTH-1:0] prd_hold_dat_0, prd_hold_dat_1;
 
-    assign prod_fifo_rd_en_0 = !prod_fifo_empty_0 && acc_issue_ready_0;
-    assign prod_fifo_rd_en_1 = !prod_fifo_empty_1 && acc_issue_ready_1;
+    // Block FIFO reads only when a product is held waiting for re-issue.
+    // The acc_issue_ready_0 gate already prevents reads when issue_ready=0,
+    // so no extra !prd_rd_d1 blocking is needed (that would halve throughput).
+    assign prod_fifo_rd_en_0 = !prod_fifo_empty_0 && acc_issue_ready_0 && !prd_hold_0;
+    assign prod_fifo_rd_en_1 = !prod_fifo_empty_1 && acc_issue_ready_1 && !prd_hold_1;
 
-    reg prd_rd_d1_0,prd_rd_d1_1;
-    reg [`PRODUCT_GROUP_WIDTH-1:0] prd_dat_d1_0,prd_dat_d1_1;
+    reg prd_rd_d1_0, prd_rd_d1_1;
+    reg [`PRODUCT_GROUP_WIDTH-1:0] prd_dat_d1_0, prd_dat_d1_1;
     always @(posedge aclk) begin
-        if (!aresetn) begin prd_rd_d1_0<=0; prd_dat_d1_0<=0; prd_rd_d1_1<=0; prd_dat_d1_1<=0; end
-        else begin
-            prd_rd_d1_0  <= prod_fifo_rd_en_0&&!prod_fifo_empty_0;
+        if (!aresetn) begin
+            prd_rd_d1_0 <= 0; prd_dat_d1_0 <= 0;
+            prd_rd_d1_1 <= 0; prd_dat_d1_1 <= 0;
+            prd_hold_0  <= 0; prd_hold_dat_0 <= 0;
+            prd_hold_1  <= 0; prd_hold_dat_1 <= 0;
+        end else begin
+            // Save product when accumulator not ready (issue_ready dropped in
+            // the 1-cycle window between FIFO read and product application).
+            if (prd_rd_d1_0 && !acc_issue_ready_0) begin
+                prd_hold_0     <= 1'b1;
+                prd_hold_dat_0 <= prd_dat_d1_0;
+            end else if (prd_hold_0 && acc_issue_ready_0)
+                prd_hold_0 <= 1'b0;
+
+            if (prd_rd_d1_1 && !acc_issue_ready_1) begin
+                prd_hold_1     <= 1'b1;
+                prd_hold_dat_1 <= prd_dat_d1_1;
+            end else if (prd_hold_1 && acc_issue_ready_1)
+                prd_hold_1 <= 1'b0;
+
+            prd_rd_d1_0  <= prod_fifo_rd_en_0 && !prod_fifo_empty_0;
             prd_dat_d1_0 <= prod_fifo_rd_data_0;
-            prd_rd_d1_1  <= prod_fifo_rd_en_1&&!prod_fifo_empty_1;
+            prd_rd_d1_1  <= prod_fifo_rd_en_1 && !prod_fifo_empty_1;
             prd_dat_d1_1 <= prod_fifo_rd_data_1;
         end
     end
 
-    // Extract 16 lane_valid, 16 col_ids, 16 products from product FIFO data
-    wire [15:0]    alv0 = prd_dat_d1_0[`N_MAC-1:0];
+    // Effective product: held data takes priority over the just-latched data.
+    // At most one of prd_hold and prd_rd_d1 is true at any cycle (guaranteed
+    // by the !prd_hold && !prd_rd_d1 gate on prod_fifo_rd_en).
+    wire eff_valid_0 = prd_hold_0 | prd_rd_d1_0;
+    wire eff_valid_1 = prd_hold_1 | prd_rd_d1_1;
+    wire [`PRODUCT_GROUP_WIDTH-1:0] eff_dat_0 = prd_hold_0 ? prd_hold_dat_0 : prd_dat_d1_0;
+    wire [`PRODUCT_GROUP_WIDTH-1:0] eff_dat_1 = prd_hold_1 ? prd_hold_dat_1 : prd_dat_d1_1;
+
+    // acc_inp_done must also wait for any in-flight or held product to drain.
+    wire acc_inp_done_0 = mac_done_latch_0 && prod_fifo_empty_0
+                          && !prd_hold_0 && !prd_rd_d1_0;
+    wire acc_inp_done_1 = mac_done_latch_1 && prod_fifo_empty_1
+                          && !prd_hold_1 && !prd_rd_d1_1;
+
+    // Extract 16 lane_valid, 16 col_ids, 16 products from effective data
+    wire [15:0]    alv0 = eff_dat_0[`N_MAC-1:0];
     wire [16*9-1:0] alc0 = {
-        prd_dat_d1_0[`N_MAC+15*`PRODUCT_WIDTH+16+:9],prd_dat_d1_0[`N_MAC+14*`PRODUCT_WIDTH+16+:9],
-        prd_dat_d1_0[`N_MAC+13*`PRODUCT_WIDTH+16+:9],prd_dat_d1_0[`N_MAC+12*`PRODUCT_WIDTH+16+:9],
-        prd_dat_d1_0[`N_MAC+11*`PRODUCT_WIDTH+16+:9],prd_dat_d1_0[`N_MAC+10*`PRODUCT_WIDTH+16+:9],
-        prd_dat_d1_0[`N_MAC+9 *`PRODUCT_WIDTH+16+:9],prd_dat_d1_0[`N_MAC+8 *`PRODUCT_WIDTH+16+:9],
-        prd_dat_d1_0[`N_MAC+7 *`PRODUCT_WIDTH+16+:9],prd_dat_d1_0[`N_MAC+6 *`PRODUCT_WIDTH+16+:9],
-        prd_dat_d1_0[`N_MAC+5 *`PRODUCT_WIDTH+16+:9],prd_dat_d1_0[`N_MAC+4 *`PRODUCT_WIDTH+16+:9],
-        prd_dat_d1_0[`N_MAC+3 *`PRODUCT_WIDTH+16+:9],prd_dat_d1_0[`N_MAC+2 *`PRODUCT_WIDTH+16+:9],
-        prd_dat_d1_0[`N_MAC+1 *`PRODUCT_WIDTH+16+:9],prd_dat_d1_0[`N_MAC+0 *`PRODUCT_WIDTH+16+:9]};
+        eff_dat_0[`N_MAC+15*`PRODUCT_WIDTH+16+:9],eff_dat_0[`N_MAC+14*`PRODUCT_WIDTH+16+:9],
+        eff_dat_0[`N_MAC+13*`PRODUCT_WIDTH+16+:9],eff_dat_0[`N_MAC+12*`PRODUCT_WIDTH+16+:9],
+        eff_dat_0[`N_MAC+11*`PRODUCT_WIDTH+16+:9],eff_dat_0[`N_MAC+10*`PRODUCT_WIDTH+16+:9],
+        eff_dat_0[`N_MAC+9 *`PRODUCT_WIDTH+16+:9],eff_dat_0[`N_MAC+8 *`PRODUCT_WIDTH+16+:9],
+        eff_dat_0[`N_MAC+7 *`PRODUCT_WIDTH+16+:9],eff_dat_0[`N_MAC+6 *`PRODUCT_WIDTH+16+:9],
+        eff_dat_0[`N_MAC+5 *`PRODUCT_WIDTH+16+:9],eff_dat_0[`N_MAC+4 *`PRODUCT_WIDTH+16+:9],
+        eff_dat_0[`N_MAC+3 *`PRODUCT_WIDTH+16+:9],eff_dat_0[`N_MAC+2 *`PRODUCT_WIDTH+16+:9],
+        eff_dat_0[`N_MAC+1 *`PRODUCT_WIDTH+16+:9],eff_dat_0[`N_MAC+0 *`PRODUCT_WIDTH+16+:9]};
     wire [16*16-1:0] alp0 = {
-        prd_dat_d1_0[`N_MAC+15*`PRODUCT_WIDTH+:16],prd_dat_d1_0[`N_MAC+14*`PRODUCT_WIDTH+:16],
-        prd_dat_d1_0[`N_MAC+13*`PRODUCT_WIDTH+:16],prd_dat_d1_0[`N_MAC+12*`PRODUCT_WIDTH+:16],
-        prd_dat_d1_0[`N_MAC+11*`PRODUCT_WIDTH+:16],prd_dat_d1_0[`N_MAC+10*`PRODUCT_WIDTH+:16],
-        prd_dat_d1_0[`N_MAC+9 *`PRODUCT_WIDTH+:16],prd_dat_d1_0[`N_MAC+8 *`PRODUCT_WIDTH+:16],
-        prd_dat_d1_0[`N_MAC+7 *`PRODUCT_WIDTH+:16],prd_dat_d1_0[`N_MAC+6 *`PRODUCT_WIDTH+:16],
-        prd_dat_d1_0[`N_MAC+5 *`PRODUCT_WIDTH+:16],prd_dat_d1_0[`N_MAC+4 *`PRODUCT_WIDTH+:16],
-        prd_dat_d1_0[`N_MAC+3 *`PRODUCT_WIDTH+:16],prd_dat_d1_0[`N_MAC+2 *`PRODUCT_WIDTH+:16],
-        prd_dat_d1_0[`N_MAC+1 *`PRODUCT_WIDTH+:16],prd_dat_d1_0[`N_MAC+0 *`PRODUCT_WIDTH+:16]};
-    wire [15:0]    alv1 = prd_dat_d1_1[`N_MAC-1:0];
+        eff_dat_0[`N_MAC+15*`PRODUCT_WIDTH+:16],eff_dat_0[`N_MAC+14*`PRODUCT_WIDTH+:16],
+        eff_dat_0[`N_MAC+13*`PRODUCT_WIDTH+:16],eff_dat_0[`N_MAC+12*`PRODUCT_WIDTH+:16],
+        eff_dat_0[`N_MAC+11*`PRODUCT_WIDTH+:16],eff_dat_0[`N_MAC+10*`PRODUCT_WIDTH+:16],
+        eff_dat_0[`N_MAC+9 *`PRODUCT_WIDTH+:16],eff_dat_0[`N_MAC+8 *`PRODUCT_WIDTH+:16],
+        eff_dat_0[`N_MAC+7 *`PRODUCT_WIDTH+:16],eff_dat_0[`N_MAC+6 *`PRODUCT_WIDTH+:16],
+        eff_dat_0[`N_MAC+5 *`PRODUCT_WIDTH+:16],eff_dat_0[`N_MAC+4 *`PRODUCT_WIDTH+:16],
+        eff_dat_0[`N_MAC+3 *`PRODUCT_WIDTH+:16],eff_dat_0[`N_MAC+2 *`PRODUCT_WIDTH+:16],
+        eff_dat_0[`N_MAC+1 *`PRODUCT_WIDTH+:16],eff_dat_0[`N_MAC+0 *`PRODUCT_WIDTH+:16]};
+    wire [15:0]    alv1 = eff_dat_1[`N_MAC-1:0];
     wire [16*9-1:0] alc1 = {
-        prd_dat_d1_1[`N_MAC+15*`PRODUCT_WIDTH+16+:9],prd_dat_d1_1[`N_MAC+14*`PRODUCT_WIDTH+16+:9],
-        prd_dat_d1_1[`N_MAC+13*`PRODUCT_WIDTH+16+:9],prd_dat_d1_1[`N_MAC+12*`PRODUCT_WIDTH+16+:9],
-        prd_dat_d1_1[`N_MAC+11*`PRODUCT_WIDTH+16+:9],prd_dat_d1_1[`N_MAC+10*`PRODUCT_WIDTH+16+:9],
-        prd_dat_d1_1[`N_MAC+9 *`PRODUCT_WIDTH+16+:9],prd_dat_d1_1[`N_MAC+8 *`PRODUCT_WIDTH+16+:9],
-        prd_dat_d1_1[`N_MAC+7 *`PRODUCT_WIDTH+16+:9],prd_dat_d1_1[`N_MAC+6 *`PRODUCT_WIDTH+16+:9],
-        prd_dat_d1_1[`N_MAC+5 *`PRODUCT_WIDTH+16+:9],prd_dat_d1_1[`N_MAC+4 *`PRODUCT_WIDTH+16+:9],
-        prd_dat_d1_1[`N_MAC+3 *`PRODUCT_WIDTH+16+:9],prd_dat_d1_1[`N_MAC+2 *`PRODUCT_WIDTH+16+:9],
-        prd_dat_d1_1[`N_MAC+1 *`PRODUCT_WIDTH+16+:9],prd_dat_d1_1[`N_MAC+0 *`PRODUCT_WIDTH+16+:9]};
+        eff_dat_1[`N_MAC+15*`PRODUCT_WIDTH+16+:9],eff_dat_1[`N_MAC+14*`PRODUCT_WIDTH+16+:9],
+        eff_dat_1[`N_MAC+13*`PRODUCT_WIDTH+16+:9],eff_dat_1[`N_MAC+12*`PRODUCT_WIDTH+16+:9],
+        eff_dat_1[`N_MAC+11*`PRODUCT_WIDTH+16+:9],eff_dat_1[`N_MAC+10*`PRODUCT_WIDTH+16+:9],
+        eff_dat_1[`N_MAC+9 *`PRODUCT_WIDTH+16+:9],eff_dat_1[`N_MAC+8 *`PRODUCT_WIDTH+16+:9],
+        eff_dat_1[`N_MAC+7 *`PRODUCT_WIDTH+16+:9],eff_dat_1[`N_MAC+6 *`PRODUCT_WIDTH+16+:9],
+        eff_dat_1[`N_MAC+5 *`PRODUCT_WIDTH+16+:9],eff_dat_1[`N_MAC+4 *`PRODUCT_WIDTH+16+:9],
+        eff_dat_1[`N_MAC+3 *`PRODUCT_WIDTH+16+:9],eff_dat_1[`N_MAC+2 *`PRODUCT_WIDTH+16+:9],
+        eff_dat_1[`N_MAC+1 *`PRODUCT_WIDTH+16+:9],eff_dat_1[`N_MAC+0 *`PRODUCT_WIDTH+16+:9]};
     wire [16*16-1:0] alp1 = {
-        prd_dat_d1_1[`N_MAC+15*`PRODUCT_WIDTH+:16],prd_dat_d1_1[`N_MAC+14*`PRODUCT_WIDTH+:16],
-        prd_dat_d1_1[`N_MAC+13*`PRODUCT_WIDTH+:16],prd_dat_d1_1[`N_MAC+12*`PRODUCT_WIDTH+:16],
-        prd_dat_d1_1[`N_MAC+11*`PRODUCT_WIDTH+:16],prd_dat_d1_1[`N_MAC+10*`PRODUCT_WIDTH+:16],
-        prd_dat_d1_1[`N_MAC+9 *`PRODUCT_WIDTH+:16],prd_dat_d1_1[`N_MAC+8 *`PRODUCT_WIDTH+:16],
-        prd_dat_d1_1[`N_MAC+7 *`PRODUCT_WIDTH+:16],prd_dat_d1_1[`N_MAC+6 *`PRODUCT_WIDTH+:16],
-        prd_dat_d1_1[`N_MAC+5 *`PRODUCT_WIDTH+:16],prd_dat_d1_1[`N_MAC+4 *`PRODUCT_WIDTH+:16],
-        prd_dat_d1_1[`N_MAC+3 *`PRODUCT_WIDTH+:16],prd_dat_d1_1[`N_MAC+2 *`PRODUCT_WIDTH+:16],
-        prd_dat_d1_1[`N_MAC+1 *`PRODUCT_WIDTH+:16],prd_dat_d1_1[`N_MAC+0 *`PRODUCT_WIDTH+:16]};
+        eff_dat_1[`N_MAC+15*`PRODUCT_WIDTH+:16],eff_dat_1[`N_MAC+14*`PRODUCT_WIDTH+:16],
+        eff_dat_1[`N_MAC+13*`PRODUCT_WIDTH+:16],eff_dat_1[`N_MAC+12*`PRODUCT_WIDTH+:16],
+        eff_dat_1[`N_MAC+11*`PRODUCT_WIDTH+:16],eff_dat_1[`N_MAC+10*`PRODUCT_WIDTH+:16],
+        eff_dat_1[`N_MAC+9 *`PRODUCT_WIDTH+:16],eff_dat_1[`N_MAC+8 *`PRODUCT_WIDTH+:16],
+        eff_dat_1[`N_MAC+7 *`PRODUCT_WIDTH+:16],eff_dat_1[`N_MAC+6 *`PRODUCT_WIDTH+:16],
+        eff_dat_1[`N_MAC+5 *`PRODUCT_WIDTH+:16],eff_dat_1[`N_MAC+4 *`PRODUCT_WIDTH+:16],
+        eff_dat_1[`N_MAC+3 *`PRODUCT_WIDTH+:16],eff_dat_1[`N_MAC+2 *`PRODUCT_WIDTH+:16],
+        eff_dat_1[`N_MAC+1 *`PRODUCT_WIDTH+:16],eff_dat_1[`N_MAC+0 *`PRODUCT_WIDTH+:16]};
 
     row_accumulator_16bank #(
         .OUT_COLS(512),.COL_W(9),.PROD_W(16),.ACC_W(16),.EPOCH_W(16),
         .BANK_FIFO_DEPTH(32),.BANK_FIFO_LOG(5),.ROW_W(`A_ROW_ADDR_BITS)
     ) u_row_acc_0 (
         .clk(aclk),.rst_n(aresetn),
-        .row_start((state==PE_CLEAR_ACC)&&!comp_sel),.row_id_in(row_idx),.drain_cols(N),
+        .row_start((state==PE_CLEAR_ACC)&&!comp_sel),.row_id_in(cur_c_row),.drain_cols(N),
         .row_input_done(acc_inp_done_0),.busy(acc_busy_0),.row_done(acc_row_done_0),
-        .issue_valid(prd_rd_d1_0),.issue_ready(acc_issue_ready_0),
+        .issue_valid(eff_valid_0),.issue_ready(acc_issue_ready_0),
         .lane_valid(alv0),.lane_col_id(alc0),.lane_product(alp0),
         .drain_valid(drain_valid_0),.drain_gaddr(drain_gaddr_0),
         .drain_row_id(drain_row_id_0),.drain_values(drain_values_0)
@@ -858,9 +896,9 @@ module pe_top #(
         .BANK_FIFO_DEPTH(32),.BANK_FIFO_LOG(5),.ROW_W(`A_ROW_ADDR_BITS)
     ) u_row_acc_1 (
         .clk(aclk),.rst_n(aresetn),
-        .row_start((state==PE_CLEAR_ACC)&&comp_sel),.row_id_in(row_idx),.drain_cols(N),
+        .row_start((state==PE_CLEAR_ACC)&&comp_sel),.row_id_in(cur_c_row),.drain_cols(N),
         .row_input_done(acc_inp_done_1),.busy(acc_busy_1),.row_done(acc_row_done_1),
-        .issue_valid(prd_rd_d1_1),.issue_ready(acc_issue_ready_1),
+        .issue_valid(eff_valid_1),.issue_ready(acc_issue_ready_1),
         .lane_valid(alv1),.lane_col_id(alc1),.lane_product(alp1),
         .drain_valid(drain_valid_1),.drain_gaddr(drain_gaddr_1),
         .drain_row_id(drain_row_id_1),.drain_values(drain_values_1)
@@ -875,12 +913,13 @@ module pe_top #(
     end
 
     always @(posedge aclk or negedge aresetn) begin
-        if (!aresetn) begin comp_sel<=0; row_idx<=0; cur_a_off<=0; cur_a_nnz<=0; done<=0; end
+        if (!aresetn) begin comp_sel<=0; row_idx<=0; cur_c_row<=0; cur_a_off<=0; cur_a_nnz<=0; done<=0; end
         else begin
             done<=0;
             case (state)
                 PE_IDLE:          if (start) row_idx<=0;
                 PE_LOAD_ROW_DESC: if (a_desc_valid) begin
+                    cur_c_row<=a_desc_data[`A_ROW_ADDR_BITS-1:0];
                     cur_a_off<={18'b0,a_desc_data[32:19]};
                     cur_a_nnz<={6'b0, a_desc_data[18:9]};
                 end
@@ -908,5 +947,40 @@ module pe_top #(
             PE_DONE:               state_next=PE_DONE;
         endcase
     end
+
+`ifdef SIMULATION
+    // Debug: detect dropped products (issue_valid=1 but issue_ready=0)
+    // and trace slot-0 product enqueues for acc_0
+    integer _dbg_j;
+    always @(posedge aclk) begin
+        // Alert if product arrives but accumulator not ready
+        if (eff_valid_0 && !acc_issue_ready_0) begin
+            $display("[DBG DROP] t=%0t row=%0d acc0 product DROPPED (issue_ready=0)",
+                     $time, row_idx);
+            for (_dbg_j = 0; _dbg_j < 16; _dbg_j = _dbg_j + 1) begin
+                if (alv0[_dbg_j])
+                    $display("[DBG DROP]   lane%0d col_id=%0d val=0x%04x",
+                             _dbg_j, alc0[_dbg_j*9+:9], alp0[_dbg_j*16+:16]);
+            end
+        end
+        if (eff_valid_1 && !acc_issue_ready_1) begin
+            $display("[DBG DROP] t=%0t row=%0d acc1 product DROPPED (issue_ready=0)",
+                     $time, row_idx);
+            for (_dbg_j = 0; _dbg_j < 16; _dbg_j = _dbg_j + 1) begin
+                if (alv1[_dbg_j])
+                    $display("[DBG DROP]   lane%0d col_id=%0d val=0x%04x",
+                             _dbg_j, alc1[_dbg_j*9+:9], alp1[_dbg_j*16+:16]);
+            end
+        end
+        // Trace every slot-0 accumulation for acc_0 (col_id 0..15)
+        if (eff_valid_0 && acc_issue_ready_0) begin
+            for (_dbg_j = 0; _dbg_j < 16; _dbg_j = _dbg_j + 1) begin
+                if (alv0[_dbg_j] && alc0[_dbg_j*9 +: 9] < 16)
+                    $display("[DBG S0] t=%0t row=%0d acc0 enq lane%0d col_id=%0d",
+                             $time, row_idx, _dbg_j, alc0[_dbg_j*9 +: 9]);
+            end
+        end
+    end
+`endif
 
 endmodule
