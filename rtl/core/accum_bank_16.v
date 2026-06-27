@@ -93,8 +93,13 @@ module accum_bank_16 #(
     assign fifo_empty = (fifo_cnt == {(FIFO_DEPTH_LOG+1){1'b0}});
     assign free_count = FIFO_DEPTH[FIFO_DEPTH_LOG:0] - fifo_cnt;
 
-    reg [EPOCH_W-1:0] tag_mem [0:BANK_DEPTH-1];
-    reg [ACC_W-1:0]   acc_mem [0:BANK_DEPTH-1];
+    // Force LUTRAM (distributed) so all 16 banks map identically.  Without an
+    // explicit style Vivado's inference is non-deterministic: some banks keep
+    // acc/tag in RAM32M while one or two per accumulator bail to registers +
+    // address-decode muxes and balloon to ~100k LUTs (the "bank9" outliers).
+    // Both arrays are 1-write / async-read, which LUTRAM supports directly.
+    (* ram_style = "distributed" *) reg [EPOCH_W-1:0] tag_mem [0:BANK_DEPTH-1];
+    (* ram_style = "distributed" *) reg [ACC_W-1:0]   acc_mem [0:BANK_DEPTH-1];
 
     assign drain_tag = tag_mem[drain_rd_addr];
     assign drain_acc = acc_mem[drain_rd_addr];
@@ -192,12 +197,19 @@ module accum_bank_16 #(
         end
     end
 
+    // Single write port (clr walk OR accumulate), synchronous, NO content reset
+    // -> infers LUTRAM cleanly.  Stale tags after a soft reset are scrubbed by
+    // the S_CLEAR_TAGS walk that row_accumulator_16bank now runs out of reset
+    // (clr_active drives clr_idx 0..LAST here), so we no longer need the parallel
+    // rst_n clear that previously forced this array into registers.
     always @(posedge clk) begin
         if (clr_active)
             tag_mem[clr_idx] <= {EPOCH_W{1'b0}};
         else if (s2_valid)
             tag_mem[s2_addr] <= row_epoch;
+    end
 
+    always @(posedge clk) begin
         if (s2_valid)
             acc_mem[s2_addr] <= s2_new_val;
     end

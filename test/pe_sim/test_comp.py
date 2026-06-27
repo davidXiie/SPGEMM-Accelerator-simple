@@ -202,6 +202,44 @@ def count_total_macs(Ad, Ac, Bd, M):
             total += b_desc_nnz(Bd[k])
     return total
 
+#-------------------------------------------------------------------------
+# Elementwise (C = A +/- B) helpers — both inputs are M x N, same shape.
+#-------------------------------------------------------------------------
+def gen_sparse_rows(M, N, density, seed):
+    """Random sparse M x N matrix as a list of rows; each row is [(col, val), ...]
+    with distinct, ascending columns and small positive integer values."""
+    rng = random.Random(seed)
+    k = min(N, max(1, int(round(N * density))))
+    rows = []
+    for r in range(M):
+        cols = sorted(rng.sample(range(N), k))
+        rows.append([(c, rng.randint(1, 7)) for c in cols])
+    return rows
+
+def pack_csr(rows, is_B):
+    """Pack rows into (row_desc, col[], val[]). A uses a_desc{off,nnz,crow},
+    B uses b_desc{off,nnz}; col/val are flat in row order (B banks by index%16)."""
+    desc = []; col = []; val = []; off = 0
+    for r, row in enumerate(rows):
+        for (c, v) in row:
+            col.append(c); val.append(int_to_fp16_bits(v))
+        desc.append(a_desc(off, len(row), r) if not is_B else b_desc(off, len(row)))
+        off += len(row)
+    return desc, col, val
+
+def golden_addsub(A_rows, B_rows, M, N, sub):
+    """FP16 golden for C = A + B (sub=0) or C = A - B (sub=1)."""
+    gf = [[0.0] * N for _ in range(M)]
+    for r in range(M):
+        for (c, v) in A_rows[r]:
+            gf[r][c] = gf[r][c] + v
+        for (c, v) in B_rows[r]:
+            gf[r][c] = gf[r][c] + (-v if sub else v)
+    for r in range(M):
+        for j in range(N):
+            gf[r][j] = fp16_from_bits(int_to_fp16_bits(gf[r][j]))
+    return gf
+
 def compute_golden_c(A_desc, A_col, A_val, B_desc, B_col, B_val, M, N, K):
     """FP16 × FP16 → FP16 accumulate golden C.
 
@@ -311,6 +349,7 @@ async def rst(dut):
     dut.aresetn.value=0; cocotb.start_soon(Clock(dut.aclk,10,unit='ns').start())
     await ClockCycles(dut.aclk,10); dut.aresetn.value=1; await ClockCycles(dut.aclk,5)
     dut.start.value=0; dut.row_count.value=0
+    dut.op_mode.value=0; dut.op_sub.value=0
     dut.a_desc_valid.value=0; dut.a_desc_data.value=0
     dut.a_val_we.value=0; dut.a_col_we.value=0
     dut.b_col_we.value=0; dut.b_val_we.value=0; dut.b_desc_we.value=0
@@ -775,6 +814,8 @@ async def rst_cluster(dut):
     await ClockCycles(dut.aclk,7); dut.aresetn.value=1; await ClockCycles(dut.aclk,5)
     dut.start.value     = 0
     dut.row_count.value = 0
+    dut.op_mode.value   = 0
+    dut.op_sub.value    = 0
     for pid in range(n_pe):
         getattr(dut, f"a_desc_valid_{pid}").value = 0
         getattr(dut, f"a_desc_data_{pid}").value  = 0
@@ -945,3 +986,133 @@ async def test_comp_case1_cluster(dut):
     dut._log.info("  Average RMW util:          %.2f%%", sum(rmw_utils) / 16)
     dut._log.info("=" * 70)
     dut._log.info("%d-PE CLUSTER TEST PASSED", n_pe)
+
+
+#=========================================================================
+# Elementwise (C = A +/- B) — single PE
+#=========================================================================
+@cocotb.test()
+async def test_elementwise_p0(dut):
+    """Single-PE elementwise: C = A + B and C = A - B, both M x N sparse."""
+    M, N = 24, 48
+    A_rows = gen_sparse_rows(M, N, 0.20, seed=1)
+    B_rows = gen_sparse_rows(M, N, 0.20, seed=2)
+    Ad, Ac, Av = pack_csr(A_rows, is_B=False)
+    Bd, Bc, Bv = pack_csr(B_rows, is_B=True)
+
+    A_nnz = sum(len(A_rows[r]) for r in range(M))
+    B_nnz = sum(len(B_rows[r]) for r in range(M))
+    total_elem_ops = A_nnz + B_nnz
+
+    for sub in (0, 1):
+        gf = golden_addsub(A_rows, B_rows, M, N, sub)
+        await rst(dut)
+        dut.M.value = M; dut.K.value = N; dut.N.value = N
+        dut.op_mode.value = 1; dut.op_sub.value = sub
+        await LA_val(dut, Av); await LAcol(dut, Ac)
+        await LBdata(dut, Bc, Bv)
+        await LBdesc(dut, Bd)
+
+        op_name = "SUB" if sub else "ADD"
+        dut._log.info("=" * 70)
+        dut._log.info("ELEMENTWISE %s: C(%d,%d) = A %s B", op_name,
+                      M, N, "-" if sub else "+")
+        cp, cyc, lane_busy, rmw_busy = await run_pe(dut, M, Ad, N, to=2000000)
+        e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp)
+        if e == 0:
+            dut._log.info("Verification: PASSED (%d nz correct, %d z correct)", nz_ok, z_ok)
+        else:
+            dut._log.error("Verification: FAILED (%d mismatches)", e)
+        assert e == 0, f"{e} mismatches (sub={sub})"
+
+        lane_utils = [lb / cyc * 100 if cyc > 0 else 0.0 for lb in lane_busy]
+        rmw_utils  = [rb / cyc * 100 if cyc > 0 else 0.0 for rb in rmw_busy]
+        dut._log.info("--- ELEMENTWISE %s STATISTICS ---", op_name)
+        dut._log.info("  Total cycles:        %d", cyc)
+        dut._log.info("  Total elem ops:      %d  (A_nnz=%d + B_nnz=%d)",
+                      total_elem_ops, A_nnz, B_nnz)
+        dut._log.info("  Throughput:          %.2f ops/cycle", total_elem_ops / cyc if cyc else 0)
+        dut._log.info("  Avg MAC utilization: %.2f%%  (1-lane/op, theoretical max=6.25%%)",
+                      sum(lane_utils) / 16)
+        dut._log.info("  Avg RMW utilization: %.2f%%", sum(rmw_utils) / 16)
+
+    dut._log.info("ELEMENTWISE P0 TEST PASSED")
+
+
+async def reset_pulse_cluster(dut):
+    """Light reset: pulse aresetn (clears tags + FSMs) without restarting the
+    clock or the loaded A/B buffers. Used between back-to-back cluster ops."""
+    dut.aresetn.value = 0
+    await ClockCycles(dut.aclk, 5)
+    dut.aresetn.value = 1
+    await ClockCycles(dut.aclk, 3)
+
+
+@cocotb.test()
+async def test_elementwise_cluster(dut):
+    """N-PE cluster elementwise: C = A + B and C = A - B.
+    A is row-partitioned (round-robin); B is broadcast (full, global-row indexed)."""
+    M, N = 40, 64
+    A_rows = gen_sparse_rows(M, N, 0.20, seed=3)
+    B_rows = gen_sparse_rows(M, N, 0.20, seed=4)
+    Bd, Bc, Bv = pack_csr(B_rows, is_B=True)          # broadcast B
+    Ad_full = [a_desc(0, len(A_rows[r]), r) for r in range(M)]  # for verify (crow=row)
+
+    await rst_cluster(dut)
+    n_pe = int(dut.n_pe_sig.value)
+
+    # Round-robin partition of A rows across PEs (no matrix-feature analysis).
+    pe_desc = [[] for _ in range(n_pe)]
+    pe_val  = [[] for _ in range(n_pe)]
+    pe_col  = [[] for _ in range(n_pe)]
+    for r in range(M):
+        pid = r % n_pe
+        off = len(pe_val[pid])
+        for (c, v) in A_rows[r]:
+            pe_val[pid].append(int_to_fp16_bits(v)); pe_col[pid].append(c)
+        pe_desc[pid].append(a_desc(off, len(A_rows[r]), r))
+    row_counts = [len(pe_desc[p]) for p in range(n_pe)]
+
+    # Total elem ops = A nnz + B nnz (same for ADD and SUB)
+    cl_A_nnz = sum(len(A_rows[r]) for r in range(M))
+    cl_B_nnz = sum(len(B_rows[r]) for r in range(M))
+    cl_total_elem_ops = cl_A_nnz + cl_B_nnz
+
+    dut.M.value = M; dut.K.value = N; dut.N.value = N
+    for pid in range(n_pe):
+        await LA_val_pe(dut, pid, pe_val[pid])
+        await LAcol_pe(dut, pid, pe_col[pid])
+    await LBdata_cluster(dut, Bc, Bv)
+    await LBdesc_cluster(dut, Bd)
+
+    for sub in (0, 1):
+        await reset_pulse_cluster(dut)          # clear tags; A/B buffers persist
+        dut.op_mode.value = 1; dut.op_sub.value = sub
+        gf = golden_addsub(A_rows, B_rows, M, N, sub)
+        op_name = "SUB" if sub else "ADD"
+        dut._log.info("=" * 70)
+        dut._log.info("CLUSTER ELEMENTWISE %s: C(%d,%d), %d PEs, rows=%s",
+                      op_name, M, N, n_pe, row_counts)
+        cp, cyc, lane_busy, rmw_busy = await run_cluster(dut, row_counts, n_pe, pe_desc, N)
+        e, nz_ok, z_ok = verify(dut, M, N, Ad_full, gf, cp)
+        if e == 0:
+            dut._log.info("Verification: PASSED (%d nz, %d z)", nz_ok, z_ok)
+        else:
+            dut._log.error("Verification: FAILED (%d mismatches)", e)
+        assert e == 0, f"{e} mismatches (sub={sub})"
+
+        lane_utils = [lb / (n_pe * cyc) * 100 if cyc > 0 else 0.0 for lb in lane_busy]
+        rmw_utils  = [rb / (n_pe * cyc) * 100 if cyc > 0 else 0.0 for rb in rmw_busy]
+        dut._log.info("--- CLUSTER ELEMENTWISE %s STATISTICS ---", op_name)
+        dut._log.info("  N_PE:                 %d", n_pe)
+        dut._log.info("  Wall-time cycles:     %d", cyc)
+        dut._log.info("  Total elem ops:       %d  (A_nnz=%d + B_nnz=%d)",
+                      cl_total_elem_ops, cl_A_nnz, cl_B_nnz)
+        dut._log.info("  Throughput:           %.2f ops/cycle  (%.2f ops/PE-cycle)",
+                      cl_total_elem_ops / cyc if cyc else 0,
+                      cl_total_elem_ops / (n_pe * cyc) if cyc else 0)
+        dut._log.info("  Avg MAC utilization:  %.2f%%  (1-lane/op, theoretical max=6.25%%)",
+                      sum(lane_utils) / 16)
+        dut._log.info("  Avg RMW utilization:  %.2f%%", sum(rmw_utils) / 16)
+
+    dut._log.info("CLUSTER ELEMENTWISE TEST PASSED")

@@ -60,6 +60,12 @@ module row_accumulator_16bank #(
     reg               input_done_latch;
     reg               clr_triggered;
 
+    // Latches a row_start that arrives while the FSM is still busy with the
+    // post-reset S_CLEAR_TAGS walk, so the start is serviced once we reach
+    // S_IDLE instead of being lost (makes start-immediately-after-reset safe).
+    reg               start_pending;
+    reg [ROW_W-1:0]   pending_row_id;
+
     reg [BANK_ADDR_W-1:0] group_addr;
 
     //=========================================================================
@@ -277,7 +283,14 @@ module row_accumulator_16bank #(
     //=========================================================================
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state            <= S_IDLE;
+            // Reset INTO S_CLEAR_TAGS (not S_IDLE) so every reset scrubs the
+            // tag arrays via the single-write clr walk.  This replaces the old
+            // parallel tag_mem reset inside accum_bank_16 (which forced those
+            // arrays into registers); the walk keeps back-to-back operations
+            // free of cross-operation tag/epoch contamination while letting
+            // tag_mem map to LUTRAM.  The PE's own reset/load sequence is longer
+            // than the 32-cycle walk, so first-row issue is never stalled.
+            state            <= S_CLEAR_TAGS;
             cur_row_id       <= {ROW_W{1'b0}};
             row_epoch        <= {{(EPOCH_W-1){1'b0}}, 1'b1};
             input_done_latch <= 1'b0;
@@ -285,18 +298,28 @@ module row_accumulator_16bank #(
             group_addr       <= {BANK_ADDR_W{1'b0}};
             busy             <= 1'b0;
             row_done         <= 1'b0;
+            start_pending    <= 1'b0;
+            pending_row_id   <= {ROW_W{1'b0}};
         end else begin
             row_done <= 1'b0;
+
+            // Capture a row_start that cannot be serviced yet (FSM not in
+            // S_IDLE, e.g. still finishing the post-reset tag-clear walk).
+            if (row_start && state != S_IDLE) begin
+                start_pending  <= 1'b1;
+                pending_row_id <= row_id_in;
+            end
 
             case (state)
                 S_IDLE: begin
                     busy             <= 1'b0;
                     input_done_latch <= 1'b0;
-                    if (row_start) begin
-                        cur_row_id <= row_id_in;
-                        group_addr <= {BANK_ADDR_W{1'b0}};
-                        busy       <= 1'b1;
-                        state      <= S_ACCUM;
+                    if (row_start || start_pending) begin
+                        cur_row_id    <= row_start ? row_id_in : pending_row_id;
+                        group_addr    <= {BANK_ADDR_W{1'b0}};
+                        busy          <= 1'b1;
+                        start_pending <= 1'b0;
+                        state         <= S_ACCUM;
                     end
                 end
 

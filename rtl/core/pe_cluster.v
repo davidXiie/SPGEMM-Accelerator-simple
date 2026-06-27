@@ -22,6 +22,10 @@ module pe_cluster #(
     input  wire [`MAX_DIM_BITS-1:0] K,
     input  wire [`MAX_DIM_BITS-1:0] N,
 
+    // Operation mode (broadcast to all PEs): 0=SpGEMM, 1=elementwise; op_sub: add/sub
+    input  wire                     op_mode,
+    input  wire                     op_sub,
+
     //=========================================================================
     // A descriptor streaming (per PE, packed)
     input  wire [N_PE-1:0]        a_desc_valid,
@@ -75,6 +79,7 @@ module pe_cluster #(
                 .row_count  (row_count[i*16 +: 16]),
                 .done       (done_vec[i]),
                 .M(M), .K(K), .N(N),
+                .op_mode(op_mode), .op_sub(op_sub),
 
                 .a_desc_valid(a_desc_valid[i]),
                 .a_desc_ready(a_desc_ready[i]),

@@ -18,6 +18,9 @@ module tb_pe_top;
     reg [`MAX_DIM_BITS-1:0] K;
     reg [`MAX_DIM_BITS-1:0] N;
 
+    reg op_mode;   // 0 = SpGEMM, 1 = elementwise
+    reg op_sub;    // elementwise: 0 = add, 1 = subtract
+
     // A row descriptor stream port
     reg        a_desc_valid;
     wire       a_desc_ready;
@@ -66,6 +69,9 @@ module tb_pe_top;
         .M              (M),
         .K              (K),
         .N              (N),
+
+        .op_mode        (op_mode),
+        .op_sub         (op_sub),
 
         .a_desc_valid   (a_desc_valid),
         .a_desc_ready   (a_desc_ready),

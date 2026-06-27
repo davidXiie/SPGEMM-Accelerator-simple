@@ -28,6 +28,9 @@ module tb_pe_cluster;
     reg [N_PE*16-1:0]         row_count;
     reg [`MAX_DIM_BITS-1:0]   M, K, N;
 
+    reg op_mode;   // 0 = SpGEMM, 1 = elementwise
+    reg op_sub;    // elementwise: 0 = add, 1 = subtract
+
     //=========================================================================
     // Per-PE A descriptor streaming — always 8 individual signals.
     // Only indices 0..N_PE-1 are connected to the cluster.
@@ -109,6 +112,7 @@ module tb_pe_cluster;
         .aclk(aclk), .aresetn(aresetn),
         .start(start), .row_count(row_count), .done(done),
         .M(M), .K(K), .N(N),
+        .op_mode(op_mode), .op_sub(op_sub),
 
         .a_desc_valid(a_desc_valid_bus),
         .a_desc_ready(a_desc_ready_bus),
