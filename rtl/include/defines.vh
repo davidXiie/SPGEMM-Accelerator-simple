@@ -72,28 +72,56 @@
 
 //=============================================================================
 // PE Local Buffer Sizes
-//   A buffer (per PE):
-//     A_row_desc_buf: 128 × 64-bit = 1 KB
-//     A_col_buf:      16384 × 16-bit = 32 KB
-//     A_val_buf:      16384 × 16-bit = 32 KB
-//   B buffer (per PE):
-//     B_row_desc_buf: 512 × 64-bit = 4 KB
-//     B_col_buf:      78848 × 16-bit ≈ 154 KB
+//
+// Problem constraints: M, K, N ∈ [16, 512]; A and B density ≤ 30%.
+//   => max A nnz = max B nnz = floor(0.30 * 512 * 512) = 78643.
+//
+// A is row-partitioned across N_PE PEs (balanced by work); B is broadcast so
+// every PE holds the full B.  C is per-PE, local-row indexed (see C bank below).
+//
+//   A buffer (per PE) — holds this PE's share of A (~total / N_PE, balanced):
+//     A_row_desc_buf: 256  × 64-bit  =   2 KB   (>= 512/N_PE rows, +margin)
+//     A_col_buf:      20480 × 16-bit =  40 KB   (>= 78643/N_PE = 19661 nnz)
+//     A_val_buf:      20480 × 16-bit =  40 KB   (BRAM-aligned: 10 x 2K deep)
+//   B buffer (per PE, broadcast = full B):
+//     B_row_desc_buf: 512   × 64-bit =   4 KB   (>= K rows)
+//     B_col_buf:      78848 × 16-bit ≈ 154 KB   (>= 78643 nnz)
 //     B_val_buf:      78848 × 16-bit ≈ 154 KB
-//   acc_buf: 512 × 16-bit = 1 KB
+//   acc_buf: 512 × 16-bit = 1 KB   (>= N output columns)
+//
+// NOTE: per-PE A sizing assumes the host balances the row partition by work;
+// 32768 gives ~1.67x headroom over the ideal 78643/4 = 19661 nnz/PE.
 //=============================================================================
 `define A_ROW_SLOT_PER_PE  256
-`define A_NNZ_SLOT_PER_PE  16384
+`define A_NNZ_SLOT_PER_PE  20480   // >= 78643/N_PE balanced; BRAM-aligned (10*2048)
 `define A_ROW_ADDR_BITS    8       // log2(256)
-`define A_NNZ_ADDR_BITS    14      // log2(16384)
+`define A_NNZ_ADDR_BITS    15      // addr space 32768 >= 20480
 
-`define B_ROW_SLOT         512
-`define B_NNZ_SLOT         78848
+`define B_ROW_SLOT         512     // >= max K
+`define B_NNZ_SLOT         78848   // >= 78643 (16-bank aligned: 4928*16)
 `define B_ROW_ADDR_BITS    9       // log2(512)
-`define B_NNZ_ADDR_BITS    17      // log2(78848)
+`define B_NNZ_ADDR_BITS    17      // 78643 > 2^16, needs 17 bits
 
-`define PE_ACC_DEPTH       512
+`define PE_ACC_DEPTH       512     // >= max N output columns
 `define PE_ACC_ADDR_BITS   9
+
+//=============================================================================
+// C bank — independent on-chip C storage, indexed by LOCAL row.
+//
+//   Each PE stores only the rows it computes, densely (local row 0..count-1),
+//   translated back to the global C row via C_row_map.  Depth is therefore set
+//   by the max A-rows a single PE processes, NOT the global row range —
+//   ~ceil(MAX_M / N_PE) for a balanced cluster.
+//
+//   C_ROW_ADDR_BITS is overridable on the iverilog command line
+//   (-DC_ROW_ADDR_BITS=N) so a cluster build can shrink the bank.
+//     single PE (processes all M rows): 8 → 256 slots
+//     4-PE balanced cluster (~64/PE):   7 → 128 slots (2x smaller)
+//=============================================================================
+`ifndef C_ROW_ADDR_BITS
+`define C_ROW_ADDR_BITS  `A_ROW_ADDR_BITS
+`endif
+`define C_ROW_SLOTS      (1 << `C_ROW_ADDR_BITS)
 
 // Instruction buffer (pre-computed schedule: b_group + a_val_ptr + lane_valid)
 `define INSTR_SLOT         65536

@@ -91,6 +91,16 @@ module tb_pe_cluster;
     reg [`B_ROW_ADDR_BITS-1:0]  b_desc_waddr;
     reg [31:0]                   b_desc_wdata;
 
+    //=========================================================================
+    // C bank read ports (per PE, packed).  Cocotb drives the whole bus,
+    // setting only the target PE's field per read.
+    //=========================================================================
+    localparam C_RD_ADDR_W = `C_ROW_ADDR_BITS + 5;
+    reg  [N_PE-1:0]                  c_rd_en;
+    reg  [N_PE*C_RD_ADDR_W-1:0]     c_rd_addr;
+    wire [N_PE*16*16-1:0]           c_rd_data;
+    wire [N_PE*`MAX_DIM_BITS-1:0]   c_rd_row;
+
 `ifndef COCOTB_SIM
     always #5 aclk = ~aclk;
 `endif
@@ -109,7 +119,10 @@ module tb_pe_cluster;
 
         .b_col_we(b_col_we),   .b_col_waddr(b_col_waddr),   .b_col_wdata(b_col_wdata),
         .b_val_we(b_val_we),   .b_val_waddr(b_val_waddr),   .b_val_wdata(b_val_wdata),
-        .b_desc_we(b_desc_we), .b_desc_waddr(b_desc_waddr), .b_desc_wdata(b_desc_wdata)
+        .b_desc_we(b_desc_we), .b_desc_waddr(b_desc_waddr), .b_desc_wdata(b_desc_wdata),
+
+        .c_rd_en(c_rd_en), .c_rd_addr(c_rd_addr), .c_rd_data(c_rd_data),
+        .c_rd_row(c_rd_row)
     );
 
 `ifdef COCOTB_SIM
