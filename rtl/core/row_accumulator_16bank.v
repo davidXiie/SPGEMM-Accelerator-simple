@@ -36,7 +36,10 @@ module row_accumulator_16bank #(
     output wire [15:0]             drain_valid,
     output wire [COL_W-5:0]       drain_gaddr,
     output wire [ROW_W-1:0]       drain_row_id,
-    output wire [16*ACC_W-1:0]    drain_values
+    output wire [16*ACC_W-1:0]    drain_values,
+    // High for every S_DRAIN beat (one per column-group, incl. all-zero groups),
+    // so the C bank can be fully written (zero-filled) without a separate clear.
+    output wire                    drain_active
 );
 
     localparam BANK_DEPTH  = OUT_COLS / 16;
@@ -259,6 +262,7 @@ module row_accumulator_16bank #(
     assign drain_valid  = (state == S_DRAIN) ?
         {grp_v15,grp_v14,grp_v13,grp_v12,grp_v11,grp_v10,grp_v9,grp_v8,
          grp_v7, grp_v6, grp_v5, grp_v4, grp_v3, grp_v2, grp_v1, grp_v0} : 16'b0;
+    assign drain_active = (state == S_DRAIN);
     assign drain_gaddr  = group_addr;
     assign drain_row_id = cur_row_id;
     assign drain_values = {dacc_b15,dacc_b14,dacc_b13,dacc_b12,dacc_b11,dacc_b10,dacc_b9,dacc_b8,

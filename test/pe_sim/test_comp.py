@@ -39,6 +39,20 @@ def fp16_from_bits(bits):
     """Interpret a 16-bit integer as an IEEE 754 FP16 float."""
     return struct.unpack('<e', struct.pack('<H', bits & 0xFFFF))[0]
 
+def slice_bits(logic_value, lo, width):
+    """Extract a width-bit field starting at bit `lo` from a cocotb value.
+
+    Reads the binary string (MSB-first) directly so unrelated X/Z bits elsewhere
+    in the bus don't break int() conversion; x/z within the field resolve to 0.
+    """
+    s = logic_value.binstr
+    n = len(s)
+    out = 0
+    for k in range(width):
+        if s[n - 1 - (lo + k)] == '1':
+            out |= (1 << k)
+    return out
+
 #-------------------------------------------------------------------------
 # Load competition matrix files
 #-------------------------------------------------------------------------
@@ -309,6 +323,7 @@ async def run_pe(dut, rc, Ad, N, to=10000000):
     """Run PE for rc rows, collect stats, then read C buffer."""
     cocotb.start_soon(stream_a_desc(dut, Ad))
     dut.row_count.value = rc
+    dut.c_rd_en.value = 0; dut.c_rd_addr.value = 0
     dut.start.value=1; await RisingEdge(dut.aclk); dut.start.value=0
     dc=0; lane_busy=[0]*16; rmw_busy=[0]*16
     # PE state names (indices match pe_top.v localparams)
@@ -364,14 +379,6 @@ async def run_pe(dut, rc, Ad, N, to=10000000):
                   dut.u_pe.u_row_acc_1.u_bank13.rmw_busy,
                   dut.u_pe.u_row_acc_1.u_bank14.rmw_busy,
                   dut.u_pe.u_row_acc_1.u_bank15.rmw_busy]
-    drain_v0 = dut.u_pe.drain_valid_0
-    drain_g0 = dut.u_pe.drain_gaddr_0
-    drain_r0 = dut.u_pe.drain_row_id_0
-    drain_d0 = dut.u_pe.drain_values_0
-    drain_v1 = dut.u_pe.drain_valid_1
-    drain_g1 = dut.u_pe.drain_gaddr_1
-    drain_r1 = dut.u_pe.drain_row_id_1
-    drain_d1 = dut.u_pe.drain_values_1
     cp = {}
     prev_gs = -1; prev_s = -1
     task_cnt_at_row_done = []; wait_task_drain_cyc = []
@@ -420,22 +427,6 @@ async def run_pe(dut, rc, Ad, N, to=10000000):
         if s != 4 and prev_s == 4 and wt_start >= 0:
             wait_task_drain_cyc.append(cy - wt_start)
             wt_start = -1
-        for dv_sig, dg_sig, dr_sig, dd_sig in [
-                (drain_v0, drain_g0, drain_r0, drain_d0),
-                (drain_v1, drain_g1, drain_r1, drain_d1)]:
-            dv = int(dv_sig.value)
-            if dv:
-                gaddr  = int(dg_sig.value)
-                row_id = int(dr_sig.value)
-                vals   = int(dd_sig.value)
-                for b in range(16):
-                    if (dv >> b) & 1:
-                        fp16_bits = (vals >> (b * 16)) & 0xFFFF
-                        j = gaddr * 16 + b
-                        v = fp16_from_bits(fp16_bits)
-                        if row_id == 0 and len(cp) < 20:
-                            dut._log.info("  DBG drain row0 cy=%d gaddr=%d b=%d j=%d fp16=0x%04x val=%s", cy, gaddr, b, j, fp16_bits, v)
-                        cp[row_id * C_ROW_STRIDE + j] = v
         prev_gs = gs; prev_s = s
         if int(dut.done.value): dc=cy; break
     else: assert False, f"timeout {to}"
@@ -460,8 +451,41 @@ async def run_pe(dut, rc, Ad, N, to=10000000):
         avg_wt = sum(wait_task_drain_cyc)/len(wait_task_drain_cyc)
         dut._log.info("  PE_WAIT_TASK_DRAIN cycles: avg=%.1f max=%d min=%d",
                       avg_wt, max(wait_task_drain_cyc), min(wait_task_drain_cyc))
+    # Read C back from the independent on-chip C bank (synchronous 1-cycle read).
+    # Proves C physically landed in SRAM rather than being snooped off drain wires.
+    cp = await read_c_bank(dut.c_rd_en, dut.c_rd_addr, dut.c_rd_data, dut.c_rd_row,
+                           dut.aclk, rc, N)
     await ClockCycles(dut.aclk, 10)
     return cp, dc, lane_busy, rmw_busy
+
+async def read_c_bank(c_rd_en, c_rd_addr, c_rd_data, c_rd_row, clk, rc, N):
+    """Read every computed C row out of the on-chip, local-row-indexed C bank.
+
+    Address = {local_row[C_ROW_ADDR_BITS-1:0], gaddr[4:0]}; each read returns 16
+    FP16 lanes (column j = gaddr*16 + lane) plus the slot's global C row from
+    C_row_map (c_rd_row).  Registered read → valid one cycle after the address.
+    Non-zero results go into cp; explicit zeros are dropped so verify() treats
+    them as 0.  The host learns row placement from c_rd_row, not the partition.
+    """
+    cp = {}
+    ngroups = (N + 15) // 16
+    c_rd_en.value = 1
+    for local in range(rc):
+        for g in range(ngroups):
+            c_rd_addr.value = (local << 5) | g
+            await RisingEdge(clk)          # latch address
+            await RisingEdge(clk)          # registered data now valid
+            r    = int(c_rd_row.value)     # global C row for this local slot
+            vals = int(c_rd_data.value)
+            for b in range(16):
+                fp16_bits = (vals >> (b * 16)) & 0xFFFF
+                if fp16_bits == 0:
+                    continue
+                j = g * 16 + b
+                if j < N:
+                    cp[r * C_ROW_STRIDE + j] = fp16_from_bits(fp16_bits)
+    c_rd_en.value = 0
+    return cp
 
 def fp16_ulp_diff(a, b):
     """Return the absolute ULP difference between two FP16 values."""
@@ -506,27 +530,22 @@ async def test_comp_case1_p0(dut):
     Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True)
     assert K == K2, f"K mismatch: {K} vs {K2}"
 
-    col_perm = compute_col_perm_online(Bc, N)
-    Bc_raw = Bc
-    Bc_hw = [col_perm[int(c) & 0xFFFF] for c in Bc]
+    # No permutation: feed raw column IDs; hardware banks by col_id % 16.
+    Bc_hw = [int(c) & 0xFFFF for c in Bc]
 
     gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc_hw, Bv, M, N, K)
 
-    # Bank nnz distribution before/after permutation (use raw Bc, no padding)
+    # Bank nnz distribution (raw col_id % 16, no padding)
     orig_bank_nnz = [0] * 16
-    perm_bank_nnz = [0] * 16
-    for c in Bc_raw:
+    for c in Bc:
         orig_bank_nnz[int(c) & 0xF] += 1
-        perm_bank_nnz[col_perm[int(c) & 0xFFFF] & 0xF] += 1
 
     dut._log.info("=" * 70)
     dut._log.info("COMPETITION TEST: A(%d,%d) × B(%d,%d) → C(%d,%d)", M, K, K2, N, M, N)
     dut._log.info("A: %d rows, %d nnz (%.1f%% density)", M, An, 100*An/(M*K))
     dut._log.info("B: %d rows, %d nnz (%.1f%% density)", K2, Bn, 100*Bn/(K2*N))
-    dut._log.info("Bank nnz (before perm): %s  range=%d",
+    dut._log.info("Bank nnz (raw col%%16): %s  range=%d",
                   orig_bank_nnz, max(orig_bank_nnz) - min(orig_bank_nnz))
-    dut._log.info("Bank nnz (after  perm): %s  range=%d",
-                  perm_bank_nnz, max(perm_bank_nnz) - min(perm_bank_nnz))
     dut._log.info("Golden C: %d non-zero entries", len(gv))
 
     await rst(dut); dut.M.value=M; dut.K.value=K; dut.N.value=N
@@ -627,7 +646,7 @@ async def test_comp_case1_p1(dut):
 # Cluster helpers — packed-bus interface, N_PE-parametric
 #
 # Width constants must stay in sync with defines.vh:
-_A_NNZ_ADDR_W  = 14   # A_NNZ_ADDR_BITS
+_A_NNZ_ADDR_W  = 15   # A_NNZ_ADDR_BITS
 _DATA_W        = 16   # DATA_WIDTH (FP16 input)
 _COL_W         = 9    # log2(MAX_N=512), matches ACC_COL_W in pe_top.v
 #=========================================================================
@@ -835,22 +854,35 @@ async def run_cluster(dut, row_counts, n_pe, pe_desc, N, to=50000000):
             for i in range(16):
                 if int(rmw_acc0[pid][i].value) or int(rmw_acc1[pid][i].value):
                     rmw_busy[i] += 1
-            dv0s, dg0s, dr0s, dd0s, dv1s, dg1s, dr1s, dd1s = drain_sigs[pid]
-            for dv_sig, dg_sig, dr_sig, dd_sig in [
-                    (dv0s, dg0s, dr0s, dd0s), (dv1s, dg1s, dr1s, dd1s)]:
-                dv = int(dv_sig.value)
-                if dv:
-                    gaddr  = int(dg_sig.value)
-                    row_id = int(dr_sig.value)
-                    vals   = int(dd_sig.value)
-                    for b in range(16):
-                        if (dv >> b) & 1:
-                            fp16_bits = (vals >> (b * 16)) & 0xFFFF
-                            j = gaddr * 16 + b
-                            cp[row_id * C_ROW_STRIDE + j] = fp16_from_bits(fp16_bits)
         if int(dut.done.value): dc=cy; break
     else:
         assert False, f"cluster timeout at {to} cycles"
+
+    # Read each PE's independent local-row-indexed C bank through the packed
+    # read port.  Local slot i -> global row via c_rd_row (C_row_map).
+    # Derive the per-PE field widths from the actual bus widths so this stays
+    # correct regardless of the build's C_ROW_ADDR_BITS override.
+    C_RD_ADDR_W  = len(dut.c_rd_addr) // n_pe
+    MAX_DIM_BITS = len(dut.c_rd_row)  // n_pe
+    ngroups = (N + 15) // 16
+    for pid in range(n_pe):
+        for local in range(row_counts[pid]):
+            for g in range(ngroups):
+                dut.c_rd_en.value   = 1 << pid
+                dut.c_rd_addr.value = ((local << 5) | g) << (pid * C_RD_ADDR_W)
+                await RisingEdge(dut.aclk)   # latch address
+                await RisingEdge(dut.aclk)   # registered data valid
+                # Only PE pid's slice is driven; others may be X → x/z resolve to 0.
+                r    = slice_bits(dut.c_rd_row.value,  pid * MAX_DIM_BITS, MAX_DIM_BITS)
+                vals = slice_bits(dut.c_rd_data.value, pid * 16 * 16, 16 * 16)
+                for b in range(16):
+                    fp16_bits = (vals >> (b * 16)) & 0xFFFF
+                    if fp16_bits == 0:
+                        continue
+                    j = g * 16 + b
+                    if j < N:
+                        cp[r * C_ROW_STRIDE + j] = fp16_from_bits(fp16_bits)
+    dut.c_rd_en.value = 0
 
     await ClockCycles(dut.aclk, 10)
     return cp, dc, lane_busy, rmw_busy

@@ -46,7 +46,16 @@ module pe_top #(
 
     input  wire                          b_desc_we,
     input  wire [`B_ROW_ADDR_BITS-1:0]  b_desc_waddr,
-    input  wire [31:0]                   b_desc_wdata
+    input  wire [31:0]                   b_desc_wdata,
+
+    // C buffer read port (independent C bank; synchronous 1-cycle read).
+    // Address = {local_row[C_ROW_ADDR_BITS-1:0], gaddr[4:0]}; data = 16 FP16
+    // lanes for column group gaddr (column j = gaddr*16 + lane).  c_rd_row
+    // returns the global C row id of this local slot (from C_row_map).
+    input  wire                          c_rd_en,
+    input  wire [`C_ROW_ADDR_BITS+4:0]  c_rd_addr,
+    output reg  [16*16-1:0]              c_rd_data,
+    output reg  [`MAX_DIM_BITS-1:0]      c_rd_row
 );
 
     //=========================================================================
@@ -153,8 +162,7 @@ module pe_top #(
     reg [2:0] state, state_next;
 
     reg comp_sel;
-    reg [`A_ROW_ADDR_BITS-1:0] row_idx;
-    reg [`A_ROW_ADDR_BITS-1:0] cur_c_row;
+    reg [`A_ROW_ADDR_BITS-1:0] row_idx;     // local row index (dense, per PE)
     reg [31:0]                 cur_a_off;
     reg [15:0]                 cur_a_nnz;
 
@@ -765,6 +773,7 @@ module pe_top #(
     wire [4:0]  drain_gaddr_0,drain_gaddr_1;
     wire [`A_ROW_ADDR_BITS-1:0] drain_row_id_0,drain_row_id_1;
     wire [16*16-1:0] drain_values_0,drain_values_1;
+    wire drain_active_0,drain_active_1;
 
     wire other_acc_busy = comp_sel ? acc_busy_0 : acc_busy_1;
 
@@ -883,12 +892,13 @@ module pe_top #(
         .BANK_FIFO_DEPTH(32),.BANK_FIFO_LOG(5),.ROW_W(`A_ROW_ADDR_BITS)
     ) u_row_acc_0 (
         .clk(aclk),.rst_n(aresetn),
-        .row_start((state==PE_CLEAR_ACC)&&!comp_sel),.row_id_in(cur_c_row),.drain_cols(N),
+        .row_start((state==PE_CLEAR_ACC)&&!comp_sel),.row_id_in(row_idx),.drain_cols(N),
         .row_input_done(acc_inp_done_0),.busy(acc_busy_0),.row_done(acc_row_done_0),
         .issue_valid(eff_valid_0),.issue_ready(acc_issue_ready_0),
         .lane_valid(alv0),.lane_col_id(alc0),.lane_product(alp0),
         .drain_valid(drain_valid_0),.drain_gaddr(drain_gaddr_0),
-        .drain_row_id(drain_row_id_0),.drain_values(drain_values_0)
+        .drain_row_id(drain_row_id_0),.drain_values(drain_values_0),
+        .drain_active(drain_active_0)
     );
 
     row_accumulator_16bank #(
@@ -896,13 +906,76 @@ module pe_top #(
         .BANK_FIFO_DEPTH(32),.BANK_FIFO_LOG(5),.ROW_W(`A_ROW_ADDR_BITS)
     ) u_row_acc_1 (
         .clk(aclk),.rst_n(aresetn),
-        .row_start((state==PE_CLEAR_ACC)&&comp_sel),.row_id_in(cur_c_row),.drain_cols(N),
+        .row_start((state==PE_CLEAR_ACC)&&comp_sel),.row_id_in(row_idx),.drain_cols(N),
         .row_input_done(acc_inp_done_1),.busy(acc_busy_1),.row_done(acc_row_done_1),
         .issue_valid(eff_valid_1),.issue_ready(acc_issue_ready_1),
         .lane_valid(alv1),.lane_col_id(alc1),.lane_product(alp1),
         .drain_valid(drain_valid_1),.drain_gaddr(drain_gaddr_1),
-        .drain_row_id(drain_row_id_1),.drain_values(drain_values_1)
+        .drain_row_id(drain_row_id_1),.drain_values(drain_values_1),
+        .drain_active(drain_active_1)
     );
+
+    //=========================================================================
+    // C bank — independent on-chip C storage (separate from A/B buffers).
+    //
+    //   Indexed by LOCAL row (the accumulator's drain_row_id is now row_idx,
+    //   a dense 0..rows_per_PE-1 counter), so the bank depth is set by the
+    //   number of rows THIS PE computes, not the global row range.  C_row_map
+    //   records the global C row for each local slot so the host can translate
+    //   on readback.
+    //
+    //   16 sub-banks (parallel with the 16 accumulator banks).  On every drain
+    //   beat the full column group is written: bank b gets its accumulated
+    //   value, or 0 when drain_valid[b]=0.  Because S_DRAIN visits every group
+    //   0..ceil(N/16)-1 (incl. all-zero groups), each computed C row is fully
+    //   written with no separate clear pass.
+    //
+    //   Address = {local_row[C_ROW_ADDR_BITS-1:0], gaddr[4:0]}.
+    //   The two ping-pong accumulators drain serially (guarded by
+    //   other_acc_busy), so a priority mux on drain_active is race-free.
+    //=========================================================================
+    localparam C_BANK_ADDR_W = `C_ROW_ADDR_BITS + 5;     // local_row + gaddr
+    localparam C_BANK_DEPTH  = 1 << C_BANK_ADDR_W;
+
+    reg [15:0]               C_bank [0:15][0:C_BANK_DEPTH-1];
+    reg [`MAX_DIM_BITS-1:0]  C_row_map [0:`C_ROW_SLOTS-1];   // local → global C row
+
+    // Record the global row for each local slot as descriptors are loaded.
+    // Descriptor c_row field is a_desc_data[8:0] (nnz begins at bit 9).
+    always @(posedge aclk) begin
+        if ((state==PE_LOAD_ROW_DESC) && a_desc_valid)
+            C_row_map[row_idx[`C_ROW_ADDR_BITS-1:0]] <= {{(`MAX_DIM_BITS-9){1'b0}}, a_desc_data[8:0]};
+    end
+
+    wire                        c_wr_en   = drain_active_0 | drain_active_1;
+    wire                        c_wr_sel0 = drain_active_0;
+    wire [`C_ROW_ADDR_BITS-1:0] c_wr_row  = c_wr_sel0 ? drain_row_id_0[`C_ROW_ADDR_BITS-1:0]
+                                                      : drain_row_id_1[`C_ROW_ADDR_BITS-1:0];
+    wire [4:0]                  c_wr_gaddr = c_wr_sel0 ? drain_gaddr_0  : drain_gaddr_1;
+    wire [15:0]                 c_wr_dv    = c_wr_sel0 ? drain_valid_0  : drain_valid_1;
+    wire [16*16-1:0]            c_wr_dat   = c_wr_sel0 ? drain_values_0 : drain_values_1;
+    wire [C_BANK_ADDR_W-1:0]    c_wr_addr  = {c_wr_row, c_wr_gaddr};
+
+    // Registered map read (same address timing as the C bank data read).
+    always @(posedge aclk) begin
+        if (c_rd_en)
+            c_rd_row <= C_row_map[c_rd_addr[C_BANK_ADDR_W-1:5]];
+    end
+
+    genvar cb;
+    generate
+        for (cb = 0; cb < 16; cb = cb + 1) begin : gen_c_bank
+            always @(posedge aclk) begin
+                if (c_wr_en)
+                    C_bank[cb][c_wr_addr] <= c_wr_dv[cb] ? c_wr_dat[cb*16 +: 16]
+                                                         : 16'h0000;
+            end
+            always @(posedge aclk) begin
+                if (c_rd_en)
+                    c_rd_data[cb*16 +: 16] <= C_bank[cb][c_rd_addr];
+            end
+        end
+    endgenerate
 
     //=========================================================================
     // Main FSM
@@ -913,13 +986,12 @@ module pe_top #(
     end
 
     always @(posedge aclk or negedge aresetn) begin
-        if (!aresetn) begin comp_sel<=0; row_idx<=0; cur_c_row<=0; cur_a_off<=0; cur_a_nnz<=0; done<=0; end
+        if (!aresetn) begin comp_sel<=0; row_idx<=0; cur_a_off<=0; cur_a_nnz<=0; done<=0; end
         else begin
             done<=0;
             case (state)
                 PE_IDLE:          if (start) row_idx<=0;
                 PE_LOAD_ROW_DESC: if (a_desc_valid) begin
-                    cur_c_row<=a_desc_data[`A_ROW_ADDR_BITS-1:0];
                     cur_a_off<={18'b0,a_desc_data[32:19]};
                     cur_a_nnz<={6'b0, a_desc_data[18:9]};
                 end

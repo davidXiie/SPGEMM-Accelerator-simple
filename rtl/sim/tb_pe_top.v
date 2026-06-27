@@ -46,10 +46,11 @@ module tb_pe_top;
     reg [`B_ROW_ADDR_BITS-1:0] b_desc_waddr;
     reg [31:0] b_desc_wdata;
 
-    // C buffer read port (disabled — c_bank removed)
-    // reg         c_rd_en;
-    // reg  [16:0] c_rd_addr;
-    // wire [15:0]  c_rd_data;    // FP16 output
+    // C buffer read port (independent C bank, local-row indexed)
+    reg                          c_rd_en;
+    reg  [`C_ROW_ADDR_BITS+4:0]  c_rd_addr;   // {local_row, gaddr}
+    wire [16*16-1:0]             c_rd_data;   // 16 FP16 lanes per group
+    wire [`MAX_DIM_BITS-1:0]     c_rd_row;    // global C row of this local slot
 
 
 `ifndef COCOTB_SIM
@@ -87,11 +88,12 @@ module tb_pe_top;
 
         .b_desc_we      (b_desc_we),
         .b_desc_waddr   (b_desc_waddr),
-        .b_desc_wdata   (b_desc_wdata)
+        .b_desc_wdata   (b_desc_wdata),
 
-        // .c_rd_en        (c_rd_en),
-        // .c_rd_addr      (c_rd_addr),
-        // .c_rd_data      (c_rd_data)
+        .c_rd_en        (c_rd_en),
+        .c_rd_addr      (c_rd_addr),
+        .c_rd_data      (c_rd_data),
+        .c_rd_row       (c_rd_row)
     );
 
 `ifdef COCOTB_SIM
