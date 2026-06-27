@@ -25,6 +25,13 @@ module pe_top #(
     input  wire [`MAX_DIM_BITS-1:0]  K,
     input  wire [`MAX_DIM_BITS-1:0]  N,
 
+    // Operation mode: 0 = SpGEMM (C=A*B); 1 = elementwise (C=A op B).
+    //   op_sub: in elementwise mode 0 = add (A+B), 1 = subtract (A-B).
+    // In elementwise mode each input element is streamed straight into the row
+    // accumulator (scatter-add by column); the MAC passes it through x(+/-1.0).
+    input  wire                          op_mode,
+    input  wire                          op_sub,
+
     input  wire                          a_desc_valid,
     output wire                          a_desc_ready,
     input  wire [35:0]                   a_desc_data,
@@ -163,6 +170,7 @@ module pe_top #(
 
     reg comp_sel;
     reg [`A_ROW_ADDR_BITS-1:0] row_idx;     // local row index (dense, per PE)
+    reg [`MAX_DIM_BITS-1:0]    cur_c_row;    // global C row (elementwise B index)
     reg [31:0]                 cur_a_off;
     reg [15:0]                 cur_a_nnz;
 
@@ -334,8 +342,9 @@ module pe_top #(
     wire [`PTR_TASK_WIDTH-1:0] ptr_fifo_wr_data =
         {gen_a_val, gen_b_off[16:0], gen_num_groups[6:0]};
 
-    wire task_group_wr_en = (g2_want_emit || g2_want_flush) && !task_fifo_full;
-    wire [`TASK_GROUP_WIDTH-1:0] task_group_wr_data =
+    // ---- SpGEMM (Gen2) task-group source ----
+    wire gen2_task_wr_en = (g2_want_emit || g2_want_flush) && !task_fifo_full;
+    wire [`TASK_GROUP_WIDTH-1:0] gen2_task_data =
         g2_want_flush
         ? {carry2_task[0],carry2_task[14],carry2_task[13],carry2_task[12],
            carry2_task[11],carry2_task[10],carry2_task[9],carry2_task[8],
@@ -346,6 +355,95 @@ module pe_top #(
            g2_sg7,g2_sg6,g2_sg5,g2_sg4,g2_sg3,g2_sg2,g2_sg1,g2_sg0,16'hFFFF};
 
     //=========================================================================
+    // Elementwise generator (op_mode=1): stream A[row] then B[row] elements
+    // straight into task_fifo as one-lane groups {value, +/-1.0, col}.  The MAC
+    // passes value x(+/-1.0) through; the row accumulator scatter-adds by column
+    // => C = A +/- B.  B's per-row descriptor is loaded into B_desc_buf[row_idx]
+    // by the host (same {b_off[26:10], b_nnz[9:0]} layout as SpGEMM).
+    //=========================================================================
+    localparam ELEM_IDLE=2'd0, ELEM_A=2'd1, ELEM_B=2'd2, ELEM_DONE=2'd3;
+    reg  [1:0]  elem_state;
+    reg  [15:0] elem_j;
+
+    wire [31:0] elem_b_desc = B_desc_buf[cur_c_row];  // global row (B is broadcast)
+    wire [16:0] elem_b_off  = elem_b_desc[26:10];
+    wire [15:0] elem_b_nnz  = {6'b0, elem_b_desc[9:0]};
+
+    // Phase A element (A_val/A_col single-port buffers)
+    wire [`A_NNZ_ADDR_BITS-1:0] elem_a_addr =
+        cur_a_off[`A_NNZ_ADDR_BITS-1:0] + elem_j[`A_NNZ_ADDR_BITS-1:0];
+    wire [15:0] elem_a_val = A_val_buf[elem_a_addr];
+    wire [15:0] elem_a_col = A_col_buf[elem_a_addr];
+
+    // Phase B element: abs index = elem_b_off + elem_j; bank = abs%16, addr = abs/16
+    wire [16:0] elem_b_abs  = elem_b_off + {1'b0, elem_j};
+    wire [3:0]  elem_b_bank = elem_b_abs[3:0];
+    wire [13:0] elem_b_addr = {1'b0, elem_b_abs[16:4]};   // abs/16 (13-bit)
+    wire [15:0] elem_b_col =
+        (elem_b_bank==4'd0 )?B_col_b0 [elem_b_addr]:(elem_b_bank==4'd1 )?B_col_b1 [elem_b_addr]:
+        (elem_b_bank==4'd2 )?B_col_b2 [elem_b_addr]:(elem_b_bank==4'd3 )?B_col_b3 [elem_b_addr]:
+        (elem_b_bank==4'd4 )?B_col_b4 [elem_b_addr]:(elem_b_bank==4'd5 )?B_col_b5 [elem_b_addr]:
+        (elem_b_bank==4'd6 )?B_col_b6 [elem_b_addr]:(elem_b_bank==4'd7 )?B_col_b7 [elem_b_addr]:
+        (elem_b_bank==4'd8 )?B_col_b8 [elem_b_addr]:(elem_b_bank==4'd9 )?B_col_b9 [elem_b_addr]:
+        (elem_b_bank==4'd10)?B_col_b10[elem_b_addr]:(elem_b_bank==4'd11)?B_col_b11[elem_b_addr]:
+        (elem_b_bank==4'd12)?B_col_b12[elem_b_addr]:(elem_b_bank==4'd13)?B_col_b13[elem_b_addr]:
+        (elem_b_bank==4'd14)?B_col_b14[elem_b_addr]:B_col_b15[elem_b_addr];
+    wire [15:0] elem_b_val =
+        (elem_b_bank==4'd0 )?B_val_b0 [elem_b_addr]:(elem_b_bank==4'd1 )?B_val_b1 [elem_b_addr]:
+        (elem_b_bank==4'd2 )?B_val_b2 [elem_b_addr]:(elem_b_bank==4'd3 )?B_val_b3 [elem_b_addr]:
+        (elem_b_bank==4'd4 )?B_val_b4 [elem_b_addr]:(elem_b_bank==4'd5 )?B_val_b5 [elem_b_addr]:
+        (elem_b_bank==4'd6 )?B_val_b6 [elem_b_addr]:(elem_b_bank==4'd7 )?B_val_b7 [elem_b_addr]:
+        (elem_b_bank==4'd8 )?B_val_b8 [elem_b_addr]:(elem_b_bank==4'd9 )?B_val_b9 [elem_b_addr]:
+        (elem_b_bank==4'd10)?B_val_b10[elem_b_addr]:(elem_b_bank==4'd11)?B_val_b11[elem_b_addr]:
+        (elem_b_bank==4'd12)?B_val_b12[elem_b_addr]:(elem_b_bank==4'd13)?B_val_b13[elem_b_addr]:
+        (elem_b_bank==4'd14)?B_val_b14[elem_b_addr]:B_val_b15[elem_b_addr];
+
+    wire        elem_in_b = (elem_state==ELEM_B);
+    wire [15:0] elem_val  = elem_in_b ? elem_b_val      : elem_a_val;
+    wire [8:0]  elem_col  = elem_in_b ? elem_b_col[8:0] : elem_a_col[8:0];
+    // a_val operand = +1.0 (0x3C00); -1.0 (0xBC00) only for B elements when subtracting
+    wire [15:0] elem_coef = (elem_in_b && op_sub) ? 16'hBC00 : 16'h3C00;
+    wire [`TASK_WIDTH-1:0] elem_task = {elem_val, elem_coef, elem_col};
+
+    wire elem_a_more = (elem_j < cur_a_nnz);
+    wire elem_b_more = (elem_j < elem_b_nnz);
+    wire elem_wr_en  = ((elem_state==ELEM_A && elem_a_more) ||
+                        (elem_state==ELEM_B && elem_b_more)) && !task_fifo_full;
+    wire [`TASK_GROUP_WIDTH-1:0] elem_task_group =
+        { {((`N_MAC-1)*`TASK_WIDTH){1'b0}}, elem_task, 16'h0001 };
+
+    always @(posedge aclk or negedge aresetn) begin
+        if (!aresetn) begin elem_state<=ELEM_IDLE; elem_j<=0; end
+        else case (elem_state)
+            ELEM_IDLE: if (state==PE_CLEAR_ACC && op_mode) begin
+                elem_j <= 0;
+                elem_state <= (cur_a_nnz!=0) ? ELEM_A :
+                              (elem_b_nnz!=0) ? ELEM_B : ELEM_DONE;
+            end
+            ELEM_A: if (!task_fifo_full) begin
+                if (elem_j+16'd1 >= cur_a_nnz) begin
+                    elem_j     <= 0;
+                    elem_state <= (elem_b_nnz!=0) ? ELEM_B : ELEM_DONE;
+                end else elem_j <= elem_j + 16'd1;
+            end
+            ELEM_B: if (!task_fifo_full) begin
+                if (elem_j+16'd1 >= elem_b_nnz) elem_state <= ELEM_DONE;
+                else elem_j <= elem_j + 16'd1;
+            end
+            ELEM_DONE: if (state==PE_WAIT_TASK_DRAIN || state==PE_NEXT_ROW ||
+                           state==PE_WAIT_PRODUCT_DRAIN)
+                elem_state <= ELEM_IDLE;
+            default: elem_state <= ELEM_IDLE;
+        endcase
+    end
+
+    // ---- task_fifo write source mux ----
+    wire task_group_wr_en = op_mode ? elem_wr_en : gen2_task_wr_en;
+    wire [`TASK_GROUP_WIDTH-1:0] task_group_wr_data = op_mode ? elem_task_group : gen2_task_data;
+
+    wire row_gen_done = op_mode ? (elem_state==ELEM_DONE) : (gen_state==GEN_ROW_DONE);
+
+    //=========================================================================
     // Generator sub-FSM sequential
     //=========================================================================
     always @(posedge aclk or negedge aresetn) begin
@@ -353,7 +451,7 @@ module pe_top #(
             gen_state<=GEN_IDLE; gen_t<=0; gen_a_val<=0; gen_b_off<=0; gen_b_nnz<=0;
         end else case (gen_state)
             GEN_IDLE: begin
-                if (state == PE_CLEAR_ACC) begin
+                if (state == PE_CLEAR_ACC && !op_mode) begin
                     gen_t <= 0;
                     gen_state <= (cur_a_nnz==0) ? GEN_ROW_DONE : GEN_FETCH;
                 end
@@ -887,9 +985,14 @@ module pe_top #(
         eff_dat_1[`N_MAC+3 *`PRODUCT_WIDTH+:16],eff_dat_1[`N_MAC+2 *`PRODUCT_WIDTH+:16],
         eff_dat_1[`N_MAC+1 *`PRODUCT_WIDTH+:16],eff_dat_1[`N_MAC+0 *`PRODUCT_WIDTH+:16]};
 
+    // BANK_FIFO_DEPTH=16 is the minimum safe depth: a single task group can put
+    // at most N_MAC=16 products into one bank, and issue_ready gates on
+    // free_count>=per-bank-count, so 16 lets a full burst land into an empty bank
+    // (depth<16 would deadlock).  16 vs 32 halves the multi-write-port FIFO's
+    // register+mux cost (which cannot map to RAM) at a small throughput cost.
     row_accumulator_16bank #(
         .OUT_COLS(512),.COL_W(9),.PROD_W(16),.ACC_W(16),.EPOCH_W(16),
-        .BANK_FIFO_DEPTH(32),.BANK_FIFO_LOG(5),.ROW_W(`A_ROW_ADDR_BITS)
+        .BANK_FIFO_DEPTH(16),.BANK_FIFO_LOG(4),.ROW_W(`A_ROW_ADDR_BITS)
     ) u_row_acc_0 (
         .clk(aclk),.rst_n(aresetn),
         .row_start((state==PE_CLEAR_ACC)&&!comp_sel),.row_id_in(row_idx),.drain_cols(N),
@@ -903,7 +1006,7 @@ module pe_top #(
 
     row_accumulator_16bank #(
         .OUT_COLS(512),.COL_W(9),.PROD_W(16),.ACC_W(16),.EPOCH_W(16),
-        .BANK_FIFO_DEPTH(32),.BANK_FIFO_LOG(5),.ROW_W(`A_ROW_ADDR_BITS)
+        .BANK_FIFO_DEPTH(16),.BANK_FIFO_LOG(4),.ROW_W(`A_ROW_ADDR_BITS)
     ) u_row_acc_1 (
         .clk(aclk),.rst_n(aresetn),
         .row_start((state==PE_CLEAR_ACC)&&comp_sel),.row_id_in(row_idx),.drain_cols(N),
@@ -989,12 +1092,13 @@ module pe_top #(
     end
 
     always @(posedge aclk or negedge aresetn) begin
-        if (!aresetn) begin comp_sel<=0; row_idx<=0; cur_a_off<=0; cur_a_nnz<=0; done<=0; end
+        if (!aresetn) begin comp_sel<=0; row_idx<=0; cur_c_row<=0; cur_a_off<=0; cur_a_nnz<=0; done<=0; end
         else begin
             done<=0;
             case (state)
                 PE_IDLE:          if (start) row_idx<=0;
                 PE_LOAD_ROW_DESC: if (a_desc_valid) begin
+                    cur_c_row<={{(`MAX_DIM_BITS-9){1'b0}}, a_desc_data[8:0]};
                     cur_a_off<={18'b0,a_desc_data[32:19]};
                     cur_a_nnz<={6'b0, a_desc_data[18:9]};
                 end
@@ -1011,9 +1115,9 @@ module pe_top #(
             PE_LOAD_ROW_DESC:      if (a_desc_valid) state_next=PE_CLEAR_ACC;
             PE_CLEAR_ACC:                             state_next=PE_STREAM_INSTRS;
             PE_STREAM_INSTRS: begin
-                if (gen_state==GEN_ROW_DONE && task_fifo_empty && !g2_want_flush && ptr_fifo_empty && exec_idle)
+                if (row_gen_done && task_fifo_empty && !g2_want_flush && ptr_fifo_empty && exec_idle)
                     state_next=PE_WAIT_PRODUCT_DRAIN;
-                else if (gen_state==GEN_ROW_DONE)
+                else if (row_gen_done)
                     state_next=PE_WAIT_TASK_DRAIN;
             end
             PE_WAIT_TASK_DRAIN:    if (task_fifo_empty&&!g2_want_flush&&ptr_fifo_empty&&exec_idle) state_next=PE_WAIT_PRODUCT_DRAIN;
