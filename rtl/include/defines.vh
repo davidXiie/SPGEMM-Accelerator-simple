@@ -114,12 +114,12 @@
 //   ~ceil(MAX_M / N_PE) for a balanced cluster.
 //
 //   C_ROW_ADDR_BITS is overridable on the iverilog command line
-//   (-DC_ROW_ADDR_BITS=N) so a cluster build can shrink the bank.
-//     single PE (processes all M rows): 8 → 256 slots
-//     4-PE balanced cluster (~64/PE):   7 → 128 slots (2x smaller)
+//   (-DC_ROW_ADDR_BITS=N).  Default is the CLUSTER configuration:
+//     cluster (balanced, ceil(512/N_PE)=128 rows/PE): 7 → 128 slots (default)
+//     single PE (processes all M rows, up to 256):     8 → 256 slots (override)
 //=============================================================================
 `ifndef C_ROW_ADDR_BITS
-`define C_ROW_ADDR_BITS  `A_ROW_ADDR_BITS
+`define C_ROW_ADDR_BITS  7
 `endif
 `define C_ROW_SLOTS      (1 << `C_ROW_ADDR_BITS)
 
