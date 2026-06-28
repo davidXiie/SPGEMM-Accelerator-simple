@@ -21,7 +21,7 @@
 //=============================================================================
 // PE & MAC Configuration
 //=============================================================================
-`define N_PE          4      // cluster size — change here to scale
+`define N_PE          3      // cluster size — change here to scale
 `define N_MAC         16
 `define N_MAC_BITS    4       // log2(16)
 
@@ -93,9 +93,9 @@
 // 32768 gives ~1.67x headroom over the ideal 78643/4 = 19661 nnz/PE.
 //=============================================================================
 `define A_ROW_SLOT_PER_PE  256
-`define A_NNZ_SLOT_PER_PE  20480   // >= 78643/N_PE balanced; BRAM-aligned (10*2048)
+`define A_NNZ_SLOT_PER_PE  28672   // >= 78643/N_PE(=26214 at N_PE=3); BRAM-aligned (14*2048)
 `define A_ROW_ADDR_BITS    8       // log2(256)
-`define A_NNZ_ADDR_BITS    15      // addr space 32768 >= 20480
+`define A_NNZ_ADDR_BITS    15      // addr space 32768 >= 28672
 
 `define B_ROW_SLOT         512     // >= max K
 `define B_NNZ_SLOT         78848   // >= 78643 (16-bank aligned: 4928*16)

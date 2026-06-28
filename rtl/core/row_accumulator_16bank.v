@@ -69,104 +69,110 @@ module row_accumulator_16bank #(
     reg [BANK_ADDR_W-1:0] group_addr;
 
     //=========================================================================
-    // Bundle routing — bank = col_id[3:0]
+    // Per-lane fields: bank = col[3:0], in-bank addr = col[COL_W-1:4]
     //=========================================================================
-    wire [3:0] bid0  = lane_col_id[0 *COL_W +: 4];
-    wire [3:0] bid1  = lane_col_id[1 *COL_W +: 4];
-    wire [3:0] bid2  = lane_col_id[2 *COL_W +: 4];
-    wire [3:0] bid3  = lane_col_id[3 *COL_W +: 4];
-    wire [3:0] bid4  = lane_col_id[4 *COL_W +: 4];
-    wire [3:0] bid5  = lane_col_id[5 *COL_W +: 4];
-    wire [3:0] bid6  = lane_col_id[6 *COL_W +: 4];
-    wire [3:0] bid7  = lane_col_id[7 *COL_W +: 4];
-    wire [3:0] bid8  = lane_col_id[8 *COL_W +: 4];
-    wire [3:0] bid9  = lane_col_id[9 *COL_W +: 4];
-    wire [3:0] bid10 = lane_col_id[10*COL_W +: 4];
-    wire [3:0] bid11 = lane_col_id[11*COL_W +: 4];
-    wire [3:0] bid12 = lane_col_id[12*COL_W +: 4];
-    wire [3:0] bid13 = lane_col_id[13*COL_W +: 4];
-    wire [3:0] bid14 = lane_col_id[14*COL_W +: 4];
-    wire [3:0] bid15 = lane_col_id[15*COL_W +: 4];
+    wire [3:0]             lbid  [0:15];
+    wire [BANK_ADDR_W-1:0] laddr [0:15];
+    wire [PROD_W-1:0]      lprod [0:15];
+    genvar gi;
+    generate for (gi = 0; gi < 16; gi = gi + 1) begin : g_lane
+        assign lbid [gi] = lane_col_id[gi*COL_W   +: 4];
+        assign laddr[gi] = lane_col_id[gi*COL_W+4 +: BANK_ADDR_W];
+        assign lprod[gi] = lane_product[gi*PROD_W +: PROD_W];
+    end endgenerate
 
-    // Products-per-bank counts (5-bit, max 16)
-    `define MC_SUM(B) \
-        {4'b0,lane_valid[0]&(bid0==(B))}+{4'b0,lane_valid[1]&(bid1==(B))}\
-       +{4'b0,lane_valid[2]&(bid2==(B))}+{4'b0,lane_valid[3]&(bid3==(B))}\
-       +{4'b0,lane_valid[4]&(bid4==(B))}+{4'b0,lane_valid[5]&(bid5==(B))}\
-       +{4'b0,lane_valid[6]&(bid6==(B))}+{4'b0,lane_valid[7]&(bid7==(B))}\
-       +{4'b0,lane_valid[8]&(bid8==(B))}+{4'b0,lane_valid[9]&(bid9==(B))}\
-       +{4'b0,lane_valid[10]&(bid10==(B))}+{4'b0,lane_valid[11]&(bid11==(B))}\
-       +{4'b0,lane_valid[12]&(bid12==(B))}+{4'b0,lane_valid[13]&(bid13==(B))}\
-       +{4'b0,lane_valid[14]&(bid14==(B))}+{4'b0,lane_valid[15]&(bid15==(B))}
+    // Per-bank free_count, indexable (assigned from the bank instances below).
+    wire [BANK_FIFO_LOG:0] free_arr [0:15];
 
-    wire [4:0] mc0  = `MC_SUM(4'd0);
-    wire [4:0] mc1  = `MC_SUM(4'd1);
-    wire [4:0] mc2  = `MC_SUM(4'd2);
-    wire [4:0] mc3  = `MC_SUM(4'd3);
-    wire [4:0] mc4  = `MC_SUM(4'd4);
-    wire [4:0] mc5  = `MC_SUM(4'd5);
-    wire [4:0] mc6  = `MC_SUM(4'd6);
-    wire [4:0] mc7  = `MC_SUM(4'd7);
-    wire [4:0] mc8  = `MC_SUM(4'd8);
-    wire [4:0] mc9  = `MC_SUM(4'd9);
-    wire [4:0] mc10 = `MC_SUM(4'd10);
-    wire [4:0] mc11 = `MC_SUM(4'd11);
-    wire [4:0] mc12 = `MC_SUM(4'd12);
-    wire [4:0] mc13 = `MC_SUM(4'd13);
-    wire [4:0] mc14 = `MC_SUM(4'd14);
-    wire [4:0] mc15 = `MC_SUM(4'd15);
+    //=========================================================================
+    // Input scatter — drive AT MOST ONE lane per bank per cycle into the
+    // single-write banks.  Groups whose lanes all land on distinct banks (the
+    // SpGEMM rotation path) finish in one cycle; a group with same-bank
+    // collisions (the Gen2 carry path) is absorbed over several cycles while
+    // the upstream holds issue_valid (issue_ready stays low until done).
+    // done_mask records which lanes of the current group are already enqueued.
+    //=========================================================================
+    reg [15:0] done_mask;
 
-    `undef MC_SUM
+    // `accepting` does NOT depend on issue_valid: the upstream (pe_top) gates
+    // its product-FIFO read on issue_ready and only then presents the data one
+    // cycle later, so issue_ready must be assertable BEFORE issue_valid (like
+    // AXI ready-before-valid).  `active` adds issue_valid for the enqueue path.
+    wire accepting = (state == S_ACCUM) && !input_done_latch;
+    wire active    = accepting && issue_valid;
 
-    wire [16*BANK_ADDR_W-1:0] wr_addr_flat = {
-        lane_col_id[15*COL_W+4 +: BANK_ADDR_W], lane_col_id[14*COL_W+4 +: BANK_ADDR_W],
-        lane_col_id[13*COL_W+4 +: BANK_ADDR_W], lane_col_id[12*COL_W+4 +: BANK_ADDR_W],
-        lane_col_id[11*COL_W+4 +: BANK_ADDR_W], lane_col_id[10*COL_W+4 +: BANK_ADDR_W],
-        lane_col_id[9 *COL_W+4 +: BANK_ADDR_W], lane_col_id[8 *COL_W+4 +: BANK_ADDR_W],
-        lane_col_id[7 *COL_W+4 +: BANK_ADDR_W], lane_col_id[6 *COL_W+4 +: BANK_ADDR_W],
-        lane_col_id[5 *COL_W+4 +: BANK_ADDR_W], lane_col_id[4 *COL_W+4 +: BANK_ADDR_W],
-        lane_col_id[3 *COL_W+4 +: BANK_ADDR_W], lane_col_id[2 *COL_W+4 +: BANK_ADDR_W],
-        lane_col_id[1 *COL_W+4 +: BANK_ADDR_W], lane_col_id[0 *COL_W+4 +: BANK_ADDR_W]
-    };
-    wire [16*PROD_W-1:0] wr_data_flat = lane_product;
+    reg  [15:0]            eligible;
+    reg  [4:0]             lt [0:15];  // # of lower-index eligible same-bank lanes
+    reg  [15:0]            win0;       // lowest    eligible lane targeting its bank
+    reg  [15:0]            win1;       // 2nd-lowest eligible lane targeting its bank
+    reg  [15:0]            lane_enq;   // lane enqueued this cycle (gated by free)
+    reg  [15:0]            bank_wr_en0,  bank_wr_en1;
+    reg  [BANK_ADDR_W-1:0] bank_wr_addr0 [0:15];
+    reg  [BANK_ADDR_W-1:0] bank_wr_addr1 [0:15];
+    reg  [PROD_W-1:0]      bank_wr_data0 [0:15];
+    reg  [PROD_W-1:0]      bank_wr_data1 [0:15];
 
-    wire do_enqueue = issue_valid & issue_ready;
+    integer ji, ki, ni;
+    always @(*) begin
+        for (ji = 0; ji < 16; ji = ji + 1)
+            eligible[ji] = active && lane_valid[ji] && !done_mask[ji];
 
-    `define BWV(B) {do_enqueue&lane_valid[15]&(bid15==(B)),\
-                    do_enqueue&lane_valid[14]&(bid14==(B)),\
-                    do_enqueue&lane_valid[13]&(bid13==(B)),\
-                    do_enqueue&lane_valid[12]&(bid12==(B)),\
-                    do_enqueue&lane_valid[11]&(bid11==(B)),\
-                    do_enqueue&lane_valid[10]&(bid10==(B)),\
-                    do_enqueue&lane_valid[9] &(bid9 ==(B)),\
-                    do_enqueue&lane_valid[8] &(bid8 ==(B)),\
-                    do_enqueue&lane_valid[7] &(bid7 ==(B)),\
-                    do_enqueue&lane_valid[6] &(bid6 ==(B)),\
-                    do_enqueue&lane_valid[5] &(bid5 ==(B)),\
-                    do_enqueue&lane_valid[4] &(bid4 ==(B)),\
-                    do_enqueue&lane_valid[3] &(bid3 ==(B)),\
-                    do_enqueue&lane_valid[2] &(bid2 ==(B)),\
-                    do_enqueue&lane_valid[1] &(bid1 ==(B)),\
-                    do_enqueue&lane_valid[0] &(bid0 ==(B))}
+        // lt[j] = number of lower-index eligible lanes targeting the same bank;
+        // lt==0 -> bank's 1st lane (port0), lt==1 -> its 2nd (port1).
+        for (ji = 0; ji < 16; ji = ji + 1) begin
+            lt[ji] = 5'd0;
+            for (ki = 0; ki < 16; ki = ki + 1)
+                if ((ki < ji) && eligible[ki] && (lbid[ki] == lbid[ji]))
+                    lt[ji] = lt[ji] + 5'd1;
+        end
+        for (ji = 0; ji < 16; ji = ji + 1) begin
+            win0[ji] = eligible[ji] && (lt[ji] == 5'd0);
+            win1[ji] = eligible[ji] && (lt[ji] == 5'd1);
+        end
 
-    wire [15:0] bwv0  = `BWV(4'd0);
-    wire [15:0] bwv1  = `BWV(4'd1);
-    wire [15:0] bwv2  = `BWV(4'd2);
-    wire [15:0] bwv3  = `BWV(4'd3);
-    wire [15:0] bwv4  = `BWV(4'd4);
-    wire [15:0] bwv5  = `BWV(4'd5);
-    wire [15:0] bwv6  = `BWV(4'd6);
-    wire [15:0] bwv7  = `BWV(4'd7);
-    wire [15:0] bwv8  = `BWV(4'd8);
-    wire [15:0] bwv9  = `BWV(4'd9);
-    wire [15:0] bwv10 = `BWV(4'd10);
-    wire [15:0] bwv11 = `BWV(4'd11);
-    wire [15:0] bwv12 = `BWV(4'd12);
-    wire [15:0] bwv13 = `BWV(4'd13);
-    wire [15:0] bwv14 = `BWV(4'd14);
-    wire [15:0] bwv15 = `BWV(4'd15);
+        // port0 lane needs >=1 free slot; port1 needs >=2 (shares the cycle with
+        // port0).  Lanes beyond the 2nd, or that don't fit, wait for a later cycle.
+        for (ji = 0; ji < 16; ji = ji + 1)
+            lane_enq[ji] = (win0[ji] && (free_arr[lbid[ji]] >= 1)) ||
+                           (win1[ji] && (free_arr[lbid[ji]] >= 2));
 
-    `undef BWV
+        // per-bank two write ports (<=1 lane per win-rank per bank)
+        for (ni = 0; ni < 16; ni = ni + 1) begin
+            bank_wr_en0[ni]   = 1'b0;
+            bank_wr_addr0[ni] = {BANK_ADDR_W{1'b0}};
+            bank_wr_data0[ni] = {PROD_W{1'b0}};
+            bank_wr_en1[ni]   = 1'b0;
+            bank_wr_addr1[ni] = {BANK_ADDR_W{1'b0}};
+            bank_wr_data1[ni] = {PROD_W{1'b0}};
+            for (ji = 0; ji < 16; ji = ji + 1) begin
+                if (win0[ji] && (lbid[ji] == ni[3:0]) && (free_arr[ni] >= 1)) begin
+                    bank_wr_en0[ni]   = 1'b1;
+                    bank_wr_addr0[ni] = laddr[ji];
+                    bank_wr_data0[ni] = lprod[ji];
+                end
+                if (win1[ji] && (lbid[ji] == ni[3:0]) && (free_arr[ni] >= 2)) begin
+                    bank_wr_en1[ni]   = 1'b1;
+                    bank_wr_addr1[ni] = laddr[ji];
+                    bank_wr_data1[ni] = lprod[ji];
+                end
+            end
+        end
+    end
+
+    wire [15:0] next_done       = done_mask | lane_enq;
+    // Only a presented group contributes "remaining" lanes; with no group
+    // (issue_valid=0) remaining is 0 so issue_ready stays high (ready for next).
+    wire [15:0] grp_lanes       = active ? lane_valid : 16'b0;
+    wire [15:0] remaining_after = grp_lanes & ~next_done;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n)
+            done_mask <= 16'b0;
+        else if (active && !issue_ready)   // partial: remember enqueued lanes
+            done_mask <= next_done;
+        else                               // group consumed, or no active group
+            done_mask <= 16'b0;
+    end
 
     //=========================================================================
     // Bank instances
@@ -193,50 +199,53 @@ module row_accumulator_16bank #(
     wire tag_clear_pulse = (state == S_CLEAR_TAGS) && !clr_triggered;
     wire [BANK_ADDR_W-1:0] drain_rd_addr = group_addr;
 
-    `define BANK_INST(N, BWV, FREE, RMW, EMP, CLR, DTAG, DACC) \
+    `define BANK_INST(N, FREE, RMW, EMP, CLR, DTAG, DACC) \
     accum_bank_16 #( \
         .BANK_DEPTH(BANK_DEPTH), .BANK_ADDR_W(BANK_ADDR_W), \
         .PROD_W(PROD_W), .ACC_W(ACC_W), .EPOCH_W(EPOCH_W), \
         .FIFO_DEPTH(BANK_FIFO_DEPTH), .FIFO_DEPTH_LOG(BANK_FIFO_LOG) \
     ) u_bank``N ( \
         .clk(clk), .rst_n(rst_n), .row_epoch(row_epoch), \
-        .wr_valid(BWV), .wr_addr_flat(wr_addr_flat), .wr_data_flat(wr_data_flat), \
+        .wr_en0(bank_wr_en0[N]), .wr_addr0(bank_wr_addr0[N]), .wr_data0(bank_wr_data0[N]), \
+        .wr_en1(bank_wr_en1[N]), .wr_addr1(bank_wr_addr1[N]), .wr_data1(bank_wr_data1[N]), \
         .free_count(FREE), .rmw_busy(RMW), .fifo_empty(EMP), \
         .tag_clear_en(tag_clear_pulse), .tag_clear_busy(CLR), \
         .drain_rd_addr(drain_rd_addr), .drain_tag(DTAG), .drain_acc(DACC) \
     )
 
-    `BANK_INST(0,  bwv0,  free_b0,  rmw_b0,  emp_b0,  clr_b0,  dtag_b0,  dacc_b0);
-    `BANK_INST(1,  bwv1,  free_b1,  rmw_b1,  emp_b1,  clr_b1,  dtag_b1,  dacc_b1);
-    `BANK_INST(2,  bwv2,  free_b2,  rmw_b2,  emp_b2,  clr_b2,  dtag_b2,  dacc_b2);
-    `BANK_INST(3,  bwv3,  free_b3,  rmw_b3,  emp_b3,  clr_b3,  dtag_b3,  dacc_b3);
-    `BANK_INST(4,  bwv4,  free_b4,  rmw_b4,  emp_b4,  clr_b4,  dtag_b4,  dacc_b4);
-    `BANK_INST(5,  bwv5,  free_b5,  rmw_b5,  emp_b5,  clr_b5,  dtag_b5,  dacc_b5);
-    `BANK_INST(6,  bwv6,  free_b6,  rmw_b6,  emp_b6,  clr_b6,  dtag_b6,  dacc_b6);
-    `BANK_INST(7,  bwv7,  free_b7,  rmw_b7,  emp_b7,  clr_b7,  dtag_b7,  dacc_b7);
-    `BANK_INST(8,  bwv8,  free_b8,  rmw_b8,  emp_b8,  clr_b8,  dtag_b8,  dacc_b8);
-    `BANK_INST(9,  bwv9,  free_b9,  rmw_b9,  emp_b9,  clr_b9,  dtag_b9,  dacc_b9);
-    `BANK_INST(10, bwv10, free_b10, rmw_b10, emp_b10, clr_b10, dtag_b10, dacc_b10);
-    `BANK_INST(11, bwv11, free_b11, rmw_b11, emp_b11, clr_b11, dtag_b11, dacc_b11);
-    `BANK_INST(12, bwv12, free_b12, rmw_b12, emp_b12, clr_b12, dtag_b12, dacc_b12);
-    `BANK_INST(13, bwv13, free_b13, rmw_b13, emp_b13, clr_b13, dtag_b13, dacc_b13);
-    `BANK_INST(14, bwv14, free_b14, rmw_b14, emp_b14, clr_b14, dtag_b14, dacc_b14);
-    `BANK_INST(15, bwv15, free_b15, rmw_b15, emp_b15, clr_b15, dtag_b15, dacc_b15);
+    `BANK_INST(0,  free_b0,  rmw_b0,  emp_b0,  clr_b0,  dtag_b0,  dacc_b0);
+    `BANK_INST(1,  free_b1,  rmw_b1,  emp_b1,  clr_b1,  dtag_b1,  dacc_b1);
+    `BANK_INST(2,  free_b2,  rmw_b2,  emp_b2,  clr_b2,  dtag_b2,  dacc_b2);
+    `BANK_INST(3,  free_b3,  rmw_b3,  emp_b3,  clr_b3,  dtag_b3,  dacc_b3);
+    `BANK_INST(4,  free_b4,  rmw_b4,  emp_b4,  clr_b4,  dtag_b4,  dacc_b4);
+    `BANK_INST(5,  free_b5,  rmw_b5,  emp_b5,  clr_b5,  dtag_b5,  dacc_b5);
+    `BANK_INST(6,  free_b6,  rmw_b6,  emp_b6,  clr_b6,  dtag_b6,  dacc_b6);
+    `BANK_INST(7,  free_b7,  rmw_b7,  emp_b7,  clr_b7,  dtag_b7,  dacc_b7);
+    `BANK_INST(8,  free_b8,  rmw_b8,  emp_b8,  clr_b8,  dtag_b8,  dacc_b8);
+    `BANK_INST(9,  free_b9,  rmw_b9,  emp_b9,  clr_b9,  dtag_b9,  dacc_b9);
+    `BANK_INST(10, free_b10, rmw_b10, emp_b10, clr_b10, dtag_b10, dacc_b10);
+    `BANK_INST(11, free_b11, rmw_b11, emp_b11, clr_b11, dtag_b11, dacc_b11);
+    `BANK_INST(12, free_b12, rmw_b12, emp_b12, clr_b12, dtag_b12, dacc_b12);
+    `BANK_INST(13, free_b13, rmw_b13, emp_b13, clr_b13, dtag_b13, dacc_b13);
+    `BANK_INST(14, free_b14, rmw_b14, emp_b14, clr_b14, dtag_b14, dacc_b14);
+    `BANK_INST(15, free_b15, rmw_b15, emp_b15, clr_b15, dtag_b15, dacc_b15);
 
     `undef BANK_INST
 
+    assign free_arr[0]  = free_b0;  assign free_arr[1]  = free_b1;
+    assign free_arr[2]  = free_b2;  assign free_arr[3]  = free_b3;
+    assign free_arr[4]  = free_b4;  assign free_arr[5]  = free_b5;
+    assign free_arr[6]  = free_b6;  assign free_arr[7]  = free_b7;
+    assign free_arr[8]  = free_b8;  assign free_arr[9]  = free_b9;
+    assign free_arr[10] = free_b10; assign free_arr[11] = free_b11;
+    assign free_arr[12] = free_b12; assign free_arr[13] = free_b13;
+    assign free_arr[14] = free_b14; assign free_arr[15] = free_b15;
+
     //=========================================================================
-    // issue_ready
+    // issue_ready — high on the cycle that enqueues the LAST remaining lane(s)
+    // of the current group, so the upstream advances to the next group.
     //=========================================================================
-    assign issue_ready = (state == S_ACCUM) && !input_done_latch
-        && (free_b0  >= {1'b0, mc0 }) && (free_b1  >= {1'b0, mc1 })
-        && (free_b2  >= {1'b0, mc2 }) && (free_b3  >= {1'b0, mc3 })
-        && (free_b4  >= {1'b0, mc4 }) && (free_b5  >= {1'b0, mc5 })
-        && (free_b6  >= {1'b0, mc6 }) && (free_b7  >= {1'b0, mc7 })
-        && (free_b8  >= {1'b0, mc8 }) && (free_b9  >= {1'b0, mc9 })
-        && (free_b10 >= {1'b0, mc10}) && (free_b11 >= {1'b0, mc11})
-        && (free_b12 >= {1'b0, mc12}) && (free_b13 >= {1'b0, mc13})
-        && (free_b14 >= {1'b0, mc14}) && (free_b15 >= {1'b0, mc15});
+    assign issue_ready = accepting && (remaining_after == 16'b0);
 
     wire all_fifos_empty = emp_b0 & emp_b1 & emp_b2 & emp_b3 & emp_b4 & emp_b5 & emp_b6 & emp_b7
                          & emp_b8 & emp_b9 & emp_b10& emp_b11& emp_b12& emp_b13& emp_b14& emp_b15;

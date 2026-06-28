@@ -74,38 +74,40 @@ module pe_top #(
     localparam B_BANK_DEPTH = `B_NNZ_SLOT / 16;
     localparam B_DESC_DEPTH = `B_ROW_SLOT;
 
-    reg [`DATA_WIDTH-1:0] B_col_b0  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_col_b1  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_col_b2  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_col_b3  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_col_b4  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_col_b5  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_col_b6  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_col_b7  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_col_b8  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_col_b9  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_col_b10 [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_col_b11 [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_col_b12 [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_col_b13 [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_col_b14 [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_col_b15 [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_val_b0  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_val_b1  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_val_b2  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_val_b3  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_val_b4  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_val_b5  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_val_b6  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_val_b7  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_val_b8  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_val_b9  [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_val_b10 [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_val_b11 [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_val_b12 [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_val_b13 [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_val_b14 [0:B_BANK_DEPTH-1];
-    reg [`DATA_WIDTH-1:0] B_val_b15 [0:B_BANK_DEPTH-1];
+    // All B reads are now synchronous (executor/generator/elem), so force Block
+    // RAM — these 32 arrays (~4928x16 each) were the dominant LUTRAM consumer.
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b0  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b1  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b2  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b3  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b4  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b5  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b6  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b7  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b8  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b9  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b10 [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b11 [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b12 [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b13 [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b14 [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b15 [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b0  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b1  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b2  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b3  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b4  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b5  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b6  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b7  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b8  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b9  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b10 [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b11 [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b12 [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b13 [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b14 [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b15 [0:B_BANK_DEPTH-1];
 
     reg [31:0] B_desc_buf [0:B_DESC_DEPTH-1];
 
@@ -226,22 +228,57 @@ module pe_top #(
     wire [13:0] gen_bg14 = (gen_r <= 4'd14) ? gen_m : gen_m + 14'd1;
     wire [13:0] gen_bg15 = gen_m;
 
-    wire [15:0] bc0 =B_col_b0 [gen_bg0];  wire [15:0] bv0 =B_val_b0 [gen_bg0];
-    wire [15:0] bc1 =B_col_b1 [gen_bg1];  wire [15:0] bv1 =B_val_b1 [gen_bg1];
-    wire [15:0] bc2 =B_col_b2 [gen_bg2];  wire [15:0] bv2 =B_val_b2 [gen_bg2];
-    wire [15:0] bc3 =B_col_b3 [gen_bg3];  wire [15:0] bv3 =B_val_b3 [gen_bg3];
-    wire [15:0] bc4 =B_col_b4 [gen_bg4];  wire [15:0] bv4 =B_val_b4 [gen_bg4];
-    wire [15:0] bc5 =B_col_b5 [gen_bg5];  wire [15:0] bv5 =B_val_b5 [gen_bg5];
-    wire [15:0] bc6 =B_col_b6 [gen_bg6];  wire [15:0] bv6 =B_val_b6 [gen_bg6];
-    wire [15:0] bc7 =B_col_b7 [gen_bg7];  wire [15:0] bv7 =B_val_b7 [gen_bg7];
-    wire [15:0] bc8 =B_col_b8 [gen_bg8];  wire [15:0] bv8 =B_val_b8 [gen_bg8];
-    wire [15:0] bc9 =B_col_b9 [gen_bg9];  wire [15:0] bv9 =B_val_b9 [gen_bg9];
-    wire [15:0] bc10=B_col_b10[gen_bg10]; wire [15:0] bv10=B_val_b10[gen_bg10];
-    wire [15:0] bc11=B_col_b11[gen_bg11]; wire [15:0] bv11=B_val_b11[gen_bg11];
-    wire [15:0] bc12=B_col_b12[gen_bg12]; wire [15:0] bv12=B_val_b12[gen_bg12];
-    wire [15:0] bc13=B_col_b13[gen_bg13]; wire [15:0] bv13=B_val_b13[gen_bg13];
-    wire [15:0] bc14=B_col_b14[gen_bg14]; wire [15:0] bv14=B_val_b14[gen_bg14];
-    wire [15:0] bc15=B_col_b15[gen_bg15]; wire [15:0] bv15=B_val_b15[gen_bg15];
+    // PREFETCH B-read address — computed from the prefetch descriptor (fetch_*,
+    // i.e. the NEXT A-nnz) so the registered read lands exactly when that A-nnz
+    // becomes current.  This pipelines the generator (1 A-nnz/cycle) without the
+    // 2-phase stall; the rotation below still uses the CURRENT gen_r, which by
+    // construction equals this cycle's gen_r_pf delayed one step.
+    wire [15:0] fetch_num_groups = {4'b0, fetch_b_nnz[15:4]};
+    wire [31:0] gen_abs_base_pf  = fetch_b_off + {fetch_num_groups[13:0], 4'b0000};
+    wire [3:0]  gen_r_pf         = gen_abs_base_pf[3:0];
+    wire [13:0] gen_m_pf         = gen_abs_base_pf[17:4];
+
+    wire [13:0] gen_bg0_pf  = (gen_r_pf == 4'd0)  ? gen_m_pf : gen_m_pf + 14'd1;
+    wire [13:0] gen_bg1_pf  = (gen_r_pf <= 4'd1)  ? gen_m_pf : gen_m_pf + 14'd1;
+    wire [13:0] gen_bg2_pf  = (gen_r_pf <= 4'd2)  ? gen_m_pf : gen_m_pf + 14'd1;
+    wire [13:0] gen_bg3_pf  = (gen_r_pf <= 4'd3)  ? gen_m_pf : gen_m_pf + 14'd1;
+    wire [13:0] gen_bg4_pf  = (gen_r_pf <= 4'd4)  ? gen_m_pf : gen_m_pf + 14'd1;
+    wire [13:0] gen_bg5_pf  = (gen_r_pf <= 4'd5)  ? gen_m_pf : gen_m_pf + 14'd1;
+    wire [13:0] gen_bg6_pf  = (gen_r_pf <= 4'd6)  ? gen_m_pf : gen_m_pf + 14'd1;
+    wire [13:0] gen_bg7_pf  = (gen_r_pf <= 4'd7)  ? gen_m_pf : gen_m_pf + 14'd1;
+    wire [13:0] gen_bg8_pf  = (gen_r_pf <= 4'd8)  ? gen_m_pf : gen_m_pf + 14'd1;
+    wire [13:0] gen_bg9_pf  = (gen_r_pf <= 4'd9)  ? gen_m_pf : gen_m_pf + 14'd1;
+    wire [13:0] gen_bg10_pf = (gen_r_pf <= 4'd10) ? gen_m_pf : gen_m_pf + 14'd1;
+    wire [13:0] gen_bg11_pf = (gen_r_pf <= 4'd11) ? gen_m_pf : gen_m_pf + 14'd1;
+    wire [13:0] gen_bg12_pf = (gen_r_pf <= 4'd12) ? gen_m_pf : gen_m_pf + 14'd1;
+    wire [13:0] gen_bg13_pf = (gen_r_pf <= 4'd13) ? gen_m_pf : gen_m_pf + 14'd1;
+    wire [13:0] gen_bg14_pf = (gen_r_pf <= 4'd14) ? gen_m_pf : gen_m_pf + 14'd1;
+    wire [13:0] gen_bg15_pf = gen_m_pf;
+
+    // Registered (synchronous) B reads -> infer Block RAM.  Issued from the
+    // PREFETCH address (next A-nnz) and clock-enabled only when the generator
+    // advances (gen_b_read_en), so bcN/bvN hold the CURRENT A-nnz's data while
+    // stalled and update exactly when the next A-nnz is loaded into gen_*.
+    reg [15:0] bc0,bc1,bc2,bc3,bc4,bc5,bc6,bc7,bc8,bc9,bc10,bc11,bc12,bc13,bc14,bc15;
+    reg [15:0] bv0,bv1,bv2,bv3,bv4,bv5,bv6,bv7,bv8,bv9,bv10,bv11,bv12,bv13,bv14,bv15;
+    always @(posedge aclk) if (gen_b_read_en) begin
+        bc0 <=B_col_b0 [gen_bg0_pf];  bv0 <=B_val_b0 [gen_bg0_pf];
+        bc1 <=B_col_b1 [gen_bg1_pf];  bv1 <=B_val_b1 [gen_bg1_pf];
+        bc2 <=B_col_b2 [gen_bg2_pf];  bv2 <=B_val_b2 [gen_bg2_pf];
+        bc3 <=B_col_b3 [gen_bg3_pf];  bv3 <=B_val_b3 [gen_bg3_pf];
+        bc4 <=B_col_b4 [gen_bg4_pf];  bv4 <=B_val_b4 [gen_bg4_pf];
+        bc5 <=B_col_b5 [gen_bg5_pf];  bv5 <=B_val_b5 [gen_bg5_pf];
+        bc6 <=B_col_b6 [gen_bg6_pf];  bv6 <=B_val_b6 [gen_bg6_pf];
+        bc7 <=B_col_b7 [gen_bg7_pf];  bv7 <=B_val_b7 [gen_bg7_pf];
+        bc8 <=B_col_b8 [gen_bg8_pf];  bv8 <=B_val_b8 [gen_bg8_pf];
+        bc9 <=B_col_b9 [gen_bg9_pf];  bv9 <=B_val_b9 [gen_bg9_pf];
+        bc10<=B_col_b10[gen_bg10_pf]; bv10<=B_val_b10[gen_bg10_pf];
+        bc11<=B_col_b11[gen_bg11_pf]; bv11<=B_val_b11[gen_bg11_pf];
+        bc12<=B_col_b12[gen_bg12_pf]; bv12<=B_val_b12[gen_bg12_pf];
+        bc13<=B_col_b13[gen_bg13_pf]; bv13<=B_val_b13[gen_bg13_pf];
+        bc14<=B_col_b14[gen_bg14_pf]; bv14<=B_val_b14[gen_bg14_pf];
+        bc15<=B_col_b15[gen_bg15_pf]; bv15<=B_val_b15[gen_bg15_pf];
+    end
 
     // Rotation mux: ne_bv[j] = bv at bank (gen_r+j)%16
     wire [15:0] ne_bv [0:15]; wire [15:0] ne_bc [0:15];
@@ -335,6 +372,13 @@ module pe_top #(
         (gen_num_groups != 16'd0 && ptr_fifo_full) ||
         (gen_remainder  != 4'd0  && g2_can_emit && task_fifo_full);
     wire gen_emit_can_advance = (gen_state == GEN_EMIT) && !gen_emit_stall;
+
+    // Clock-enable for the prefetched B reads: pull the next A-nnz's B data in
+    // whenever the generator is about to load a new gen_b_off — i.e. every
+    // GEN_FETCH (which loads gen_*) and every advancing GEN_EMIT cycle.  Held
+    // off during a stall so bcN/bvN keep the current A-nnz's data.
+    wire gen_b_read_en = (gen_state == GEN_FETCH) ||
+                         (gen_state == GEN_EMIT && gen_emit_can_advance);
     wire g1_acc_advances      = gen_emit_can_advance && g1_to_g2_valid;
 
     wire ptr_fifo_wr_en =
@@ -364,6 +408,7 @@ module pe_top #(
     localparam ELEM_IDLE=2'd0, ELEM_A=2'd1, ELEM_B=2'd2, ELEM_DONE=2'd3;
     reg  [1:0]  elem_state;
     reg  [15:0] elem_j;
+    reg         elem_phase;   // 0 = ADDR (wait for registered B read), 1 = USE
 
     wire [31:0] elem_b_desc = B_desc_buf[cur_c_row];  // global row (B is broadcast)
     wire [16:0] elem_b_off  = elem_b_desc[26:10];
@@ -379,24 +424,27 @@ module pe_top #(
     wire [16:0] elem_b_abs  = elem_b_off + {1'b0, elem_j};
     wire [3:0]  elem_b_bank = elem_b_abs[3:0];
     wire [13:0] elem_b_addr = {1'b0, elem_b_abs[16:4]};   // abs/16 (13-bit)
+    // Read from the SAME registered B ports as the executor (ebcN/ebvN, muxed to
+    // elem_b_addr by op_mode above).  elem_b_bank is stable across the 2-phase
+    // elem step, so it selects the right bank in the USE phase.
     wire [15:0] elem_b_col =
-        (elem_b_bank==4'd0 )?B_col_b0 [elem_b_addr]:(elem_b_bank==4'd1 )?B_col_b1 [elem_b_addr]:
-        (elem_b_bank==4'd2 )?B_col_b2 [elem_b_addr]:(elem_b_bank==4'd3 )?B_col_b3 [elem_b_addr]:
-        (elem_b_bank==4'd4 )?B_col_b4 [elem_b_addr]:(elem_b_bank==4'd5 )?B_col_b5 [elem_b_addr]:
-        (elem_b_bank==4'd6 )?B_col_b6 [elem_b_addr]:(elem_b_bank==4'd7 )?B_col_b7 [elem_b_addr]:
-        (elem_b_bank==4'd8 )?B_col_b8 [elem_b_addr]:(elem_b_bank==4'd9 )?B_col_b9 [elem_b_addr]:
-        (elem_b_bank==4'd10)?B_col_b10[elem_b_addr]:(elem_b_bank==4'd11)?B_col_b11[elem_b_addr]:
-        (elem_b_bank==4'd12)?B_col_b12[elem_b_addr]:(elem_b_bank==4'd13)?B_col_b13[elem_b_addr]:
-        (elem_b_bank==4'd14)?B_col_b14[elem_b_addr]:B_col_b15[elem_b_addr];
+        (elem_b_bank==4'd0 )?ebc0 :(elem_b_bank==4'd1 )?ebc1 :
+        (elem_b_bank==4'd2 )?ebc2 :(elem_b_bank==4'd3 )?ebc3 :
+        (elem_b_bank==4'd4 )?ebc4 :(elem_b_bank==4'd5 )?ebc5 :
+        (elem_b_bank==4'd6 )?ebc6 :(elem_b_bank==4'd7 )?ebc7 :
+        (elem_b_bank==4'd8 )?ebc8 :(elem_b_bank==4'd9 )?ebc9 :
+        (elem_b_bank==4'd10)?ebc10:(elem_b_bank==4'd11)?ebc11:
+        (elem_b_bank==4'd12)?ebc12:(elem_b_bank==4'd13)?ebc13:
+        (elem_b_bank==4'd14)?ebc14:ebc15;
     wire [15:0] elem_b_val =
-        (elem_b_bank==4'd0 )?B_val_b0 [elem_b_addr]:(elem_b_bank==4'd1 )?B_val_b1 [elem_b_addr]:
-        (elem_b_bank==4'd2 )?B_val_b2 [elem_b_addr]:(elem_b_bank==4'd3 )?B_val_b3 [elem_b_addr]:
-        (elem_b_bank==4'd4 )?B_val_b4 [elem_b_addr]:(elem_b_bank==4'd5 )?B_val_b5 [elem_b_addr]:
-        (elem_b_bank==4'd6 )?B_val_b6 [elem_b_addr]:(elem_b_bank==4'd7 )?B_val_b7 [elem_b_addr]:
-        (elem_b_bank==4'd8 )?B_val_b8 [elem_b_addr]:(elem_b_bank==4'd9 )?B_val_b9 [elem_b_addr]:
-        (elem_b_bank==4'd10)?B_val_b10[elem_b_addr]:(elem_b_bank==4'd11)?B_val_b11[elem_b_addr]:
-        (elem_b_bank==4'd12)?B_val_b12[elem_b_addr]:(elem_b_bank==4'd13)?B_val_b13[elem_b_addr]:
-        (elem_b_bank==4'd14)?B_val_b14[elem_b_addr]:B_val_b15[elem_b_addr];
+        (elem_b_bank==4'd0 )?ebv0 :(elem_b_bank==4'd1 )?ebv1 :
+        (elem_b_bank==4'd2 )?ebv2 :(elem_b_bank==4'd3 )?ebv3 :
+        (elem_b_bank==4'd4 )?ebv4 :(elem_b_bank==4'd5 )?ebv5 :
+        (elem_b_bank==4'd6 )?ebv6 :(elem_b_bank==4'd7 )?ebv7 :
+        (elem_b_bank==4'd8 )?ebv8 :(elem_b_bank==4'd9 )?ebv9 :
+        (elem_b_bank==4'd10)?ebv10:(elem_b_bank==4'd11)?ebv11:
+        (elem_b_bank==4'd12)?ebv12:(elem_b_bank==4'd13)?ebv13:
+        (elem_b_bank==4'd14)?ebv14:ebv15;
 
     wire        elem_in_b = (elem_state==ELEM_B);
     wire [15:0] elem_val  = elem_in_b ? elem_b_val      : elem_a_val;
@@ -407,28 +455,38 @@ module pe_top #(
 
     wire elem_a_more = (elem_j < cur_a_nnz);
     wire elem_b_more = (elem_j < elem_b_nnz);
-    wire elem_wr_en  = ((elem_state==ELEM_A && elem_a_more) ||
+    wire elem_wr_en  = elem_phase &&
+                       ((elem_state==ELEM_A && elem_a_more) ||
                         (elem_state==ELEM_B && elem_b_more)) && !task_fifo_full;
     wire [`TASK_GROUP_WIDTH-1:0] elem_task_group =
         { {((`N_MAC-1)*`TASK_WIDTH){1'b0}}, elem_task, 16'h0001 };
 
     always @(posedge aclk or negedge aresetn) begin
-        if (!aresetn) begin elem_state<=ELEM_IDLE; elem_j<=0; end
+        if (!aresetn) begin elem_state<=ELEM_IDLE; elem_j<=0; elem_phase<=1'b0; end
         else case (elem_state)
             ELEM_IDLE: if (state==PE_CLEAR_ACC && op_mode) begin
                 elem_j <= 0;
+                elem_phase <= 1'b0;   // wait for the first registered read
                 elem_state <= (cur_a_nnz!=0) ? ELEM_A :
                               (elem_b_nnz!=0) ? ELEM_B : ELEM_DONE;
             end
-            ELEM_A: if (!task_fifo_full) begin
-                if (elem_j+16'd1 >= cur_a_nnz) begin
-                    elem_j     <= 0;
-                    elem_state <= (elem_b_nnz!=0) ? ELEM_B : ELEM_DONE;
-                end else elem_j <= elem_j + 16'd1;
+            ELEM_A: begin
+                if (!elem_phase) elem_phase <= 1'b1;            // read settled -> USE
+                else if (!task_fifo_full) begin
+                    elem_phase <= 1'b0;                         // next elem -> ADDR
+                    if (elem_j+16'd1 >= cur_a_nnz) begin
+                        elem_j     <= 0;
+                        elem_state <= (elem_b_nnz!=0) ? ELEM_B : ELEM_DONE;
+                    end else elem_j <= elem_j + 16'd1;
+                end
             end
-            ELEM_B: if (!task_fifo_full) begin
-                if (elem_j+16'd1 >= elem_b_nnz) elem_state <= ELEM_DONE;
-                else elem_j <= elem_j + 16'd1;
+            ELEM_B: begin
+                if (!elem_phase) elem_phase <= 1'b1;
+                else if (!task_fifo_full) begin
+                    elem_phase <= 1'b0;
+                    if (elem_j+16'd1 >= elem_b_nnz) elem_state <= ELEM_DONE;
+                    else elem_j <= elem_j + 16'd1;
+                end
             end
             ELEM_DONE: if (state==PE_WAIT_TASK_DRAIN || state==PE_NEXT_ROW ||
                            state==PE_WAIT_PRODUCT_DRAIN)
@@ -582,7 +640,10 @@ module pe_top #(
     wire [`PROD_FIFO_DEPTH_LOG:0] active_prod_fifo_cnt =
         comp_sel ? product_fifo_cnt_1 : product_fifo_cnt_0;
 
-    wire exec_prod_safe = active_prod_fifo_cnt < (`PROD_FIFO_DEPTH - `MUL_LAT - 1);
+    // -2 (not -1): the executor now has one extra pipeline stage (registered
+    // B read for BRAM inference) between the prod_safe check and the product,
+    // so one more group is in flight before it reaches the product FIFO.
+    wire exec_prod_safe = active_prod_fifo_cnt < (`PROD_FIFO_DEPTH - `MUL_LAT - 2);
 
     //=========================================================================
     // MAC Executor — 2 states, 0 overhead between consecutive entries
@@ -644,42 +705,70 @@ module pe_top #(
     // Executor B bank reads (16-bank, group stride = 16)
     //=========================================================================
     wire [31:0] exec_abs_base = {15'b0, exec_b_off} + {21'b0, exec_g, 4'b0000};
-    wire [3:0]  exec_r        = exec_abs_base[3:0];
+    wire [3:0]  exec_r_addr   = exec_abs_base[3:0];   // stage-1 (address) rotation amt
     wire [13:0] exec_m        = exec_abs_base[17:4];
 
-    wire [13:0] exec_bg0 =(exec_r==0)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg1 =(exec_r<=1)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg2 =(exec_r<=2)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg3 =(exec_r<=3)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg4 =(exec_r<=4)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg5 =(exec_r<=5)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg6 =(exec_r<=6)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg7 =(exec_r<=7)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg8 =(exec_r<=8)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg9 =(exec_r<=9)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg10=(exec_r<=10)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg11=(exec_r<=11)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg12=(exec_r<=12)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg13=(exec_r<=13)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg14=(exec_r<=14)?exec_m:exec_m+14'd1;
+    wire [13:0] exec_bg0 =(exec_r_addr==0)?exec_m:exec_m+14'd1;
+    wire [13:0] exec_bg1 =(exec_r_addr<=1)?exec_m:exec_m+14'd1;
+    wire [13:0] exec_bg2 =(exec_r_addr<=2)?exec_m:exec_m+14'd1;
+    wire [13:0] exec_bg3 =(exec_r_addr<=3)?exec_m:exec_m+14'd1;
+    wire [13:0] exec_bg4 =(exec_r_addr<=4)?exec_m:exec_m+14'd1;
+    wire [13:0] exec_bg5 =(exec_r_addr<=5)?exec_m:exec_m+14'd1;
+    wire [13:0] exec_bg6 =(exec_r_addr<=6)?exec_m:exec_m+14'd1;
+    wire [13:0] exec_bg7 =(exec_r_addr<=7)?exec_m:exec_m+14'd1;
+    wire [13:0] exec_bg8 =(exec_r_addr<=8)?exec_m:exec_m+14'd1;
+    wire [13:0] exec_bg9 =(exec_r_addr<=9)?exec_m:exec_m+14'd1;
+    wire [13:0] exec_bg10=(exec_r_addr<=10)?exec_m:exec_m+14'd1;
+    wire [13:0] exec_bg11=(exec_r_addr<=11)?exec_m:exec_m+14'd1;
+    wire [13:0] exec_bg12=(exec_r_addr<=12)?exec_m:exec_m+14'd1;
+    wire [13:0] exec_bg13=(exec_r_addr<=13)?exec_m:exec_m+14'd1;
+    wire [13:0] exec_bg14=(exec_r_addr<=14)?exec_m:exec_m+14'd1;
     wire [13:0] exec_bg15=exec_m;
 
-    wire [15:0] ebc0 =B_col_b0 [exec_bg0];  wire [15:0] ebv0 =B_val_b0 [exec_bg0];
-    wire [15:0] ebc1 =B_col_b1 [exec_bg1];  wire [15:0] ebv1 =B_val_b1 [exec_bg1];
-    wire [15:0] ebc2 =B_col_b2 [exec_bg2];  wire [15:0] ebv2 =B_val_b2 [exec_bg2];
-    wire [15:0] ebc3 =B_col_b3 [exec_bg3];  wire [15:0] ebv3 =B_val_b3 [exec_bg3];
-    wire [15:0] ebc4 =B_col_b4 [exec_bg4];  wire [15:0] ebv4 =B_val_b4 [exec_bg4];
-    wire [15:0] ebc5 =B_col_b5 [exec_bg5];  wire [15:0] ebv5 =B_val_b5 [exec_bg5];
-    wire [15:0] ebc6 =B_col_b6 [exec_bg6];  wire [15:0] ebv6 =B_val_b6 [exec_bg6];
-    wire [15:0] ebc7 =B_col_b7 [exec_bg7];  wire [15:0] ebv7 =B_val_b7 [exec_bg7];
-    wire [15:0] ebc8 =B_col_b8 [exec_bg8];  wire [15:0] ebv8 =B_val_b8 [exec_bg8];
-    wire [15:0] ebc9 =B_col_b9 [exec_bg9];  wire [15:0] ebv9 =B_val_b9 [exec_bg9];
-    wire [15:0] ebc10=B_col_b10[exec_bg10]; wire [15:0] ebv10=B_val_b10[exec_bg10];
-    wire [15:0] ebc11=B_col_b11[exec_bg11]; wire [15:0] ebv11=B_val_b11[exec_bg11];
-    wire [15:0] ebc12=B_col_b12[exec_bg12]; wire [15:0] ebv12=B_val_b12[exec_bg12];
-    wire [15:0] ebc13=B_col_b13[exec_bg13]; wire [15:0] ebv13=B_val_b13[exec_bg13];
-    wire [15:0] ebc14=B_col_b14[exec_bg14]; wire [15:0] ebv14=B_val_b14[exec_bg14];
-    wire [15:0] ebc15=B_col_b15[exec_bg15]; wire [15:0] ebv15=B_val_b15[exec_bg15];
+    // Stage-2 control, delayed 1 cycle to align with the registered B reads:
+    //   exec_r        = rotation amount for the data now arriving
+    //   exec_a_val_d1 = A value for that group
+    //   exec_valid_d1 = "a B-read group is landing this cycle" (write enable)
+    reg [3:0]  exec_r;
+    reg [15:0] exec_a_val_d1;
+    reg        exec_valid_d1;
+    always @(posedge aclk or negedge aresetn) begin
+        if (!aresetn) begin
+            exec_r <= 4'd0; exec_a_val_d1 <= 16'd0; exec_valid_d1 <= 1'b0;
+        end else begin
+            exec_r        <= exec_r_addr;
+            exec_a_val_d1 <= exec_a_val;
+            exec_valid_d1 <= (exec_state == EXEC_PTR) && exec_prod_safe;
+        end
+    end
+
+    // Registered (synchronous) B reads -> infer Block RAM.  Data for the address
+    // issued at cycle T (from exec_g, exec_b_off) is available here at T+1, so the
+    // rotation/pack below uses the 1-cycle-delayed control (exec_r_d1, exec_a_val_d1).
+    reg [15:0] ebc0,ebc1,ebc2,ebc3,ebc4,ebc5,ebc6,ebc7,ebc8,ebc9,ebc10,ebc11,ebc12,ebc13,ebc14,ebc15;
+    reg [15:0] ebv0,ebv1,ebv2,ebv3,ebv4,ebv5,ebv6,ebv7,ebv8,ebv9,ebv10,ebv11,ebv12,ebv13,ebv14,ebv15;
+    // Address is muxed by op_mode so the elementwise path reuses these SAME 16
+    // registered B read ports (elem and SpGEMM are mutually exclusive), avoiding
+    // a 3rd read port on each B bank.  SpGEMM: per-bank rotated addr exec_bgN.
+    // Elementwise: all banks read elem_b_addr; elem then picks bank elem_b_bank.
+    always @(posedge aclk) begin
+        ebc0 <=B_col_b0 [op_mode?elem_b_addr:exec_bg0];  ebv0 <=B_val_b0 [op_mode?elem_b_addr:exec_bg0];
+        ebc1 <=B_col_b1 [op_mode?elem_b_addr:exec_bg1];  ebv1 <=B_val_b1 [op_mode?elem_b_addr:exec_bg1];
+        ebc2 <=B_col_b2 [op_mode?elem_b_addr:exec_bg2];  ebv2 <=B_val_b2 [op_mode?elem_b_addr:exec_bg2];
+        ebc3 <=B_col_b3 [op_mode?elem_b_addr:exec_bg3];  ebv3 <=B_val_b3 [op_mode?elem_b_addr:exec_bg3];
+        ebc4 <=B_col_b4 [op_mode?elem_b_addr:exec_bg4];  ebv4 <=B_val_b4 [op_mode?elem_b_addr:exec_bg4];
+        ebc5 <=B_col_b5 [op_mode?elem_b_addr:exec_bg5];  ebv5 <=B_val_b5 [op_mode?elem_b_addr:exec_bg5];
+        ebc6 <=B_col_b6 [op_mode?elem_b_addr:exec_bg6];  ebv6 <=B_val_b6 [op_mode?elem_b_addr:exec_bg6];
+        ebc7 <=B_col_b7 [op_mode?elem_b_addr:exec_bg7];  ebv7 <=B_val_b7 [op_mode?elem_b_addr:exec_bg7];
+        ebc8 <=B_col_b8 [op_mode?elem_b_addr:exec_bg8];  ebv8 <=B_val_b8 [op_mode?elem_b_addr:exec_bg8];
+        ebc9 <=B_col_b9 [op_mode?elem_b_addr:exec_bg9];  ebv9 <=B_val_b9 [op_mode?elem_b_addr:exec_bg9];
+        ebc10<=B_col_b10[op_mode?elem_b_addr:exec_bg10]; ebv10<=B_val_b10[op_mode?elem_b_addr:exec_bg10];
+        ebc11<=B_col_b11[op_mode?elem_b_addr:exec_bg11]; ebv11<=B_val_b11[op_mode?elem_b_addr:exec_bg11];
+        ebc12<=B_col_b12[op_mode?elem_b_addr:exec_bg12]; ebv12<=B_val_b12[op_mode?elem_b_addr:exec_bg12];
+        ebc13<=B_col_b13[op_mode?elem_b_addr:exec_bg13]; ebv13<=B_val_b13[op_mode?elem_b_addr:exec_bg13];
+        ebc14<=B_col_b14[op_mode?elem_b_addr:exec_bg14]; ebv14<=B_val_b14[op_mode?elem_b_addr:exec_bg14];
+        ebc15<=B_col_b15[op_mode?elem_b_addr:exec_bg15]; ebv15<=B_val_b15[op_mode?elem_b_addr:exec_bg15];
+    end
 
     // Rotation mux: enebv[j] = ebv at bank (exec_r+j)%16
     wire [15:0] enebv [0:15]; wire [15:0] enebc [0:15];
@@ -716,29 +805,32 @@ module pe_top #(
     assign enebv[15]=(exec_r==0)?ebv15:(exec_r==1)?ebv0:(exec_r==2)?ebv1:(exec_r==3)?ebv2:(exec_r==4)?ebv3:(exec_r==5)?ebv4:(exec_r==6)?ebv5:(exec_r==7)?ebv6:(exec_r==8)?ebv7:(exec_r==9)?ebv8:(exec_r==10)?ebv9:(exec_r==11)?ebv10:(exec_r==12)?ebv11:(exec_r==13)?ebv12:(exec_r==14)?ebv13:ebv14;
     assign enebc[15]=(exec_r==0)?ebc15:(exec_r==1)?ebc0:(exec_r==2)?ebc1:(exec_r==3)?ebc2:(exec_r==4)?ebc3:(exec_r==5)?ebc4:(exec_r==6)?ebc5:(exec_r==7)?ebc6:(exec_r==8)?ebc7:(exec_r==9)?ebc8:(exec_r==10)?ebc9:(exec_r==11)?ebc10:(exec_r==12)?ebc11:(exec_r==13)?ebc12:(exec_r==14)?ebc13:ebc14;
 
-    wire [`TASK_WIDTH-1:0] exec_sg0 ={enebv[0], exec_a_val,enebc[0][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg1 ={enebv[1], exec_a_val,enebc[1][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg2 ={enebv[2], exec_a_val,enebc[2][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg3 ={enebv[3], exec_a_val,enebc[3][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg4 ={enebv[4], exec_a_val,enebc[4][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg5 ={enebv[5], exec_a_val,enebc[5][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg6 ={enebv[6], exec_a_val,enebc[6][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg7 ={enebv[7], exec_a_val,enebc[7][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg8 ={enebv[8], exec_a_val,enebc[8][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg9 ={enebv[9], exec_a_val,enebc[9][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg10={enebv[10],exec_a_val,enebc[10][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg11={enebv[11],exec_a_val,enebc[11][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg12={enebv[12],exec_a_val,enebc[12][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg13={enebv[13],exec_a_val,enebc[13][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg14={enebv[14],exec_a_val,enebc[14][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg15={enebv[15],exec_a_val,enebc[15][8:0]};
+    wire [`TASK_WIDTH-1:0] exec_sg0 ={enebv[0], exec_a_val_d1,enebc[0][8:0]};
+    wire [`TASK_WIDTH-1:0] exec_sg1 ={enebv[1], exec_a_val_d1,enebc[1][8:0]};
+    wire [`TASK_WIDTH-1:0] exec_sg2 ={enebv[2], exec_a_val_d1,enebc[2][8:0]};
+    wire [`TASK_WIDTH-1:0] exec_sg3 ={enebv[3], exec_a_val_d1,enebc[3][8:0]};
+    wire [`TASK_WIDTH-1:0] exec_sg4 ={enebv[4], exec_a_val_d1,enebc[4][8:0]};
+    wire [`TASK_WIDTH-1:0] exec_sg5 ={enebv[5], exec_a_val_d1,enebc[5][8:0]};
+    wire [`TASK_WIDTH-1:0] exec_sg6 ={enebv[6], exec_a_val_d1,enebc[6][8:0]};
+    wire [`TASK_WIDTH-1:0] exec_sg7 ={enebv[7], exec_a_val_d1,enebc[7][8:0]};
+    wire [`TASK_WIDTH-1:0] exec_sg8 ={enebv[8], exec_a_val_d1,enebc[8][8:0]};
+    wire [`TASK_WIDTH-1:0] exec_sg9 ={enebv[9], exec_a_val_d1,enebc[9][8:0]};
+    wire [`TASK_WIDTH-1:0] exec_sg10={enebv[10],exec_a_val_d1,enebc[10][8:0]};
+    wire [`TASK_WIDTH-1:0] exec_sg11={enebv[11],exec_a_val_d1,enebc[11][8:0]};
+    wire [`TASK_WIDTH-1:0] exec_sg12={enebv[12],exec_a_val_d1,enebc[12][8:0]};
+    wire [`TASK_WIDTH-1:0] exec_sg13={enebv[13],exec_a_val_d1,enebc[13][8:0]};
+    wire [`TASK_WIDTH-1:0] exec_sg14={enebv[14],exec_a_val_d1,enebc[14][8:0]};
+    wire [`TASK_WIDTH-1:0] exec_sg15={enebv[15],exec_a_val_d1,enebc[15][8:0]};
 
     //=========================================================================
     // MAC array input: executor (ptr_fifo path) or Gen2 (task_fifo path)
     //=========================================================================
-    // Fire task_fifo when exec is idle (ptr drained) OR at each ptr-entry boundary.
-    // exec_ptr_last already implies exec_prod_safe, so no separate check needed there.
-    assign task_fifo_rd_en = (exec_idle || exec_ptr_last) && !task_fifo_empty && exec_prod_safe;
+    // Fire task_fifo only when the executor is fully idle.  (Previously this also
+    // fired on exec_ptr_last to overlap, but the executor's registered-B-read
+    // stage now delays its mac write by 1 cycle, which would collide with the
+    // task write at the ptr->task boundary.  Requiring exec_idle staggers them;
+    // the cost is a small bubble at each ptr->task transition.)
+    assign task_fifo_rd_en = exec_idle && !task_fifo_empty && exec_prod_safe;
 
     reg                         task_fifo_rd_en_d1;
     reg [`TASK_GROUP_WIDTH-1:0] task_fifo_rd_data_d1;
@@ -757,7 +849,7 @@ module pe_top #(
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
             mac_lane_valid_r<=0; mac_lane_task_r<=0;
-        end else if (exec_state==EXEC_PTR && exec_prod_safe) begin
+        end else if (exec_valid_d1) begin
             mac_lane_valid_r <= 16'hFFFF;
             mac_lane_task_r[0 *`TASK_WIDTH+:`TASK_WIDTH]<=exec_sg0;
             mac_lane_task_r[1 *`TASK_WIDTH+:`TASK_WIDTH]<=exec_sg1;
