@@ -104,13 +104,19 @@ module row_accumulator_16bank #(
     reg  [15:0]            eligible;
     reg  [4:0]             lt [0:15];  // # of lower-index eligible same-bank lanes
     reg  [15:0]            win0;       // lowest    eligible lane targeting its bank
-    reg  [15:0]            win1;       // 2nd-lowest eligible lane targeting its bank
+    reg  [15:0]            win1;       // 2nd-lowest
+    reg  [15:0]            win2;       // 3rd-lowest
+    reg  [15:0]            win3;       // 4th-lowest
     reg  [15:0]            lane_enq;   // lane enqueued this cycle (gated by free)
-    reg  [15:0]            bank_wr_en0,  bank_wr_en1;
+    reg  [15:0]            bank_wr_en0,  bank_wr_en1,  bank_wr_en2,  bank_wr_en3;
     reg  [BANK_ADDR_W-1:0] bank_wr_addr0 [0:15];
     reg  [BANK_ADDR_W-1:0] bank_wr_addr1 [0:15];
+    reg  [BANK_ADDR_W-1:0] bank_wr_addr2 [0:15];
+    reg  [BANK_ADDR_W-1:0] bank_wr_addr3 [0:15];
     reg  [PROD_W-1:0]      bank_wr_data0 [0:15];
     reg  [PROD_W-1:0]      bank_wr_data1 [0:15];
+    reg  [PROD_W-1:0]      bank_wr_data2 [0:15];
+    reg  [PROD_W-1:0]      bank_wr_data3 [0:15];
 
     integer ji, ki, ni;
     always @(*) begin
@@ -118,7 +124,7 @@ module row_accumulator_16bank #(
             eligible[ji] = active && lane_valid[ji] && !done_mask[ji];
 
         // lt[j] = number of lower-index eligible lanes targeting the same bank;
-        // lt==0 -> bank's 1st lane (port0), lt==1 -> its 2nd (port1).
+        // lt==k -> this lane is the bank's (k+1)-th lane -> write port k.
         for (ji = 0; ji < 16; ji = ji + 1) begin
             lt[ji] = 5'd0;
             for (ki = 0; ki < 16; ki = ki + 1)
@@ -128,15 +134,18 @@ module row_accumulator_16bank #(
         for (ji = 0; ji < 16; ji = ji + 1) begin
             win0[ji] = eligible[ji] && (lt[ji] == 5'd0);
             win1[ji] = eligible[ji] && (lt[ji] == 5'd1);
+            win2[ji] = eligible[ji] && (lt[ji] == 5'd2);
+            win3[ji] = eligible[ji] && (lt[ji] == 5'd3);
         end
 
-        // port0 lane needs >=1 free slot; port1 needs >=2 (shares the cycle with
-        // port0).  Lanes beyond the 2nd, or that don't fit, wait for a later cycle.
+        // port k lane needs >=(k+1) free slots (shares the cycle with ports 0..k-1).
         for (ji = 0; ji < 16; ji = ji + 1)
             lane_enq[ji] = (win0[ji] && (free_arr[lbid[ji]] >= 1)) ||
-                           (win1[ji] && (free_arr[lbid[ji]] >= 2));
+                           (win1[ji] && (free_arr[lbid[ji]] >= 2)) ||
+                           (win2[ji] && (free_arr[lbid[ji]] >= 3)) ||
+                           (win3[ji] && (free_arr[lbid[ji]] >= 4));
 
-        // per-bank two write ports (<=1 lane per win-rank per bank)
+        // per-bank four write ports (<=1 lane per win-rank per bank)
         for (ni = 0; ni < 16; ni = ni + 1) begin
             bank_wr_en0[ni]   = 1'b0;
             bank_wr_addr0[ni] = {BANK_ADDR_W{1'b0}};
@@ -144,6 +153,12 @@ module row_accumulator_16bank #(
             bank_wr_en1[ni]   = 1'b0;
             bank_wr_addr1[ni] = {BANK_ADDR_W{1'b0}};
             bank_wr_data1[ni] = {PROD_W{1'b0}};
+            bank_wr_en2[ni]   = 1'b0;
+            bank_wr_addr2[ni] = {BANK_ADDR_W{1'b0}};
+            bank_wr_data2[ni] = {PROD_W{1'b0}};
+            bank_wr_en3[ni]   = 1'b0;
+            bank_wr_addr3[ni] = {BANK_ADDR_W{1'b0}};
+            bank_wr_data3[ni] = {PROD_W{1'b0}};
             for (ji = 0; ji < 16; ji = ji + 1) begin
                 if (win0[ji] && (lbid[ji] == ni[3:0]) && (free_arr[ni] >= 1)) begin
                     bank_wr_en0[ni]   = 1'b1;
@@ -154,6 +169,16 @@ module row_accumulator_16bank #(
                     bank_wr_en1[ni]   = 1'b1;
                     bank_wr_addr1[ni] = laddr[ji];
                     bank_wr_data1[ni] = lprod[ji];
+                end
+                if (win2[ji] && (lbid[ji] == ni[3:0]) && (free_arr[ni] >= 3)) begin
+                    bank_wr_en2[ni]   = 1'b1;
+                    bank_wr_addr2[ni] = laddr[ji];
+                    bank_wr_data2[ni] = lprod[ji];
+                end
+                if (win3[ji] && (lbid[ji] == ni[3:0]) && (free_arr[ni] >= 4)) begin
+                    bank_wr_en3[ni]   = 1'b1;
+                    bank_wr_addr3[ni] = laddr[ji];
+                    bank_wr_data3[ni] = lprod[ji];
                 end
             end
         end
@@ -208,6 +233,8 @@ module row_accumulator_16bank #(
         .clk(clk), .rst_n(rst_n), .row_epoch(row_epoch), \
         .wr_en0(bank_wr_en0[N]), .wr_addr0(bank_wr_addr0[N]), .wr_data0(bank_wr_data0[N]), \
         .wr_en1(bank_wr_en1[N]), .wr_addr1(bank_wr_addr1[N]), .wr_data1(bank_wr_data1[N]), \
+        .wr_en2(bank_wr_en2[N]), .wr_addr2(bank_wr_addr2[N]), .wr_data2(bank_wr_data2[N]), \
+        .wr_en3(bank_wr_en3[N]), .wr_addr3(bank_wr_addr3[N]), .wr_data3(bank_wr_data3[N]), \
         .free_count(FREE), .rmw_busy(RMW), .fifo_empty(EMP), \
         .tag_clear_en(tag_clear_pulse), .tag_clear_busy(CLR), \
         .drain_rd_addr(drain_rd_addr), .drain_tag(DTAG), .drain_acc(DACC) \
