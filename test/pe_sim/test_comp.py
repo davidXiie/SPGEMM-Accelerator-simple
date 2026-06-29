@@ -15,11 +15,14 @@ MAX_N=512; C_ROW_STRIDE=MAX_N
 # ---------------------------------------------------------------------------
 # Descriptor packing/unpacking helpers (must match pe_top.v bit layout)
 #
-# A desc (36-bit): {3'b0, a_off[13:0], a_nnz[9:0], c_row[8:0]}
+# A desc streamed to HW (36-bit): {2'b0, a_off[14:0], a_nnz[9:0], c_row[8:0]} — HW
+# reads a_off at bits [33:19] (15-bit, covers A_NNZ_SLOT_PER_PE=28672).  The test's
+# GLOBAL Ad reuses a_desc with offsets up to total-A-nnz (~17-bit); those live only
+# in Python (golden / partition / per-PE copy), never streamed, so a_desc_off reads 17b.
 def a_desc(off, nnz, crow): return (int(off) << 19) | (int(nnz) << 9) | int(crow)
 def a_desc_crow(d): return int(d) & 0x1FF
 def a_desc_nnz(d):  return (int(d) >> 9) & 0x3FF
-def a_desc_off(d):  return (int(d) >> 19) & 0x3FFF
+def a_desc_off(d):  return (int(d) >> 19) & 0x1FFFF  # 17-bit: global A offset can exceed 15b
 
 # B desc (32-bit): {5'b0, b_off[16:0], b_nnz[9:0]}
 def b_desc(off, nnz): return (int(off) << 10) | int(nnz)
@@ -592,8 +595,9 @@ def verify(dut, M, N, Ad, gf, cp):
                     if exp != 0.0: nz_ok += 1
                     else:          z_ok  += 1
                 else:
-                    if e<5:dut._log.error("C[%d][%d]: got %g, exp %g (diff=%g, ULP=%d)",gid,j,act,exp,exp-act,ulp);e+=1
-                    elif e==5:dut._log.error("... (further errors suppressed)");e+=1
+                    if e<5:dut._log.error("C[%d][%d]: got %g, exp %g (diff=%g, ULP=%d)",gid,j,act,exp,exp-act,ulp)
+                    elif e==5:dut._log.error("... (further errors suppressed)")
+                    e+=1   # always count (was capped at 6 -> under-reported)
             else:
                 if exp!=0.0:nz_ok+=1
                 else:z_ok+=1
@@ -1171,8 +1175,9 @@ async def test_comp_peak_cluster(dut):
         C_ROW_ADDR_BITS=8 COCOTB_TESTCASE=test_comp_peak_cluster bash run_cluster.sh
     """
     T = 2
-    Ad, Ac, Av, An, M, K  = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False, subdir='TC2_PEAK')
-    Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True,  subdir='TC2_PEAK')
+    sub = os.environ.get('PEAK_SUBDIR', 'TC2_PEAK')   # override for smaller dense repros
+    Ad, Ac, Av, An, M, K  = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False, subdir=sub)
+    Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True,  subdir=sub)
     assert K == K2
     Bc_hw = [int(c) & 0xFFFF for c in Bc]
     gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc_hw, Bv, M, N, K)

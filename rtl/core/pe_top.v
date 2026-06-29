@@ -68,13 +68,44 @@ module pe_top #(
     //=========================================================================
     // SRAM declarations
     //=========================================================================
-    // Synchronous (registered) reads + ram_style="block" so these 28k-deep buffers
-    // infer Block RAM instead of distributed RAM (LUTRAM).  A-as-LUTRAM was ~29k
-    // LUT/PE (the dominant "LUT as Memory" cost); BRAM has headroom.  The single
-    // registered read port is shared by the SpGEMM generator and the elementwise
-    // path (mutually exclusive via op_mode), see a_rd_addr below.
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] A_val_buf [0:`A_NNZ_SLOT_PER_PE-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] A_col_buf [0:`A_NNZ_SLOT_PER_PE-1];
+    // A val/col buffers, 16-BANKED by nnz-offset%16 (BRAM, sync read).  Banking lets
+    // the elementwise path read 16 consecutive A elements/cycle (16x its old 1/cycle);
+    // the SpGEMM generator reads one element/cycle by muxing the bank for its offset.
+    // Same total depth as the old single buffers (A_NNZ_SLOT_PER_PE), 1/16 per bank.
+    localparam A_BANK_DEPTH = `A_NNZ_SLOT_PER_PE / 16;   // 28672/16 = 1792
+    localparam A_BADDR_W    = `A_NNZ_ADDR_BITS - 4;      // 11 (bank-local address)
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b0 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b1 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b2 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b3 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b4 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b5 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b6 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b7 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b8 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b9 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b10[0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b11[0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b12[0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b13[0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b14[0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b15[0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b0 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b1 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b2 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b3 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b4 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b5 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b6 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b7 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b8 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b9 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b10[0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b11[0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b12[0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b13[0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b14[0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b15[0:A_BANK_DEPTH-1];
 
     localparam B_BANK_DEPTH = `B_NNZ_SLOT / 16;
     localparam B_DESC_DEPTH = `B_ROW_SLOT;
@@ -120,8 +151,26 @@ module pe_top #(
     // SRAM write ports
     //=========================================================================
     always @(posedge aclk) begin
-        if (a_val_we)  A_val_buf[a_val_waddr]  <= a_val_wdata;
-        if (a_col_we)  A_col_buf[a_col_waddr]  <= a_col_wdata;
+        if (a_val_we) case (a_val_waddr[3:0])
+            4'd0: A_val_b0[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;  4'd1: A_val_b1[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;
+            4'd2: A_val_b2[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;  4'd3: A_val_b3[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;
+            4'd4: A_val_b4[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;  4'd5: A_val_b5[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;
+            4'd6: A_val_b6[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;  4'd7: A_val_b7[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;
+            4'd8: A_val_b8[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;  4'd9: A_val_b9[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;
+            4'd10:A_val_b10[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata; 4'd11:A_val_b11[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;
+            4'd12:A_val_b12[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata; 4'd13:A_val_b13[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;
+            4'd14:A_val_b14[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata; 4'd15:A_val_b15[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;
+        endcase
+        if (a_col_we) case (a_col_waddr[3:0])
+            4'd0: A_col_b0[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;  4'd1: A_col_b1[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;
+            4'd2: A_col_b2[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;  4'd3: A_col_b3[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;
+            4'd4: A_col_b4[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;  4'd5: A_col_b5[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;
+            4'd6: A_col_b6[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;  4'd7: A_col_b7[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;
+            4'd8: A_col_b8[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;  4'd9: A_col_b9[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;
+            4'd10:A_col_b10[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata; 4'd11:A_col_b11[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;
+            4'd12:A_col_b12[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata; 4'd13:A_col_b13[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;
+            4'd14:A_col_b14[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata; 4'd15:A_col_b15[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;
+        endcase
         if (b_desc_we) B_desc_buf[b_desc_waddr] <= b_desc_wdata;
         if (b_col_we) case (b_col_waddr[3:0])
             4'd0:  B_col_b0 [b_col_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_col_wdata;
@@ -205,7 +254,7 @@ module pe_top #(
     // elem address is defined).  fetch_a_val/fetch_k_idx are now the data for the
     // address that was presented LAST cycle, so the generator FSM issues the
     // address one cycle early (GEN_AADDR / the prior GEN_EMIT) — see the FSM.
-    reg  [15:0] a_val_r, a_col_r;
+    wire [15:0] a_val_r, a_col_r;   // muxed single A element (== A[a_rd_addr]); see read block
     wire [15:0] fetch_a_val  = a_val_r;
     wire [15:0] fetch_k_idx  = a_col_r;
     wire [31:0] fetch_b_desc = B_desc_buf[fetch_k_idx[`B_ROW_ADDR_BITS-1:0]];
@@ -457,10 +506,34 @@ module pe_top #(
     wire [`A_NNZ_ADDR_BITS-1:0] a_rd_addr =
         op_mode ? elem_a_addr
                 : (cur_a_off[`A_NNZ_ADDR_BITS-1:0] + gen_t_next[`A_NNZ_ADDR_BITS-1:0]);
+    wire [A_BADDR_W-1:0] a_rd_baddr = a_rd_addr[`A_NNZ_ADDR_BITS-1:4];  // bank-local addr
+    wire [3:0]           a_rd_bsel  = a_rd_addr[3:0];                   // bank of a_rd_addr
+    reg  [3:0]           a_rd_bsel_d;                                   // delayed to match reg read
+    // 16-bank registered read (one address, all banks).  Packed so the SpGEMM mux
+    // is a simple part-select; the elem path (Step 2) consumes all 16 lanes.
+    reg [16*16-1:0] a_val_bank_r, a_col_bank_r;
     always @(posedge aclk) begin
-        a_val_r <= A_val_buf[a_rd_addr];
-        a_col_r <= A_col_buf[a_rd_addr];
+        a_rd_bsel_d <= a_rd_bsel;
+        a_val_bank_r[ 0*16+:16]<=A_val_b0 [a_rd_baddr]; a_val_bank_r[ 1*16+:16]<=A_val_b1 [a_rd_baddr];
+        a_val_bank_r[ 2*16+:16]<=A_val_b2 [a_rd_baddr]; a_val_bank_r[ 3*16+:16]<=A_val_b3 [a_rd_baddr];
+        a_val_bank_r[ 4*16+:16]<=A_val_b4 [a_rd_baddr]; a_val_bank_r[ 5*16+:16]<=A_val_b5 [a_rd_baddr];
+        a_val_bank_r[ 6*16+:16]<=A_val_b6 [a_rd_baddr]; a_val_bank_r[ 7*16+:16]<=A_val_b7 [a_rd_baddr];
+        a_val_bank_r[ 8*16+:16]<=A_val_b8 [a_rd_baddr]; a_val_bank_r[ 9*16+:16]<=A_val_b9 [a_rd_baddr];
+        a_val_bank_r[10*16+:16]<=A_val_b10[a_rd_baddr]; a_val_bank_r[11*16+:16]<=A_val_b11[a_rd_baddr];
+        a_val_bank_r[12*16+:16]<=A_val_b12[a_rd_baddr]; a_val_bank_r[13*16+:16]<=A_val_b13[a_rd_baddr];
+        a_val_bank_r[14*16+:16]<=A_val_b14[a_rd_baddr]; a_val_bank_r[15*16+:16]<=A_val_b15[a_rd_baddr];
+        a_col_bank_r[ 0*16+:16]<=A_col_b0 [a_rd_baddr]; a_col_bank_r[ 1*16+:16]<=A_col_b1 [a_rd_baddr];
+        a_col_bank_r[ 2*16+:16]<=A_col_b2 [a_rd_baddr]; a_col_bank_r[ 3*16+:16]<=A_col_b3 [a_rd_baddr];
+        a_col_bank_r[ 4*16+:16]<=A_col_b4 [a_rd_baddr]; a_col_bank_r[ 5*16+:16]<=A_col_b5 [a_rd_baddr];
+        a_col_bank_r[ 6*16+:16]<=A_col_b6 [a_rd_baddr]; a_col_bank_r[ 7*16+:16]<=A_col_b7 [a_rd_baddr];
+        a_col_bank_r[ 8*16+:16]<=A_col_b8 [a_rd_baddr]; a_col_bank_r[ 9*16+:16]<=A_col_b9 [a_rd_baddr];
+        a_col_bank_r[10*16+:16]<=A_col_b10[a_rd_baddr]; a_col_bank_r[11*16+:16]<=A_col_b11[a_rd_baddr];
+        a_col_bank_r[12*16+:16]<=A_col_b12[a_rd_baddr]; a_col_bank_r[13*16+:16]<=A_col_b13[a_rd_baddr];
+        a_col_bank_r[14*16+:16]<=A_col_b14[a_rd_baddr]; a_col_bank_r[15*16+:16]<=A_col_b15[a_rd_baddr];
     end
+    // SpGEMM single-element read: mux the bank for a_rd_addr (1-cyc-delayed select).
+    assign a_val_r = a_val_bank_r[a_rd_bsel_d*16 +: 16];
+    assign a_col_r = a_col_bank_r[a_rd_bsel_d*16 +: 16];
 
     // Phase B element: abs index = elem_b_off + elem_j; bank = abs%16, addr = abs/16
     wire [16:0] elem_b_abs  = elem_b_off + {1'b0, elem_j};
@@ -1303,7 +1376,10 @@ module pe_top #(
                 PE_IDLE:          if (start) row_idx<=0;
                 PE_LOAD_ROW_DESC: if (a_desc_valid) begin
                     cur_c_row<={{(`MAX_DIM_BITS-9){1'b0}}, a_desc_data[8:0]};
-                    cur_a_off<={18'b0,a_desc_data[32:19]};
+                    // a_off is 15 bits [33:19] (was 14 -> truncated above 16383,
+                    // which a dense PE's offset exceeds: 153 nnz/row x >=108 rows).
+                    // A_NNZ_SLOT_PER_PE=28672 needs 15 bits.
+                    cur_a_off<={17'b0,a_desc_data[33:19]};
                     cur_a_nnz<={6'b0, a_desc_data[18:9]};
                 end
                 // New row starting on this acc -> its generation is not done yet.
