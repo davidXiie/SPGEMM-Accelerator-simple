@@ -1110,13 +1110,20 @@ async def test_comp_tiled_cluster(dut):
                   n_pe, M, K, K2, N, M, N, T, row_counts)
 
     cp_full = {}
+    tot_cyc = 0
+    lane_busy_sum = [0] * 16
+    rmw_busy_sum  = [0] * 16
     for t in range(T):
         Bd_t, Bc_t, Bv_t, lo, width = slice_b_columns(Bd, Bc_hw, Bv, K2, N, t, T)
         await reset_pulse_cluster(dut)
         dut.N.value = width
         await LBdata_cluster(dut, Bc_t, Bv_t)
         await LBdesc_cluster(dut, Bd_t)
-        cp_t, cyc, _, _ = await run_cluster(dut, row_counts, n_pe, pe_desc, width)
+        cp_t, cyc, lane_busy, rmw_busy = await run_cluster(dut, row_counts, n_pe, pe_desc, width)
+        tot_cyc += cyc
+        for i in range(16):
+            lane_busy_sum[i] += lane_busy[i]
+            rmw_busy_sum[i]  += rmw_busy[i]
         for key, val in cp_t.items():
             r  = key // C_ROW_STRIDE
             lc = key %  C_ROW_STRIDE
@@ -1130,6 +1137,24 @@ async def test_comp_tiled_cluster(dut):
     else:
         dut._log.error("TILED CLUSTER VERIFICATION: FAILED (%d mismatches)", e)
     assert e == 0, f"{e} mismatches in tiled cluster C"
+
+    # Performance: cycles summed over the T passes; util over n_pe lanes x tot_cyc.
+    total_macs = count_total_macs(Ad, Ac, Bd, M)
+    lane_utils = [lb / (n_pe * tot_cyc) * 100 if tot_cyc > 0 else 0.0 for lb in lane_busy_sum]
+    rmw_utils  = [rb / (n_pe * tot_cyc) * 100 if tot_cyc > 0 else 0.0 for rb in rmw_busy_sum]
+    dut._log.info("=" * 70)
+    dut._log.info("TILED CLUSTER STATISTICS (T=%d, %d PEs):", T, n_pe)
+    dut._log.info("  Total wall-time cycles (sum of %d tiles):  %d", T, tot_cyc)
+    dut._log.info("  Total MAC ops:                             %d", total_macs)
+    dut._log.info("  Per-lane MAC utilization (summed across %d PEs x %d tiles):", n_pe, T)
+    for i in range(16):
+        dut._log.info("    Lane %d: %8d PE-cycles  →  %.2f%%", i, lane_busy_sum[i], lane_utils[i])
+    dut._log.info("  Average MAC util:                          %.2f%%", sum(lane_utils) / 16)
+    dut._log.info("  Per-bank RMW utilization (summed across %d PEs x %d tiles):", n_pe, T)
+    for i in range(16):
+        dut._log.info("    Bank %d: %8d PE-cycles  →  %.2f%%", i, rmw_busy_sum[i], rmw_utils[i])
+    dut._log.info("  Average RMW util:                          %.2f%%", sum(rmw_utils) / 16)
+    dut._log.info("=" * 70)
     dut._log.info("%d-PE TILED CLUSTER TEST PASSED", n_pe)
 
 
@@ -1180,13 +1205,20 @@ async def test_comp_peak_cluster(dut):
                   row_counts, a_nnz_pe, 28672, Bn, Bn // T, 40960)
 
     cp_full = {}
+    tot_cyc = 0
+    lane_busy_sum = [0] * 16
+    rmw_busy_sum  = [0] * 16
     for t in range(T):
         Bd_t, Bc_t, Bv_t, lo, width = slice_b_columns(Bd, Bc_hw, Bv, K2, N, t, T)
         await reset_pulse_cluster(dut)
         dut.N.value = width
         await LBdata_cluster(dut, Bc_t, Bv_t)
         await LBdesc_cluster(dut, Bd_t)
-        cp_t, cyc, _, _ = await run_cluster(dut, row_counts, n_pe, pe_desc, width)
+        cp_t, cyc, lane_busy, rmw_busy = await run_cluster(dut, row_counts, n_pe, pe_desc, width)
+        tot_cyc += cyc
+        for i in range(16):
+            lane_busy_sum[i] += lane_busy[i]
+            rmw_busy_sum[i]  += rmw_busy[i]
         for key, val in cp_t.items():
             r  = key // C_ROW_STRIDE
             lc = key %  C_ROW_STRIDE
@@ -1200,6 +1232,17 @@ async def test_comp_peak_cluster(dut):
     else:
         dut._log.error("PEAK CLUSTER VERIFICATION: FAILED (%d mismatches)", e)
     assert e == 0, f"{e} mismatches in peak cluster C"
+
+    total_macs = count_total_macs(Ad, Ac, Bd, M)
+    lane_utils = [lb / (n_pe * tot_cyc) * 100 if tot_cyc > 0 else 0.0 for lb in lane_busy_sum]
+    rmw_utils  = [rb / (n_pe * tot_cyc) * 100 if tot_cyc > 0 else 0.0 for rb in rmw_busy_sum]
+    dut._log.info("=" * 70)
+    dut._log.info("PEAK CLUSTER STATISTICS (T=%d, %d PEs):", T, n_pe)
+    dut._log.info("  Total wall-time cycles (sum of %d tiles):  %d", T, tot_cyc)
+    dut._log.info("  Total MAC ops:                             %d", total_macs)
+    dut._log.info("  Average MAC util:                          %.2f%%", sum(lane_utils) / 16)
+    dut._log.info("  Average RMW util:                          %.2f%%", sum(rmw_utils) / 16)
+    dut._log.info("=" * 70)
     dut._log.info("%d-PE PEAK CLUSTER TEST PASSED", n_pe)
 
 
