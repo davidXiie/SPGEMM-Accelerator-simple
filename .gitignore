@@ -1,0 +1,10 @@
+# Simulation build artifacts
+**/sim_build/
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# VCD / waveform dumps
+*.vcd
+*.fst
