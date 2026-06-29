@@ -4,7 +4,7 @@ set PATH=C:\iverilog\bin;C:\Users\Administrator\.conda\envs\gcnenv;C:\Users\Admi
 
 set COCOTB_TEST_MODULES=test_accelerator_axi
 set COCOTB_TESTCASE=test_axi_case1
-set COCOTB_TOPLEVEL=tb_accelerator_axi
+set COCOTB_TOPLEVEL=tb_pe_cluster
 set COCOTB_LOG_LEVEL=INFO
 set COCOTB_SIM=1
 set PYTHONIOENCODING=utf-8
@@ -20,11 +20,37 @@ for %%F in ("%LIBPYTHON_LOC%") do set LIBPYTHON_DIR=%%~dpF
 set PATH=%LIBPYTHON_DIR%;%PATH%
 
 echo ========================================
-echo Running AXI accelerator test...
+echo [1/2] Compiling pe_cluster testbench...
+echo ========================================
+if not exist sim_build mkdir sim_build
+
+iverilog -g2012 ^
+    -DCOCOTB_SIM=1 ^
+    -DC_ROW_ADDR_BITS=8 ^
+    -I../../rtl/include ^
+    -s tb_pe_cluster ^
+    -o sim_build/sim_axi.vvp ^
+    ../../rtl/sim/tb_pe_cluster.v ^
+    ../../rtl/core/pe_cluster.v ^
+    ../../rtl/core/pe_top.v ^
+    ../../rtl/core/pe_mul_array.v ^
+    ../../rtl/core/fp16_mul.v ^
+    ../../rtl/core/fp16_add.v ^
+    ../../rtl/core/accum_bank.v ^
+    ../../rtl/core/accum_bank_16.v ^
+    ../../rtl/core/row_accumulator_16bank.v ^
+    ../../rtl/infrastructure/scratchpad.v
+
+if %ERRORLEVEL% NEQ 0 (echo [FAIL] Compile error & exit /b 1)
+echo [OK] Compile passed.
+
+echo.
+echo ========================================
+echo [2/2] Running PE direct test...
 echo ========================================
 
 vvp -M "%COCOTB_LIB%" -m %COCOTB_VPI_MODULE% sim_build/sim_axi.vvp
 
 echo ========================================
-echo Done (exit: %ERRORLEVEL%)
+echo Done.
 echo ========================================
