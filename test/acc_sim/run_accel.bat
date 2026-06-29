@@ -1,72 +1,68 @@
 @echo off
-::
-:: Windows runner for tb_pe_cluster (N_PE-wide) + Cocotb + Icarus Verilog.
-::
-:: Usage:
-::   conda activate gcnenv
-::   run_cluster.bat
-::
-:: Optional overrides:
-::   set COCOTB_TESTCASE=test_comp_case1_cluster && run_cluster.bat
+:::
+::: Windows runner for full accelerator + Cocotb + Icarus Verilog.
+:::
+::: Usage: run_accel.bat
+::: Optional: set COCOTB_TESTCASE=test_accel_case1 && run_accel.bat
 
 setlocal enabledelayedexpansion
 
 rem --- cocotb test configuration ---
-if not defined COCOTB_TEST_MODULES  set COCOTB_TEST_MODULES=test_comp
-if not defined COCOTB_TESTCASE      set COCOTB_TESTCASE=test_comp_case1_cluster
-if not defined COCOTB_TOPLEVEL      set COCOTB_TOPLEVEL=tb_pe_cluster
+if not defined COCOTB_TEST_MODULES  set COCOTB_TEST_MODULES=test_accelerator
+if not defined COCOTB_TESTCASE      set COCOTB_TESTCASE=test_accel_case1
+if not defined COCOTB_TOPLEVEL      set COCOTB_TOPLEVEL=tb_accelerator
 if not defined COCOTB_LOG_LEVEL     set COCOTB_LOG_LEVEL=INFO
 set COCOTB_SIM=1
 set PYTHONIOENCODING=utf-8
 
 rem --- project root ---
-if not defined PROJ_ROOT set PROJ_ROOT=d:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple
+if not defined PROJ_ROOT for %%I in ("%~dp0..\..") do set PROJ_ROOT=%%~fI
 
-rem --- ensure this script's directory is on Python path ---
+rem --- Python path ---
 set PYTHONPATH=%~dp0;%PYTHONPATH%
 
-rem --- check required tools ---
-where iverilog >nul 2>&1 || (echo [FAIL] iverilog not found in PATH. & exit /b 1)
-where vvp      >nul 2>&1 || (echo [FAIL] vvp not found in PATH. & exit /b 1)
-where cocotb-config >nul 2>&1 || (
-    echo [FAIL] cocotb-config not found in PATH.
-    echo        Activate your Conda environment, e.g.: conda activate gcnenv
-    exit /b 1
-)
+rem --- check tools ---
+where iverilog >nul 2>&1 || (echo [FAIL] iverilog not found & exit /b 1)
+where vvp      >nul 2>&1 || (echo [FAIL] vvp not found & exit /b 1)
+where cocotb-config >nul 2>&1 || (echo [FAIL] cocotb-config not found & exit /b 1)
 
-rem --- auto-detect cocotb paths ---
+rem --- cocotb paths ---
 for /f "delims=" %%i in ('cocotb-config --lib-dir')            do set COCOTB_LIB=%%i
 for /f "delims=" %%i in ('cocotb-config --lib-name vpi icarus') do set COCOTB_VPI_MODULE=%%i
 for /f "delims=" %%i in ('cocotb-config --libpython')           do set LIBPYTHON_LOC=%%i
 for /f "delims=" %%i in ('cocotb-config --python-bin')          do set PYGPI_PYTHON_BIN=%%i
 
-if not exist "%COCOTB_LIB%" (
-    echo [FAIL] Cocotb library dir not found: %COCOTB_LIB%
-    exit /b 1
-)
-if not exist "%LIBPYTHON_LOC%" (
-    echo [FAIL] Python shared library not found: %LIBPYTHON_LOC%
-    exit /b 1
-)
+if not exist "%COCOTB_LIB%" (echo [FAIL] cocotb lib not found & exit /b 1)
+if not exist "%LIBPYTHON_LOC%" (echo [FAIL] libpython not found & exit /b 1)
 
-rem --- make libpython visible to vvp ---
+rem --- libpython visibility ---
 for %%F in ("%LIBPYTHON_LOC%") do set LIBPYTHON_DIR=%%~dpF
 set PATH=%LIBPYTHON_DIR%;%PATH%
 
-rem --- change to script directory ---
+rem --- C_ROW_ADDR_BITS ---
+if not defined C_ROW_ADDR_BITS set C_ROW_ADDR_BITS=8
+
+rem --- cd to script dir ---
 cd /d "%~dp0"
 
 echo ========================================
-echo [1/2] Compiling %COCOTB_TOPLEVEL%...
+echo [1/2] Compiling full accelerator...
 echo ========================================
 if not exist sim_build mkdir sim_build
 
 iverilog -g2012 ^
     -DCOCOTB_SIM=1 ^
+    -DC_ROW_ADDR_BITS=%C_ROW_ADDR_BITS% ^
     -I"%PROJ_ROOT%/rtl/include" ^
     -s %COCOTB_TOPLEVEL% ^
-    -o sim_build/sim_cluster.vvp ^
-    "%PROJ_ROOT%/rtl/sim/tb_pe_cluster.v" ^
+    -o sim_build/sim_accel.vvp ^
+    "%PROJ_ROOT%/rtl/sim/tb_accelerator.v" ^
+    "%PROJ_ROOT%/rtl/core/accelerator_top.v" ^
+    "%PROJ_ROOT%/rtl/core/pe_load_ctrl.v" ^
+    "%PROJ_ROOT%/rtl/core/pe_drain_ctrl.v" ^
+    "%PROJ_ROOT%/rtl/core/a_global_buffer.v" ^
+    "%PROJ_ROOT%/rtl/core/b_global_buffer.v" ^
+    "%PROJ_ROOT%/rtl/core/c_global_buffer.v" ^
     "%PROJ_ROOT%/rtl/core/pe_cluster.v" ^
     "%PROJ_ROOT%/rtl/core/pe_top.v" ^
     "%PROJ_ROOT%/rtl/core/pe_mul_array.v" ^
@@ -77,15 +73,12 @@ iverilog -g2012 ^
     "%PROJ_ROOT%/rtl/core/row_accumulator_16bank.v" ^
     "%PROJ_ROOT%/rtl/infrastructure/scratchpad.v"
 
-if %ERRORLEVEL% NEQ 0 (
-    echo [FAIL] Compile error
-    exit /b 1
-)
+if %ERRORLEVEL% NEQ 0 (echo [FAIL] Compile error & exit /b 1)
 echo [OK] Compile passed.
 
 echo.
 echo ========================================
-echo [2/2] Running Cocotb cluster test...
+echo [2/2] Running Cocotb accelerator test...
 echo ========================================
 echo COCOTB_TEST_MODULES=%COCOTB_TEST_MODULES%
 echo COCOTB_TESTCASE=%COCOTB_TESTCASE%
@@ -95,7 +88,7 @@ echo.
 vvp ^
     -M "%COCOTB_LIB%" ^
     -m %COCOTB_VPI_MODULE% ^
-    sim_build/sim_cluster.vvp
+    sim_build/sim_accel.vvp
 
 echo.
 echo ========================================

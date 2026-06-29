@@ -1,0 +1,8 @@
+<testsuites name="results">
+  <testsuite name="all" package="all">
+    <property name="random_seed" value="1782721656" />
+    <testcase name="test_accel_case1" classname="test_accelerator" file="D:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\acc_sim\test_accelerator.py" lineno="288" time="2850.9340193271637" sim_time_ns="50286990.0" ratio_time="17638.777207431835">
+      <failure error_type="ValueError" error_msg="Can't convert LogicArray to int: it contains non-0/1 values" />
+    </testcase>
+  </testsuite>
+</testsuites>

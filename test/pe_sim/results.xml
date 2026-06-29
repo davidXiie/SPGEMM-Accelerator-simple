@@ -1,27 +1,27 @@
 <testsuites name="results">
   <testsuite name="all" package="all">
-    <property name="random_seed" value="1782693654" />
-    <testcase name="test_comp_case1_p0" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="603" time="0" sim_time_ns="0" ratio_time="0">
+    <property name="random_seed" value="1782724630" />
+    <testcase name="test_comp_case1_p0" classname="test_comp" file="D:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\pe_sim\test_comp.py" lineno="603" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>
-    <testcase name="test_comp_tiled_p0" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="666" time="0" sim_time_ns="0" ratio_time="0">
+    <testcase name="test_comp_tiled_p0" classname="test_comp" file="D:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\pe_sim\test_comp.py" lineno="666" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>
-    <testcase name="test_comp_case1_p1" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="710" time="0" sim_time_ns="0" ratio_time="0">
+    <testcase name="test_comp_case1_p1" classname="test_comp" file="D:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\pe_sim\test_comp.py" lineno="710" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>
-    <testcase name="test_comp_case1_cluster" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="1014" time="0" sim_time_ns="0" ratio_time="0">
+    <testcase name="test_comp_case1_cluster" classname="test_comp" file="D:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\pe_sim\test_comp.py" lineno="1014" time="68.83731842041016" sim_time_ns="369940.0" ratio_time="5374.119859531213" />
+    <testcase name="test_comp_tiled_cluster" classname="test_comp" file="D:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\pe_sim\test_comp.py" lineno="1074" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>
-    <testcase name="test_comp_tiled_cluster" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="1074" time="0" sim_time_ns="0" ratio_time="0">
+    <testcase name="test_comp_peak_cluster" classname="test_comp" file="D:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\pe_sim\test_comp.py" lineno="1161" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>
-    <testcase name="test_comp_peak_cluster" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="1136" time="0" sim_time_ns="0" ratio_time="0">
+    <testcase name="test_elementwise_p0" classname="test_comp" file="D:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\pe_sim\test_comp.py" lineno="1252" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>
-    <testcase name="test_elementwise_p0" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="1209" time="0" sim_time_ns="0" ratio_time="0">
+    <testcase name="test_elementwise_cluster" classname="test_comp" file="D:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\pe_sim\test_comp.py" lineno="1309" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>
-    <testcase name="test_elementwise_cluster" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="1266" time="12.671602487564087" sim_time_ns="44120.0" ratio_time="3481.801141039531" />
   </testsuite>
 </testsuites>
