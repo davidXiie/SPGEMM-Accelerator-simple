@@ -28,18 +28,23 @@ module accum_bank_16 #(
     input  wire                         rst_n,
     input  wire [EPOCH_W-1:0]           row_epoch,
 
-    // Two write ports (port1 only used when port0 is too -> entries land at
-    // tail, tail+1).  Two ports absorb the common 2-way same-bank collision
-    // (Gen2 carry+current) in one cycle; deeper collisions are scattered over
+    // Four write ports (port k only used when all lower ports are too -> entries
+    // land contiguously at tail..tail+k).  Four ports absorb up to a 4-way
+    // same-bank collision in one cycle; deeper collisions are scattered over
     // multiple cycles by row_accumulator_16bank.  The per-bank scatter SELECT
-    // network in the parent scales with the port count, so 2 (vs 4) roughly
-    // halves the accumulator LUT at a ~1.42x (vs 1.0x) throughput cost.
+    // network in the parent scales with the port count (area/throughput knob).
     input  wire                         wr_en0,
     input  wire [BANK_ADDR_W-1:0]      wr_addr0,
     input  wire [PROD_W-1:0]           wr_data0,
     input  wire                         wr_en1,
     input  wire [BANK_ADDR_W-1:0]      wr_addr1,
     input  wire [PROD_W-1:0]           wr_data1,
+    input  wire                         wr_en2,
+    input  wire [BANK_ADDR_W-1:0]      wr_addr2,
+    input  wire [PROD_W-1:0]           wr_data2,
+    input  wire                         wr_en3,
+    input  wire [BANK_ADDR_W-1:0]      wr_addr3,
+    input  wire [PROD_W-1:0]           wr_data3,
     output wire [FIFO_DEPTH_LOG:0]     free_count,
 
     output wire                         rmw_busy,
@@ -102,11 +107,13 @@ module accum_bank_16 #(
     reg                   clr_active;
     assign tag_clear_busy = clr_active;
 
-    // Two-write / single-read FIFO front-end.  waddr1 = tail+1 (port1 implies
-    // port0), so each cycle appends 0, 1, or 2 entries.
+    // Four-write / single-read FIFO front-end.  Port k implies all lower ports,
+    // so entries land contiguously at tail..tail+3; each cycle appends 0..4.
     wire [FIFO_DEPTH_LOG-1:0] waddr0 = fifo_tail;
-    wire [FIFO_DEPTH_LOG-1:0] waddr1 = fifo_tail + {{(FIFO_DEPTH_LOG-1){1'b0}}, 1'b1};
-    wire [1:0] wr_cnt = {1'b0, wr_en0} + {1'b0, wr_en1};
+    wire [FIFO_DEPTH_LOG-1:0] waddr1 = fifo_tail + {{(FIFO_DEPTH_LOG-2){1'b0}}, 2'd1};
+    wire [FIFO_DEPTH_LOG-1:0] waddr2 = fifo_tail + {{(FIFO_DEPTH_LOG-2){1'b0}}, 2'd2};
+    wire [FIFO_DEPTH_LOG-1:0] waddr3 = fifo_tail + {{(FIFO_DEPTH_LOG-2){1'b0}}, 2'd3};
+    wire [2:0] wr_cnt = {2'b0, wr_en0} + {2'b0, wr_en1} + {2'b0, wr_en2} + {2'b0, wr_en3};
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -116,13 +123,15 @@ module accum_bank_16 #(
         end else begin
             if (wr_en0) fifo_mem[waddr0] <= {wr_addr0, wr_data0};
             if (wr_en1) fifo_mem[waddr1] <= {wr_addr1, wr_data1};
-            fifo_tail <= fifo_tail + {{(FIFO_DEPTH_LOG-2){1'b0}}, wr_cnt};
+            if (wr_en2) fifo_mem[waddr2] <= {wr_addr2, wr_data2};
+            if (wr_en3) fifo_mem[waddr3] <= {wr_addr3, wr_data3};
+            fifo_tail <= fifo_tail + {{(FIFO_DEPTH_LOG-3){1'b0}}, wr_cnt};
 
             if (deq_fire)
                 fifo_head <= fifo_head + {{(FIFO_DEPTH_LOG-1){1'b0}}, 1'b1};
 
             fifo_cnt <= fifo_cnt
-                      + {{(FIFO_DEPTH_LOG-1){1'b0}}, wr_cnt}
+                      + {{(FIFO_DEPTH_LOG-2){1'b0}}, wr_cnt}
                       - {{FIFO_DEPTH_LOG{1'b0}}, deq_fire};
         end
     end

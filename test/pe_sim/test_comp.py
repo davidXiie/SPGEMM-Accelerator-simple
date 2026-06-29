@@ -56,7 +56,7 @@ def slice_bits(logic_value, lo, width):
 #-------------------------------------------------------------------------
 # Load competition matrix files
 #-------------------------------------------------------------------------
-def load_comp_matrix(index_file, matrix_file, is_B=False):
+def load_comp_matrix(index_file, matrix_file, is_B=False, subdir='TC1_RAW'):
     """Load competition format matrices, return compact row-desc.
 
     A (CSR): index_file rows = row indices, matrix_file = (row_weight, cols)
@@ -70,7 +70,7 @@ def load_comp_matrix(index_file, matrix_file, is_B=False):
       [15: 0] c_row   — global C output row id (host readback only)
     """
     base = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                        '..', 'test_case_for_reference', 'TC1_RAW')
+                        '..', 'test_case_for_reference', subdir)
     idx_path = os.path.join(base, index_file)
     mat_path = os.path.join(base, matrix_file)
 
@@ -142,6 +142,33 @@ def align_b_16wide(Bd, Bc, Bv):
             new_Bv.append(Bv[start + t])
         new_off += nnz
     return new_Bd, new_Bc, new_Bv
+
+def slice_b_columns(Bd, Bc, Bv, K, N, t, T):
+    """Column-tile of B for output-column tiling.
+
+    Tile t covers GLOBAL columns [t*tw, t*tw+width).  Returns a CSR of B
+    restricted to that column range (Bd_t, Bc_t, Bv_t) with TILE-LOCAL column
+    indices (col - lo), plus (lo, width).  Each B row keeps only its nonzeros
+    whose column falls in the tile.  Because C's columns are independent, running
+    the PE once per tile (with N=width) and re-basing the output columns by lo
+    reconstructs the full C while only 1/T of B need be resident at a time.
+    """
+    tw  = (N + T - 1) // T
+    lo  = t * tw
+    hi  = min(lo + tw, N)
+    width = hi - lo
+    Bd_t = []; Bc_t = []; Bv_t = []; off = 0
+    for k in range(K):
+        d = Bd[k]
+        start = b_desc_off(d); nnz = b_desc_nnz(d)
+        cnt = 0
+        for u in range(nnz):
+            c = int(Bc[start + u]) & 0xFFFF
+            if lo <= c < hi:
+                Bc_t.append(c - lo); Bv_t.append(Bv[start + u]); cnt += 1
+        Bd_t.append(b_desc(off, cnt)); off += cnt
+    return Bd_t, Bc_t, Bv_t, lo, width
+
 
 def compute_col_perm(Bc_raw, N):
     """Greedy column→bank assignment to balance RMW load.
@@ -353,6 +380,17 @@ async def rst(dut):
     dut.a_desc_valid.value=0; dut.a_desc_data.value=0
     dut.a_val_we.value=0; dut.a_col_we.value=0
     dut.b_col_we.value=0; dut.b_val_we.value=0; dut.b_desc_we.value=0
+
+async def reset_pulse(dut):
+    """Light reset (single PE): pulse aresetn to clear the FSMs/accumulator tags
+    between column-tile passes WITHOUT restarting the clock or reloading the A
+    buffers (BRAM survives reset)."""
+    dut.aresetn.value = 0
+    await ClockCycles(dut.aclk, 5)
+    dut.aresetn.value = 1
+    await ClockCycles(dut.aclk, 40)
+    dut.start.value = 0
+
 
 async def read_c_buffer(dut, Ad, N):
     """Read internal per-PE C buffer — DISABLED (c_bank removed). Returns empty dict."""
@@ -623,6 +661,50 @@ async def test_comp_case1_p0(dut):
     dut._log.info("  Average RMW util:  %.2f%%", sum(rmw_utils) / 16)
     dut._log.info("=" * 70)
     dut._log.info("COMPETITION TEST PASSED")
+
+#=========================================================================
+@cocotb.test()
+async def test_comp_tiled_p0(dut):
+    """Single-PE OUTPUT-COLUMN TILING: split B into T column tiles, run the PE
+    once per tile (N=tile width, tile-local columns), and reassemble the full C.
+    Proves only 1/T of B needs to be resident at a time — the basis for cutting
+    the per-PE B BRAM in the cluster."""
+    T = 2
+    Ad, Ac, Av, An, M, K  = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False)
+    Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True)
+    assert K == K2
+    Bc_hw = [int(c) & 0xFFFF for c in Bc]
+    gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc_hw, Bv, M, N, K)
+
+    dut._log.info("=" * 70)
+    dut._log.info("TILED TEST: A(%d,%d) x B(%d,%d) -> C(%d,%d), T=%d column tiles",
+                  M, K, K2, N, M, N, T)
+
+    await rst(dut); dut.M.value = M; dut.K.value = K
+    await LA_val(dut, Av); await LAcol(dut, Ac)   # A loaded ONCE, reused every pass
+
+    cp_full = {}
+    for t in range(T):
+        Bd_t, Bc_t, Bv_t, lo, width = slice_b_columns(Bd, Bc_hw, Bv, K2, N, t, T)
+        await reset_pulse(dut)
+        dut.N.value = width
+        await LBdata(dut, Bc_t, Bv_t)
+        await LBdesc(dut, Bd_t)
+        cp_t, cyc, _, _ = await run_pe(dut, M, Ad, width, to=50000000)
+        for key, val in cp_t.items():
+            r  = key // C_ROW_STRIDE
+            lc = key %  C_ROW_STRIDE
+            cp_full[r * C_ROW_STRIDE + (lo + lc)] = val
+        dut._log.info("  tile %d: cols[%d:%d] width=%d  cyc=%d  nz=%d",
+                      t, lo, lo + width, width, cyc, len(cp_t))
+
+    e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp_full)
+    if e == 0:
+        dut._log.info("TILED VERIFICATION: PASSED (%d nz correct, %d z correct)", nz_ok, z_ok)
+    else:
+        dut._log.error("TILED VERIFICATION: FAILED (%d mismatches)", e)
+    assert e == 0, f"{e} mismatches in tiled C"
+    dut._log.info("TILED TEST PASSED")
 
 #=========================================================================
 @cocotb.test()
@@ -986,6 +1068,139 @@ async def test_comp_case1_cluster(dut):
     dut._log.info("  Average RMW util:          %.2f%%", sum(rmw_utils) / 16)
     dut._log.info("=" * 70)
     dut._log.info("%d-PE CLUSTER TEST PASSED", n_pe)
+
+
+#=========================================================================
+@cocotb.test()
+async def test_comp_tiled_cluster(dut):
+    """N-PE cluster + OUTPUT-COLUMN TILING (T): A row-partitioned (round-robin),
+    B column-tiled and broadcast ONE tile at a time so each PE only ever holds
+    1/T of B.  This is the configuration that lets more PEs fit under the BRAM
+    cap (B is replicated per PE)."""
+    T = 2
+    Ad, Ac, Av, An, M, K  = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False)
+    Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True)
+    assert K == K2
+    Bc_hw = [int(c) & 0xFFFF for c in Bc]
+    gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc_hw, Bv, M, N, K)
+
+    await rst_cluster(dut)
+    n_pe = int(dut.n_pe_sig.value)
+
+    # Round-robin A row partition (structural, no matrix-feature analysis).
+    pe_desc = [[] for _ in range(n_pe)]
+    pe_val  = [[] for _ in range(n_pe)]
+    pe_col  = [[] for _ in range(n_pe)]
+    for ri in range(M):
+        pid  = ri % n_pe
+        gr   = a_desc_crow(Ad[ri]); nnza = a_desc_nnz(Ad[ri]); gs = a_desc_off(Ad[ri])
+        ls   = len(pe_val[pid])
+        for u in range(nnza):
+            pe_val[pid].append(Av[gs + u]); pe_col[pid].append(Ac[gs + u] & 0xFFFF)
+        pe_desc[pid].append(a_desc(ls, nnza, gr))
+    row_counts = [len(pe_desc[p]) for p in range(n_pe)]
+
+    dut.M.value = M; dut.K.value = K
+    for pid in range(n_pe):                      # A loaded ONCE, reused every pass
+        await LA_val_pe(dut, pid, pe_val[pid])
+        await LAcol_pe(dut, pid, pe_col[pid])
+
+    dut._log.info("=" * 70)
+    dut._log.info("%d-PE TILED CLUSTER: A(%d,%d)xB(%d,%d) -> C(%d,%d), T=%d, rows=%s",
+                  n_pe, M, K, K2, N, M, N, T, row_counts)
+
+    cp_full = {}
+    for t in range(T):
+        Bd_t, Bc_t, Bv_t, lo, width = slice_b_columns(Bd, Bc_hw, Bv, K2, N, t, T)
+        await reset_pulse_cluster(dut)
+        dut.N.value = width
+        await LBdata_cluster(dut, Bc_t, Bv_t)
+        await LBdesc_cluster(dut, Bd_t)
+        cp_t, cyc, _, _ = await run_cluster(dut, row_counts, n_pe, pe_desc, width)
+        for key, val in cp_t.items():
+            r  = key // C_ROW_STRIDE
+            lc = key %  C_ROW_STRIDE
+            cp_full[r * C_ROW_STRIDE + (lo + lc)] = val
+        dut._log.info("  tile %d: cols[%d:%d] width=%d  cyc=%d  nz=%d",
+                      t, lo, lo + width, width, cyc, len(cp_t))
+
+    e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp_full)
+    if e == 0:
+        dut._log.info("TILED CLUSTER VERIFICATION: PASSED (%d nz, %d z)", nz_ok, z_ok)
+    else:
+        dut._log.error("TILED CLUSTER VERIFICATION: FAILED (%d mismatches)", e)
+    assert e == 0, f"{e} mismatches in tiled cluster C"
+    dut._log.info("%d-PE TILED CLUSTER TEST PASSED", n_pe)
+
+
+@cocotb.test()
+async def test_comp_peak_cluster(dut):
+    """PEAK worst-case demand: A(512,512) x B(512,512) at 30% density, where A has
+    max ROW weight (153 nnz/row) and B has max COLUMN weight (153 nnz/col) — the
+    structural worst case for the per-PE A/B buffers.  Dataset: TC2_PEAK.
+
+    Uses output-column tiling T=2 (each PE holds 1/2 of B; full B=78336 nnz would
+    not fit B_NNZ_SLOT=40960, but a 256-col tile=39168 does).  Per-PE peak usage:
+    A ~26163/28672 nnz (91%), B-tile ~39168/40960 (96%), C ~171 rows -> needs
+    C_ROW_ADDR_BITS=8 (M=512 over 3 PEs = 171 rows/PE > 128).  Run with:
+        C_ROW_ADDR_BITS=8 COCOTB_TESTCASE=test_comp_peak_cluster bash run_cluster.sh
+    """
+    T = 2
+    Ad, Ac, Av, An, M, K  = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False, subdir='TC2_PEAK')
+    Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True,  subdir='TC2_PEAK')
+    assert K == K2
+    Bc_hw = [int(c) & 0xFFFF for c in Bc]
+    gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc_hw, Bv, M, N, K)
+
+    await rst_cluster(dut)
+    n_pe = int(dut.n_pe_sig.value)
+
+    # Round-robin A row partition (structural, no matrix-feature analysis).
+    pe_desc = [[] for _ in range(n_pe)]
+    pe_val  = [[] for _ in range(n_pe)]
+    pe_col  = [[] for _ in range(n_pe)]
+    for ri in range(M):
+        pid  = ri % n_pe
+        gr   = a_desc_crow(Ad[ri]); nnza = a_desc_nnz(Ad[ri]); gs = a_desc_off(Ad[ri])
+        ls   = len(pe_val[pid])
+        for u in range(nnza):
+            pe_val[pid].append(Av[gs + u]); pe_col[pid].append(Ac[gs + u] & 0xFFFF)
+        pe_desc[pid].append(a_desc(ls, nnza, gr))
+    row_counts = [len(pe_desc[p]) for p in range(n_pe)]
+    a_nnz_pe   = [len(pe_val[p])  for p in range(n_pe)]
+
+    dut.M.value = M; dut.K.value = K
+    for pid in range(n_pe):                      # A loaded ONCE, reused every pass
+        await LA_val_pe(dut, pid, pe_val[pid])
+        await LAcol_pe(dut, pid, pe_col[pid])
+
+    dut._log.info("=" * 70)
+    dut._log.info("%d-PE PEAK CLUSTER: A(%d,%d)xB(%d,%d) -> C(%d,%d), T=%d", n_pe, M, K, K2, N, M, N, T)
+    dut._log.info("  A rows/PE=%s  A nnz/PE=%s (slot %d)  B nnz=%d (tile~%d, slot %d)",
+                  row_counts, a_nnz_pe, 28672, Bn, Bn // T, 40960)
+
+    cp_full = {}
+    for t in range(T):
+        Bd_t, Bc_t, Bv_t, lo, width = slice_b_columns(Bd, Bc_hw, Bv, K2, N, t, T)
+        await reset_pulse_cluster(dut)
+        dut.N.value = width
+        await LBdata_cluster(dut, Bc_t, Bv_t)
+        await LBdesc_cluster(dut, Bd_t)
+        cp_t, cyc, _, _ = await run_cluster(dut, row_counts, n_pe, pe_desc, width)
+        for key, val in cp_t.items():
+            r  = key // C_ROW_STRIDE
+            lc = key %  C_ROW_STRIDE
+            cp_full[r * C_ROW_STRIDE + (lo + lc)] = val
+        dut._log.info("  tile %d: cols[%d:%d] width=%d  cyc=%d  nz=%d",
+                      t, lo, lo + width, width, cyc, len(cp_t))
+
+    e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp_full)
+    if e == 0:
+        dut._log.info("PEAK CLUSTER VERIFICATION: PASSED (%d nz, %d z)", nz_ok, z_ok)
+    else:
+        dut._log.error("PEAK CLUSTER VERIFICATION: FAILED (%d mismatches)", e)
+    assert e == 0, f"{e} mismatches in peak cluster C"
+    dut._log.info("%d-PE PEAK CLUSTER TEST PASSED", n_pe)
 
 
 #=========================================================================

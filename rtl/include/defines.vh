@@ -98,9 +98,14 @@
 `define A_NNZ_ADDR_BITS    15      // addr space 32768 >= 28672
 
 `define B_ROW_SLOT         512     // >= max K
-`define B_NNZ_SLOT         78848   // >= 78643 (16-bank aligned: 4928*16)
+// OUTPUT-COLUMN TILING (T=2): each pass loads only one column-half of B, so the
+// resident B buffer holds ~1/2 of worst-case B nnz instead of the full 78643.
+// This is the per-PE B-BRAM saving that lets 4 PEs fit (B is broadcast/replicated).
+// 40960 = 16*2560 ≈ 0.52*78643 (small margin over an even column split); bump if
+// the matrices are column-skewed enough that one half exceeds this.
+`define B_NNZ_SLOT         40960   // 16-bank aligned: 2560*16
 `define B_ROW_ADDR_BITS    9       // log2(512)
-`define B_NNZ_ADDR_BITS    17      // 78643 > 2^16, needs 17 bits
+`define B_NNZ_ADDR_BITS    17      // addr port width (over-provisioned; depth = SLOT/16)
 
 `define PE_ACC_DEPTH       512     // >= max N output columns
 `define PE_ACC_ADDR_BITS   9
@@ -128,19 +133,22 @@
 `define INSTR_ADDR_BITS    16     // log2(65536)
 
 //=============================================================================
-// Task & Product Group FIFO parameters
-//   task        = {b_val[15:0], a_val[15:0], col_id[8:0]}    41-bit
-//   task_group  = {lane_valid[7:0], task7..task0}             336-bit
-//   product     = {col_id[8:0], fp16_val[15:0]}              25-bit
-//   prod_group  = {lane_valid[7:0], prod7..prod0}            208-bit
+// Task & Product Group FIFO parameters (widths are for N_MAC=16 lanes/group)
+//   task        = {b_val[15:0], a_val[15:0], col_id[8:0]}     41-bit
+//   task_group  = {comp_sel, lane_valid[15:0], task15..task0} 673-bit
+//   product     = {col_id[8:0], fp16_val[15:0]}               25-bit
+//   prod_group  = {lane_valid[15:0], prod15..prod0}           416-bit
 //
 //   col_id is 9-bit because MAX_N=512 needs only log2(512)=9 bits.
 //=============================================================================
 `define TASK_WIDTH        41   // 9 + 16 + 16
-`define TASK_GROUP_WIDTH  (`N_MAC + `N_MAC * `TASK_WIDTH)   // 336
+// +1 MSB carries comp_sel (which ping-pong accumulator this group belongs to)
+// so rows can be pipelined: the generator tags each group, and the product is
+// routed by that tag instead of a global comp_sel.
+`define TASK_GROUP_WIDTH  (`N_MAC + `N_MAC * `TASK_WIDTH + 1)   // 16+16*41+1 = 673
 
 `define PRODUCT_WIDTH       25   // {col_id[8:0], fp16_val[15:0]}
-`define PRODUCT_GROUP_WIDTH (`N_MAC + `N_MAC * `PRODUCT_WIDTH)  // 208
+`define PRODUCT_GROUP_WIDTH (`N_MAC + `N_MAC * `PRODUCT_WIDTH)  // 16+16*25 = 416
 
 `define TASK_FIFO_DEPTH     512
 `define TASK_FIFO_DEPTH_LOG 9
@@ -149,9 +157,22 @@
 `define PROD_FIFO_DEPTH_LOG  8
 
 // Pointer-task FIFO: one entry per A-nonzero (a_val[15:0], b_off[16:0], num_groups[6:0])
-`define PTR_TASK_WIDTH      40
+// +1 MSB carries comp_sel (target ping-pong accumulator), see TASK_GROUP_WIDTH.
+`define PTR_TASK_WIDTH      41
 `define PTR_FIFO_DEPTH      512
 `define PTR_FIFO_DEPTH_LOG  9
+
+// Per-bank scatter FIFO depth (in the row accumulator).  This FIFO is multi-write-
+// port -> registers+mux, NOT RAM-mappable, so it is a real LUT cost: x16 banks x2
+// ping-pong accs x N_PE.  Any depth is FUNCTIONALLY SAFE (the 4-write-port scatter
+// lands <=4 lanes/bank/cycle and free-gating throttles, never overflows); smaller
+// just throttles same-bank bursts.  Measured: 8 vs 16 costs ~2% cluster cycles on
+// C(251,121) (more on denser problems).  Default 8 (LUT-lean for PE count); bump to
+// 16 for throughput.  BANK_FIFO_LOG is derived via $clog2 at instantiation, so only
+// this one knob needs setting.  Overridable: -DBANK_FIFO_DEPTH=N.
+`ifndef BANK_FIFO_DEPTH
+`define BANK_FIFO_DEPTH 8
+`endif
 
 //=============================================================================
 // C_dense_buffer
