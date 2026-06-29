@@ -275,9 +275,8 @@ async def probe_pe_load_state(dut, n_pe):
             # Check key registers
             pe_state_val = int(pe.state.value) if hasattr(pe, 'state') else -1
             row_idx_val  = int(pe.row_idx.value) if hasattr(pe, 'row_idx') else -1
-            a_desc_valid = int(pe.a_desc_valid.value) if hasattr(pe, 'a_desc_valid') else -1
-            dut._log.info("  PE%d: state=%d row_idx=%d a_desc_valid=%d",
-                          pid, pe_state_val, row_idx_val, a_desc_valid)
+            dut._log.info("  PE%d: state=%d row_idx=%d",
+                          pid, pe_state_val, row_idx_val)
         except Exception as e:
             dut._log.info("  PE%d: probe failed - %s", pid, e)
 

@@ -27,10 +27,10 @@ module pe_cluster #(
     input  wire                     op_sub,
 
     //=========================================================================
-    // A descriptor streaming (per PE, packed)
-    input  wire [N_PE-1:0]        a_desc_valid,
-    output wire [N_PE-1:0]        a_desc_ready,
-    input  wire [N_PE*36-1:0]     a_desc_data,
+    // A descriptor direct-write ports (per PE, packed)
+    input  wire [N_PE-1:0]                        a_desc_we,
+    input  wire [N_PE*`A_ROW_ADDR_BITS-1:0]      a_desc_waddr,
+    input  wire [N_PE*36-1:0]                     a_desc_wdata,
 
     // A value/column write ports (per PE, packed)
     input  wire [N_PE-1:0]                    a_val_we,
@@ -81,9 +81,9 @@ module pe_cluster #(
                 .M(M), .K(K), .N(N),
                 .op_mode(op_mode), .op_sub(op_sub),
 
-                .a_desc_valid(a_desc_valid[i]),
-                .a_desc_ready(a_desc_ready[i]),
-                .a_desc_data (a_desc_data[i*36 +: 36]),
+                .a_desc_we   (a_desc_we[i]),
+                .a_desc_waddr(a_desc_waddr[i*`A_ROW_ADDR_BITS +: `A_ROW_ADDR_BITS]),
+                .a_desc_wdata(a_desc_wdata[i*36 +: 36]),
 
                 .a_val_we    (a_val_we[i]),
                 .a_val_waddr (a_val_waddr[i*`A_NNZ_ADDR_BITS +: `A_NNZ_ADDR_BITS]),

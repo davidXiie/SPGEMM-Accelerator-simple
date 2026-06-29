@@ -217,9 +217,9 @@ module accelerator_top #(
     //=========================================================================
     // PE Load Controller
     //=========================================================================
-    wire [N_PE-1:0]                    pe_a_desc_valid;
-    wire [N_PE-1:0]                    pe_a_desc_ready;
-    wire [N_PE*36-1:0]                 pe_a_desc_data;
+    wire [N_PE-1:0]                        pe_a_desc_we;
+    wire [N_PE*`A_ROW_ADDR_BITS-1:0]      pe_a_desc_waddr;
+    wire [N_PE*36-1:0]                     pe_a_desc_wdata;
     wire [N_PE-1:0]                    pe_a_val_we;
     wire [N_PE*`A_NNZ_ADDR_BITS-1:0]  pe_a_val_waddr;
     wire [N_PE*`DATA_WIDTH-1:0]        pe_a_val_wdata;
@@ -269,9 +269,9 @@ module accelerator_top #(
         .b_gbuf_val_addr (b_gbuf_val_addr),
         .b_gbuf_val_data (b_gbuf_val_data),
 
-        .pe_a_desc_valid(pe_a_desc_valid),
-        .pe_a_desc_ready(pe_a_desc_ready),
-        .pe_a_desc_data (pe_a_desc_data),
+        .pe_a_desc_we   (pe_a_desc_we),
+        .pe_a_desc_waddr(pe_a_desc_waddr),
+        .pe_a_desc_wdata(pe_a_desc_wdata),
         .pe_a_val_we    (pe_a_val_we),
         .pe_a_val_waddr (pe_a_val_waddr),
         .pe_a_val_wdata (pe_a_val_wdata),
@@ -323,9 +323,9 @@ module accelerator_top #(
         .M(M), .K(K), .N(N),
         .op_mode(op_mode), .op_sub(op_sub),
 
-        .a_desc_valid(pe_a_desc_valid),
-        .a_desc_ready(pe_a_desc_ready),
-        .a_desc_data (pe_a_desc_data),
+        .a_desc_we   (pe_a_desc_we),
+        .a_desc_waddr(pe_a_desc_waddr),
+        .a_desc_wdata(pe_a_desc_wdata),
         .a_val_we    (pe_a_val_we),
         .a_val_waddr (pe_a_val_waddr),
         .a_val_wdata (pe_a_val_wdata),

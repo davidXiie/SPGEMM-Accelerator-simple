@@ -32,9 +32,10 @@ module pe_top #(
     input  wire                          op_mode,
     input  wire                          op_sub,
 
-    input  wire                          a_desc_valid,
-    output wire                          a_desc_ready,
-    input  wire [35:0]                   a_desc_data,
+    // A descriptor direct-write port (replaces valid/ready streaming)
+    input  wire                          a_desc_we,
+    input  wire [`A_ROW_ADDR_BITS-1:0]  a_desc_waddr,
+    input  wire [35:0]                   a_desc_wdata,
 
     input  wire                          a_val_we,
     input  wire [`A_NNZ_ADDR_BITS-1:0]  a_val_waddr,
@@ -116,12 +117,17 @@ module pe_top #(
 
     reg [31:0] B_desc_buf [0:B_DESC_DEPTH-1];
 
+    // A_desc_buf — direct-write per-row descriptor storage (36-bit per row)
+    // Format: {3'b0, a_off[13:0], a_nnz[9:0], c_row[8:0]}
+    reg [35:0] A_desc_buf [0:`A_ROW_SLOT_PER_PE-1];
+
     //=========================================================================
     // SRAM write ports
     //=========================================================================
     always @(posedge aclk) begin
         if (a_val_we)  A_val_buf[a_val_waddr]  <= a_val_wdata;
         if (a_col_we)  A_col_buf[a_col_waddr]  <= a_col_wdata;
+        if (a_desc_we) A_desc_buf[a_desc_waddr] <= a_desc_wdata;
         if (b_desc_we) B_desc_buf[b_desc_waddr] <= b_desc_wdata;
         if (b_col_we) case (b_col_waddr[3:0])
             4'd0:  B_col_b0 [b_col_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_col_wdata;
@@ -1050,8 +1056,6 @@ module pe_top #(
 
     wire other_acc_busy = comp_sel ? acc_busy_0 : acc_busy_1;
 
-    assign a_desc_ready = (state == PE_LOAD_ROW_DESC);
-
     //=========================================================================
     // Row-level pipelining: per-comp_sel "issue done" detection.
     //   Rows are pipelined across the two ping-pong accumulators.  acc k's row is
@@ -1249,10 +1253,9 @@ module pe_top #(
     reg [`MAX_DIM_BITS-1:0]  C_row_map [0:`C_ROW_SLOTS-1];   // local → global C row
 
     // Record the global row for each local slot as descriptors are loaded.
-    // Descriptor c_row field is a_desc_data[8:0] (nnz begins at bit 9).
     always @(posedge aclk) begin
-        if ((state==PE_LOAD_ROW_DESC) && a_desc_valid)
-            C_row_map[row_idx[`C_ROW_ADDR_BITS-1:0]] <= {{(`MAX_DIM_BITS-9){1'b0}}, a_desc_data[8:0]};
+        if (state==PE_LOAD_ROW_DESC)
+            C_row_map[row_idx[`C_ROW_ADDR_BITS-1:0]] <= {{(`MAX_DIM_BITS-9){1'b0}}, A_desc_buf[row_idx][8:0]};
     end
 
     wire                        c_wr_en   = drain_active_0 | drain_active_1;
@@ -1301,10 +1304,10 @@ module pe_top #(
             done<=0;
             case (state)
                 PE_IDLE:          if (start) row_idx<=0;
-                PE_LOAD_ROW_DESC: if (a_desc_valid) begin
-                    cur_c_row<={{(`MAX_DIM_BITS-9){1'b0}}, a_desc_data[8:0]};
-                    cur_a_off<={18'b0,a_desc_data[32:19]};
-                    cur_a_nnz<={6'b0, a_desc_data[18:9]};
+                PE_LOAD_ROW_DESC: begin
+                    cur_c_row <= { {( `MAX_DIM_BITS-9){1'b0}}, A_desc_buf[row_idx][8:0]};
+                    cur_a_off <= {18'b0, A_desc_buf[row_idx][32:19]};
+                    cur_a_nnz <= {6'b0,  A_desc_buf[row_idx][18:9]};
                 end
                 // New row starting on this acc -> its generation is not done yet.
                 PE_CLEAR_ACC: if (!comp_sel) gen_done_acc_0<=0; else gen_done_acc_1<=0;
@@ -1324,7 +1327,7 @@ module pe_top #(
         state_next=state;
         case (state)
             PE_IDLE:               if (start)        state_next=PE_LOAD_ROW_DESC;
-            PE_LOAD_ROW_DESC:      if (a_desc_valid) state_next=PE_CLEAR_ACC;
+            PE_LOAD_ROW_DESC:                         state_next=PE_CLEAR_ACC;
             PE_CLEAR_ACC:                             state_next=PE_STREAM_INSTRS;
             // Row PIPELINING: advance as soon as this row's GENERATION is done
             // (incl. the Gen2 carry flush) and the NEXT row's accumulator is free.

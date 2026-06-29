@@ -62,9 +62,9 @@ module pe_load_ctrl #(
     input  wire [15:0]             b_gbuf_val_data,
 
     // === PE Cluster A write ports (packed buses) ===
-    output reg  [N_PE-1:0]                        pe_a_desc_valid,
-    input  wire [N_PE-1:0]                        pe_a_desc_ready,
-    output reg  [N_PE*36-1:0]                     pe_a_desc_data,
+    output reg  [N_PE-1:0]                        pe_a_desc_we,
+    output reg  [N_PE*`A_ROW_ADDR_BITS-1:0]      pe_a_desc_waddr,
+    output reg  [N_PE*36-1:0]                     pe_a_desc_wdata,
 
     output reg  [N_PE-1:0]                        pe_a_val_we,
     output reg  [N_PE*`A_NNZ_ADDR_BITS-1:0]      pe_a_val_waddr,
@@ -124,8 +124,6 @@ module pe_load_ctrl #(
     reg [16:0]                 a_global_off;   // global A offset (17-bit, up to 86016)
     reg [15:0]                 a_t;            // counter within current row
     reg [15:0]                 a_pe_rows [0:N_PE-1];  // rows per PE
-    reg                        a_desc_valid_r; // registered a_desc_valid (streaming)
-
     // B-load tracking
     reg [B_NNZ_AW-1:0]        b_idx;          // index for B col/val
     reg [`B_ROW_ADDR_BITS-1:0] b_k;            // row index for B desc
@@ -159,11 +157,10 @@ module pe_load_ctrl #(
             a_crow        <= 0;
             a_global_off  <= 0;
             a_t           <= 0;
-            a_desc_valid_r<= 1'b0;
             a_gbuf_desc_en <= 1'b0;
             a_gbuf_col_en  <= 1'b0;
             a_gbuf_val_en  <= 1'b0;
-            pe_a_desc_valid <= {N_PE{1'b0}};
+            pe_a_desc_we    <= {N_PE{1'b0}};
             pe_a_val_we     <= {N_PE{1'b0}};
             pe_a_col_we     <= {N_PE{1'b0}};
             // Initialize local offsets and row counts
@@ -174,9 +171,7 @@ module pe_load_ctrl #(
             a_gbuf_val_en  <= 1'b0;
             pe_a_val_we    <= {N_PE{1'b0}};
             pe_a_col_we    <= {N_PE{1'b0}};
-            if (la_state != LA_DESC_STREAM) begin
-                pe_a_desc_valid <= {N_PE{1'b0}};
-            end
+            pe_a_desc_we   <= {N_PE{1'b0}};
 
             case (la_state)
                 LA_IDLE: begin
@@ -240,19 +235,13 @@ module pe_load_ctrl #(
 
                     a_t <= a_t + 16'd1;
                     if (a_t + 16'd1 >= a_nnz) begin
-                        la_state <= LA_DESC_STREAM;
-                    end
-                end
-
-                LA_DESC_STREAM: begin
-                    // Send A_desc with LOCAL offset to PE a_pid
-                    // Format: {3'b0, local_off[13:0], a_nnz[9:0], a_crow[8:0]}
-                    pe_a_desc_valid <= (1 << a_pid);
-                    pe_a_desc_data  <= ({3'b0,
-                        a_local_off[a_pid][13:0], a_nnz[9:0], a_crow[8:0]})
-                        << (a_pid * 36);
-
-                    if (pe_a_desc_ready[a_pid]) begin
+                        // A_desc direct write: store per-PE descriptor with local offset
+                        // Format: {3'b0, local_off[13:0], a_nnz[9:0], a_crow[8:0]}
+                        pe_a_desc_we    <= (1 << a_pid);
+                        pe_a_desc_waddr <= a_pe_rows[a_pid] << (a_pid * `A_ROW_ADDR_BITS);
+                        pe_a_desc_wdata <= ({3'b0,
+                            a_local_off[a_pid][13:0], a_nnz[9:0], a_crow[8:0]})
+                            << (a_pid * 36);
                         // Update local offset and row count for this PE
                         a_local_off[a_pid] <= a_local_off[a_pid] + a_nnz;
                         a_pe_rows[a_pid]   <= a_pe_rows[a_pid] + 16'd1;

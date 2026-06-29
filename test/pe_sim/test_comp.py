@@ -316,30 +316,14 @@ def compute_golden_c(A_desc, A_col, A_val, B_desc, B_col, B_val, M, N, K):
 #-------------------------------------------------------------------------
 # PE load helpers
 #-------------------------------------------------------------------------
-async def stream_a_desc(dut, Ad):
-    """Stream A row descriptors to PE using eager pre-assertion.
-
-    Keeps a_desc_valid=1 whenever a descriptor is available, so the PE
-    captures it in 1 cycle instead of 2 (reduces LOAD_ROW_DESC by 1/row).
-    """
-    if not Ad:
-        dut.a_desc_valid.value = 0
-        return
-    # Pre-load the first descriptor before PE starts requesting
-    dut.a_desc_data.value = Ad[0]
-    dut.a_desc_valid.value = 1
-    for i in range(len(Ad)):
-        # Wait until PE consumes this descriptor (a_desc_ready=1 on rising edge)
-        while True:
-            await RisingEdge(dut.aclk)
-            if int(dut.a_desc_ready.value):
-                break
-        # Immediately load the next descriptor (or de-assert if last)
-        if i + 1 < len(Ad):
-            dut.a_desc_data.value = Ad[i + 1]
-            dut.a_desc_valid.value = 1
-        else:
-            dut.a_desc_valid.value = 0
+async def write_a_desc(dut, Ad):
+    """Direct-write A row descriptors into PE's A_desc_buf (replaces streaming)."""
+    for i, d in enumerate(Ad):
+        dut.a_desc_we.value    = 1
+        dut.a_desc_waddr.value = i
+        dut.a_desc_wdata.value = d
+        await RisingEdge(dut.aclk)
+    dut.a_desc_we.value = 0
 
 
 async def LA_val(dut, Av):
@@ -377,7 +361,7 @@ async def rst(dut):
     await ClockCycles(dut.aclk,10); dut.aresetn.value=1; await ClockCycles(dut.aclk,5)
     dut.start.value=0; dut.row_count.value=0
     dut.op_mode.value=0; dut.op_sub.value=0
-    dut.a_desc_valid.value=0; dut.a_desc_data.value=0
+    dut.a_desc_we.value=0; dut.a_desc_waddr.value=0; dut.a_desc_wdata.value=0
     dut.a_val_we.value=0; dut.a_col_we.value=0
     dut.b_col_we.value=0; dut.b_val_we.value=0; dut.b_desc_we.value=0
 
@@ -398,7 +382,6 @@ async def read_c_buffer(dut, Ad, N):
 
 async def run_pe(dut, rc, Ad, N, to=10000000):
     """Run PE for rc rows, collect stats, then read C buffer."""
-    cocotb.start_soon(stream_a_desc(dut, Ad))
     dut.row_count.value = rc
     dut.c_rd_en.value = 0; dut.c_rd_addr.value = 0
     dut.start.value=1; await RisingEdge(dut.aclk); dut.start.value=0
@@ -628,19 +611,12 @@ async def test_comp_case1_p0(dut):
     await rst(dut); dut.M.value=M; dut.K.value=K; dut.N.value=N
     await LA_val(dut, Av)
     await LAcol(dut, Ac)
+    await write_a_desc(dut, Ad)
     await LBdata(dut, Bc_hw, Bv)
     await LBdesc(dut, Bd)
 
     dut._log.info("Starting PE, row_count=%d...", M)
     cp, cyc, lane_busy, rmw_busy = await run_pe(dut, M, Ad, N, to=50000000)
-
-    dut._log.info("PE done at cycle %d, C buffer entries=%d", cyc, len(cp))
-
-    e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp)
-    if e == 0:
-        dut._log.info("Verification: PASSED (%d nz correct, %d z correct)", nz_ok, z_ok)
-    else:
-        dut._log.error("Verification: FAILED (%d mismatches)", e)
     assert e == 0, f"{e} mismatches in C"
 
     total_macs = count_total_macs(Ad, Ac, Bd, M)
@@ -682,6 +658,7 @@ async def test_comp_tiled_p0(dut):
 
     await rst(dut); dut.M.value = M; dut.K.value = K
     await LA_val(dut, Av); await LAcol(dut, Ac)   # A loaded ONCE, reused every pass
+    await write_a_desc(dut, Ad)
 
     cp_full = {}
     for t in range(T):
@@ -831,27 +808,20 @@ def partition_a(Ad, Ac, Av, M, n_pe, Bd=None):
 
     return pe_desc, pe_val, pe_col
 
-async def stream_a_desc_pe(dut, pid, row_descs):
-    """Stream A row descriptors into cluster PE pid via valid/ready handshake."""
-    a_valid = getattr(dut, f"a_desc_valid_{pid}")
-    a_ready = getattr(dut, f"a_desc_ready_{pid}")
-    a_data  = getattr(dut, f"a_desc_data_{pid}")
-    a_valid.value = 0
-    if not row_descs:
-        return
-    # Pre-load first descriptor
-    a_data.value = row_descs[0]
-    a_valid.value = 1
-    for i in range(len(row_descs)):
-        while True:
-            await RisingEdge(dut.aclk)
-            if int(a_ready.value):
-                break
-        if i + 1 < len(row_descs):
-            a_data.value = row_descs[i + 1]
-            a_valid.value = 1
-        else:
-            a_valid.value = 0
+async def write_a_desc_pe(dut, pid, row_descs):
+    """Direct-write A row descriptors into cluster PE pid's A_desc_buf."""
+    a_we    = getattr(dut, f"a_desc_we_{pid}")
+    a_waddr = getattr(dut, f"a_desc_waddr_{pid}")
+    a_wdata = getattr(dut, f"a_desc_wdata_{pid}")
+    a_we.value    = 0
+    a_waddr.value = 0
+    a_wdata.value = 0
+    for i, d in enumerate(row_descs):
+        a_we.value    = 1
+        a_waddr.value = i
+        a_wdata.value = d
+        await RisingEdge(dut.aclk)
+    a_we.value = 0
 
 async def LA_val_pe(dut, pid, Av):
     """Load A_val into PE pid."""
@@ -899,8 +869,9 @@ async def rst_cluster(dut):
     dut.op_mode.value   = 0
     dut.op_sub.value    = 0
     for pid in range(n_pe):
-        getattr(dut, f"a_desc_valid_{pid}").value = 0
-        getattr(dut, f"a_desc_data_{pid}").value  = 0
+        getattr(dut, f"a_desc_we_{pid}").value    = 0
+        getattr(dut, f"a_desc_waddr_{pid}").value = 0
+        getattr(dut, f"a_desc_wdata_{pid}").value = 0
     dut.a_val_we.value  = 0; dut.a_val_waddr.value  = 0; dut.a_val_wdata.value  = 0
     dut.a_col_we.value  = 0; dut.a_col_waddr.value  = 0; dut.a_col_wdata.value  = 0
     dut.b_col_we.value  = 0; dut.b_val_we.value     = 0
@@ -914,10 +885,6 @@ async def run_cluster(dut, row_counts, n_pe, pe_desc, N, to=50000000):
     """Start all n_pe PEs, wait for done, collect stats, read C buffers."""
     rc_packed = sum(row_counts[p] << (p * 16) for p in range(n_pe))
     dut.row_count.value = rc_packed
-    # Launch per-PE descriptor streaming; they'll handshake with the PEs
-    # after start fires and a_desc_ready goes high.
-    for pid in range(n_pe):
-        cocotb.start_soon(stream_a_desc_pe(dut, pid, pe_desc[pid]))
     dut.start.value=1; await RisingEdge(dut.aclk); dut.start.value=0
     dc = 0
 
@@ -1035,6 +1002,7 @@ async def test_comp_case1_cluster(dut):
     for pid in range(n_pe):
         await LA_val_pe(dut, pid, pe_val[pid])
         await LAcol_pe(dut, pid, pe_col[pid])
+        await write_a_desc_pe(dut, pid, pe_desc[pid])
     await LBdata_cluster(dut, Bc, Bv)
     await LBdesc_cluster(dut, Bd)
 
@@ -1104,6 +1072,7 @@ async def test_comp_tiled_cluster(dut):
     for pid in range(n_pe):                      # A loaded ONCE, reused every pass
         await LA_val_pe(dut, pid, pe_val[pid])
         await LAcol_pe(dut, pid, pe_col[pid])
+        await write_a_desc_pe(dut, pid, pe_desc[pid])
 
     dut._log.info("=" * 70)
     dut._log.info("%d-PE TILED CLUSTER: A(%d,%d)xB(%d,%d) -> C(%d,%d), T=%d, rows=%s",
@@ -1198,6 +1167,7 @@ async def test_comp_peak_cluster(dut):
     for pid in range(n_pe):                      # A loaded ONCE, reused every pass
         await LA_val_pe(dut, pid, pe_val[pid])
         await LAcol_pe(dut, pid, pe_col[pid])
+        await write_a_desc_pe(dut, pid, pe_desc[pid])
 
     dut._log.info("=" * 70)
     dut._log.info("%d-PE PEAK CLUSTER: A(%d,%d)xB(%d,%d) -> C(%d,%d), T=%d", n_pe, M, K, K2, N, M, N, T)
@@ -1268,6 +1238,7 @@ async def test_elementwise_p0(dut):
         dut.M.value = M; dut.K.value = N; dut.N.value = N
         dut.op_mode.value = 1; dut.op_sub.value = sub
         await LA_val(dut, Av); await LAcol(dut, Ac)
+        await write_a_desc(dut, Ad)
         await LBdata(dut, Bc, Bv)
         await LBdesc(dut, Bd)
 
@@ -1340,6 +1311,7 @@ async def test_elementwise_cluster(dut):
     for pid in range(n_pe):
         await LA_val_pe(dut, pid, pe_val[pid])
         await LAcol_pe(dut, pid, pe_col[pid])
+        await write_a_desc_pe(dut, pid, pe_desc[pid])
     await LBdata_cluster(dut, Bc, Bv)
     await LBdesc_cluster(dut, Bd)
 
