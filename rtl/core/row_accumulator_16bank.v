@@ -332,7 +332,11 @@ module row_accumulator_16bank #(
             input_done_latch <= 1'b0;
             clr_triggered    <= 1'b0;
             group_addr       <= {BANK_ADDR_W{1'b0}};
-            busy             <= 1'b0;
+            busy             <= 1'b1;   // reset enters S_CLEAR_TAGS: stay BUSY until
+                                        // the 32-cyc tag scrub finishes (->S_IDLE clears
+                                        // it).  Else a fast producer (16-wide elem) races
+                                        // multiple row_starts into the 1-deep start_pending
+                                        // during the scrub -> rows merge/drop.
             row_done         <= 1'b0;
             start_pending    <= 1'b0;
             pending_row_id   <= {ROW_W{1'b0}};

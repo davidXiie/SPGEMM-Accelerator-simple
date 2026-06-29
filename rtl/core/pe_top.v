@@ -471,20 +471,32 @@ module pe_top #(
     //=========================================================================
     localparam ELEM_IDLE=2'd0, ELEM_A=2'd1, ELEM_B=2'd2, ELEM_DONE=2'd3;
     reg  [1:0]  elem_state;
-    reg  [15:0] elem_j;
-    reg         elem_phase;   // 0 = ADDR (wait for registered B read), 1 = USE
+    reg  [15:0] elem_j;        // elementwise window bank-address (16 elems/window)
 
     wire [31:0] elem_b_desc = B_desc_buf[cur_c_row];  // global row (B is broadcast)
     wire [16:0] elem_b_off  = elem_b_desc[26:10];
     wire [15:0] elem_b_nnz  = {6'b0, elem_b_desc[9:0]};
 
-    // Phase A element — registered A read (shared port, see a_rd_addr below).  The
-    // elem FSM's existing 2-phase step (elem_phase 0=ADDR -> 1=USE) already waits
-    // one cycle for the registered read, so it needs no FSM change.
-    wire [`A_NNZ_ADDR_BITS-1:0] elem_a_addr =
-        cur_a_off[`A_NNZ_ADDR_BITS-1:0] + elem_j[`A_NNZ_ADDR_BITS-1:0];
-    wire [15:0] elem_a_val = a_val_r;
-    wire [15:0] elem_a_col = a_col_r;
+    // Elementwise reads A 16 ELEMENTS / cycle: elem_j is the WINDOW bank-address
+    // (16 consecutive elements = the 16 banks at elem_j).  Window range = start..last.
+    wire [12:0] a_win_start = cur_a_off[16:4];
+    wire [12:0] a_win_last  = (cur_a_off[16:0] + {1'b0,cur_a_nnz} - 17'd1) >> 4;
+    wire [12:0] b_win_start = elem_b_off[16:4];
+    wire [12:0] b_win_last  = (elem_b_off        + {1'b0,elem_b_nnz} - 17'd1) >> 4;
+    // elem_j NEXT-state (mirrors the FSM).  Addressing the registered A/B reads with
+    // it makes a_val_bank_r/ebcN hold the CURRENT window EVERY cycle -> 1 window/cycle,
+    // no 2-phase (same trick as SpGEMM gen_t_next; survives task_fifo_full stalls).
+    wire elem_start_w = (state==PE_CLEAR_ACC) && op_mode;
+    wire [15:0] elem_j_next =
+        (elem_state==ELEM_IDLE) ? (elem_start_w ? (cur_a_nnz!=0 ? {3'b0,a_win_start}
+                                                                : {3'b0,b_win_start})
+                                                : elem_j) :
+        (elem_state==ELEM_A && !task_fifo_full) ?
+            ((elem_j[12:0] >= a_win_last) ? {3'b0,b_win_start} : elem_j + 16'd1) :
+        (elem_state==ELEM_B && !task_fifo_full && elem_j[12:0] < b_win_last) ? elem_j + 16'd1 :
+        elem_j;
+    // A read window address = NEXT window (so the registered read lands it in time).
+    wire [`A_NNZ_ADDR_BITS-1:0] elem_a_addr = {elem_j_next[A_BADDR_W-1:0], 4'b0};
 
     // 2-deep A prefetch: address the SpGEMM read with gen_t's NEXT-state value, so
     // a_val_r/a_col_r registered this cycle == A[gen_t] next cycle, holding the
@@ -535,73 +547,58 @@ module pe_top #(
     assign a_val_r = a_val_bank_r[a_rd_bsel_d*16 +: 16];
     assign a_col_r = a_col_bank_r[a_rd_bsel_d*16 +: 16];
 
-    // Phase B element: abs index = elem_b_off + elem_j; bank = abs%16, addr = abs/16
-    wire [16:0] elem_b_abs  = elem_b_off + {1'b0, elem_j};
-    wire [3:0]  elem_b_bank = elem_b_abs[3:0];
-    wire [13:0] elem_b_addr = {1'b0, elem_b_abs[16:4]};   // abs/16 (13-bit)
-    // Read from the SAME registered B ports as the executor (ebcN/ebvN, muxed to
-    // elem_b_addr by op_mode above).  elem_b_bank is stable across the 2-phase
-    // elem step, so it selects the right bank in the USE phase.
-    wire [15:0] elem_b_col =
-        (elem_b_bank==4'd0 )?ebc0 :(elem_b_bank==4'd1 )?ebc1 :
-        (elem_b_bank==4'd2 )?ebc2 :(elem_b_bank==4'd3 )?ebc3 :
-        (elem_b_bank==4'd4 )?ebc4 :(elem_b_bank==4'd5 )?ebc5 :
-        (elem_b_bank==4'd6 )?ebc6 :(elem_b_bank==4'd7 )?ebc7 :
-        (elem_b_bank==4'd8 )?ebc8 :(elem_b_bank==4'd9 )?ebc9 :
-        (elem_b_bank==4'd10)?ebc10:(elem_b_bank==4'd11)?ebc11:
-        (elem_b_bank==4'd12)?ebc12:(elem_b_bank==4'd13)?ebc13:
-        (elem_b_bank==4'd14)?ebc14:ebc15;
-    wire [15:0] elem_b_val =
-        (elem_b_bank==4'd0 )?ebv0 :(elem_b_bank==4'd1 )?ebv1 :
-        (elem_b_bank==4'd2 )?ebv2 :(elem_b_bank==4'd3 )?ebv3 :
-        (elem_b_bank==4'd4 )?ebv4 :(elem_b_bank==4'd5 )?ebv5 :
-        (elem_b_bank==4'd6 )?ebv6 :(elem_b_bank==4'd7 )?ebv7 :
-        (elem_b_bank==4'd8 )?ebv8 :(elem_b_bank==4'd9 )?ebv9 :
-        (elem_b_bank==4'd10)?ebv10:(elem_b_bank==4'd11)?ebv11:
-        (elem_b_bank==4'd12)?ebv12:(elem_b_bank==4'd13)?ebv13:
-        (elem_b_bank==4'd14)?ebv14:ebv15;
+    // 16-WIDE elementwise.  Window = the 16 banks at elem_j (offsets 16*elem_j..+15).
+    // B reuses the executor's 16 registered ports (ebcN/ebvN, muxed to elem_b_addr by
+    // op_mode); A uses the 16-bank read a_val_bank_r/a_col_bank_r.  No rotation: each
+    // lane carries its own column and the row accumulator scatters by col%16.  A lane
+    // is valid iff its global offset is inside the row [base, base+nnz) — masks the
+    // unaligned A head/tail (B is 16-aligned).  Whole row -> one comp_sel (ping-pong
+    // per row) via the existing task_group_wr_data tag + main FSM, like SpGEMM.
+    wire [12:0] elem_b_addr = elem_j_next[12:0];            // B window bank addr (NEXT, like A)
+    wire        elem_in_b   = (elem_state==ELEM_B);
+    wire        elem_active = (elem_state==ELEM_A) || elem_in_b;
+    wire [16:0] elem_win0   = {elem_j[12:0], 4'b0};         // 16*elem_j (window's first offset)
+    wire [16:0] elem_base   = elem_in_b ? elem_b_off : cur_a_off[16:0];
+    wire [16:0] elem_end    = elem_base + (elem_in_b ? {1'b0,elem_b_nnz} : {1'b0,cur_a_nnz});
 
-    wire        elem_in_b = (elem_state==ELEM_B);
-    wire [15:0] elem_val  = elem_in_b ? elem_b_val      : elem_a_val;
-    wire [8:0]  elem_col  = elem_in_b ? elem_b_col[8:0] : elem_a_col[8:0];
-    // a_val operand = +1.0 (0x3C00); -1.0 (0xBC00) only for B elements when subtracting
-    wire [15:0] elem_coef = (elem_in_b && op_sub) ? 16'hBC00 : 16'h3C00;
-    wire [`TASK_WIDTH-1:0] elem_task = {elem_val, elem_coef, elem_col};
+    wire [16*16-1:0] ebc_vec = {ebc15,ebc14,ebc13,ebc12,ebc11,ebc10,ebc9,ebc8,ebc7,ebc6,ebc5,ebc4,ebc3,ebc2,ebc1,ebc0};
+    wire [16*16-1:0] ebv_vec = {ebv15,ebv14,ebv13,ebv12,ebv11,ebv10,ebv9,ebv8,ebv7,ebv6,ebv5,ebv4,ebv3,ebv2,ebv1,ebv0};
 
-    wire elem_a_more = (elem_j < cur_a_nnz);
-    wire elem_b_more = (elem_j < elem_b_nnz);
-    wire elem_wr_en  = elem_phase &&
-                       ((elem_state==ELEM_A && elem_a_more) ||
-                        (elem_state==ELEM_B && elem_b_more)) && !task_fifo_full;
-    wire [`TASK_GROUP_WIDTH-1:0] elem_task_group =
-        { {((`N_MAC-1)*`TASK_WIDTH){1'b0}}, elem_task, 16'h0001 };
+    wire [15:0]                elem_lv;
+    wire [16*`TASK_WIDTH-1:0]  elem_tasks_flat;
+    genvar ek;
+    generate for (ek=0; ek<16; ek=ek+1) begin : g_elem_lane
+        wire [16:0] eabs  = elem_win0 + ek[16:0];
+        assign elem_lv[ek] = (eabs >= elem_base) && (eabs < elem_end);
+        wire [15:0] eval  = elem_in_b ? ebv_vec[ek*16+:16] : a_val_bank_r[ek*16+:16];
+        wire [8:0]  ecol  = elem_in_b ? ebc_vec[ek*16+:9]  : a_col_bank_r[ek*16+:9];
+        wire [15:0] ecoef = (elem_in_b && op_sub) ? 16'hBC00 : 16'h3C00;   // +/-1.0
+        assign elem_tasks_flat[ek*`TASK_WIDTH +: `TASK_WIDTH] = {eval, ecoef, ecol};
+    end endgenerate
 
+    // Pipelined: emit one window/cycle (no 2-phase), the read holds the current window.
+    wire elem_wr_en = elem_active && (|elem_lv) && !task_fifo_full;
+    wire [`TASK_GROUP_WIDTH-1:0] elem_task_group = {1'b0, elem_tasks_flat, elem_lv};
+
+    // Pipelined FSM: one window per cycle (the read holds the current window via the
+    // elem_j_next addressing above; no ADDR/USE phase).  Stalls on task_fifo_full.
     always @(posedge aclk or negedge aresetn) begin
-        if (!aresetn) begin elem_state<=ELEM_IDLE; elem_j<=0; elem_phase<=1'b0; end
+        if (!aresetn) begin elem_state<=ELEM_IDLE; elem_j<=0; end
         else case (elem_state)
             ELEM_IDLE: if (state==PE_CLEAR_ACC && op_mode) begin
-                elem_j <= 0;
-                elem_phase <= 1'b0;   // wait for the first registered read
-                elem_state <= (cur_a_nnz!=0) ? ELEM_A :
-                              (elem_b_nnz!=0) ? ELEM_B : ELEM_DONE;
+                if      (cur_a_nnz!=0) begin elem_j<={3'b0,a_win_start}; elem_state<=ELEM_A; end
+                else if (elem_b_nnz!=0)begin elem_j<={3'b0,b_win_start}; elem_state<=ELEM_B; end
+                else                        elem_state<=ELEM_DONE;
             end
-            ELEM_A: begin
-                if (!elem_phase) elem_phase <= 1'b1;            // read settled -> USE
-                else if (!task_fifo_full) begin
-                    elem_phase <= 1'b0;                         // next elem -> ADDR
-                    if (elem_j+16'd1 >= cur_a_nnz) begin
-                        elem_j     <= 0;
-                        elem_state <= (elem_b_nnz!=0) ? ELEM_B : ELEM_DONE;
-                    end else elem_j <= elem_j + 16'd1;
-                end
+            ELEM_A: if (!task_fifo_full) begin
+                if (elem_j[12:0] >= a_win_last) begin           // last A window emitted
+                    if (elem_b_nnz!=0) begin elem_j<={3'b0,b_win_start}; elem_state<=ELEM_B; end
+                    else                    elem_state<=ELEM_DONE;
+                end else elem_j <= elem_j + 16'd1;
             end
-            ELEM_B: begin
-                if (!elem_phase) elem_phase <= 1'b1;
-                else if (!task_fifo_full) begin
-                    elem_phase <= 1'b0;
-                    if (elem_j+16'd1 >= elem_b_nnz) elem_state <= ELEM_DONE;
-                    else elem_j <= elem_j + 16'd1;
-                end
+            ELEM_B: if (!task_fifo_full) begin
+                if (elem_j[12:0] >= b_win_last) elem_state <= ELEM_DONE;
+                else elem_j <= elem_j + 16'd1;
             end
             ELEM_DONE: if (state==PE_NEXT_ROW)
                 elem_state <= ELEM_IDLE;
