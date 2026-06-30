@@ -1166,6 +1166,47 @@ async def test_comp_tiled_cluster(dut):
 
 
 @cocotb.test()
+async def test_comp_peak_p0(dut):
+    """PEAK worst-case on a SINGLE 32-MAC PE: A(512,512) x B(512,512) at 30%
+    density (A max row-weight, B max col-weight).  One PE owns the whole problem:
+    full A (~78643 <= A_NNZ_SLOT 81920), full B (~78336 <= B_NNZ_SLOT 81920), all
+    512 C rows (needs C_ROW_ADDR_BITS=9).  Dataset TC2_PEAK.
+        COCOTB_TESTCASE=test_comp_peak_p0 bash run_comp.sh
+    """
+    sub = os.environ.get('PEAK_SUBDIR', 'TC2_PEAK')
+    Ad, Ac, Av, An, M, K  = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False, subdir=sub)
+    Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True,  subdir=sub)
+    assert K == K2
+    Bc_hw = [int(c) & 0xFFFF for c in Bc]
+    gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc_hw, Bv, M, N, K)
+
+    dut._log.info("=" * 70)
+    dut._log.info("PEAK SINGLE-PE: A(%d,%d)xB(%d,%d) -> C(%d,%d); A nnz=%d B nnz=%d",
+                  M, K, K2, N, M, N, An, Bn)
+
+    await rst(dut); dut.M.value=M; dut.K.value=K; dut.N.value=N
+    await LA_val(dut, Av)
+    await LAcol(dut, Ac)
+    await LBdata(dut, Bc_hw, Bv)
+    await LBdesc(dut, Bd)
+
+    cp, cyc, lane_busy, rmw_busy = await run_pe(dut, M, Ad, N, to=50000000)
+    dut._log.info("PE done at cycle %d, C entries=%d", cyc, len(cp))
+
+    e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp)
+    if e == 0:
+        dut._log.info("PEAK SINGLE-PE VERIFICATION: PASSED (%d nz, %d z)", nz_ok, z_ok)
+    else:
+        dut._log.error("PEAK SINGLE-PE VERIFICATION: FAILED (%d mismatches)", e)
+    assert e == 0, f"{e} mismatches in peak single-PE C"
+
+    total_macs = count_total_macs(Ad, Ac, Bd, M)
+    dut._log.info("PEAK SINGLE-PE: %d cyc, %d MAC ops, %.2f%% MAC util",
+                  cyc, total_macs, total_macs / (cyc * _NB) * 100 if cyc else 0.0)
+    dut._log.info("PEAK SINGLE-PE TEST PASSED")
+
+
+@cocotb.test()
 async def test_comp_peak_cluster(dut):
     """PEAK worst-case demand: A(512,512) x B(512,512) at 30% density, where A has
     max ROW weight (153 nnz/row) and B has max COLUMN weight (153 nnz/col) — the
