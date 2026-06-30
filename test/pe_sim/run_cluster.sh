@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run 4-PE cluster simulation.
+# Run 2-PE cluster simulation.
 # Usage: conda activate py311 && bash run_cluster.sh
 
 set -Eeuo pipefail
@@ -29,7 +29,7 @@ export LIBPYTHON_LOC PYGPI_PYTHON_BIN
 export LD_LIBRARY_PATH="$(dirname "$LIBPYTHON_LOC")${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
 echo "========================================"
-echo "[1/2] Compiling 4-PE cluster..."
+echo "[1/2] Compiling 2-PE cluster..."
 echo "========================================"
 
 mkdir -p sim_build
@@ -37,7 +37,7 @@ mkdir -p sim_build
 iverilog -g2012 \
     -DCOCOTB_SIM=1 \
     -DSIMULATION \
-    -DC_ROW_ADDR_BITS="${C_ROW_ADDR_BITS:-7}" \
+    -DC_ROW_ADDR_BITS="${C_ROW_ADDR_BITS:-8}" \
     -I"$PROJ_ROOT/rtl/include" \
     -s "$COCOTB_TOPLEVEL" \
     -o sim_build/sim_cluster.vvp \

@@ -1,6 +1,6 @@
 <testsuites name="results">
   <testsuite name="all" package="all">
-    <property name="random_seed" value="1782752112" />
+    <property name="random_seed" value="1782786044" />
     <testcase name="test_comp_case1_p0" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="607" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>
@@ -13,13 +13,13 @@
     <testcase name="test_comp_case1_cluster" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="1018" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>
-    <testcase name="test_comp_tiled_cluster" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="1078" time="101.92285084724426" sim_time_ns="407370.0" ratio_time="3996.8466012645313" />
+    <testcase name="test_comp_tiled_cluster" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="1078" time="0" sim_time_ns="0" ratio_time="0">
+      <skipped />
+    </testcase>
     <testcase name="test_comp_peak_cluster" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="1165" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>
-    <testcase name="test_elementwise_p0" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="1257" time="0" sim_time_ns="0" ratio_time="0">
-      <skipped />
-    </testcase>
+    <testcase name="test_elementwise_p0" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="1257" time="1.8058171272277832" sim_time_ns="28710.0" ratio_time="15898.619836480575" />
     <testcase name="test_elementwise_cluster" classname="test_comp" file="/home/yin/github/SPGEMM-Accelerator-simple/test/pe_sim/test_comp.py" lineno="1314" time="0" sim_time_ns="0" ratio_time="0">
       <skipped />
     </testcase>

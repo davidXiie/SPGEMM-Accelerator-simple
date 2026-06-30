@@ -15,10 +15,10 @@ MAX_N=512; C_ROW_STRIDE=MAX_N
 # ---------------------------------------------------------------------------
 # Descriptor packing/unpacking helpers (must match pe_top.v bit layout)
 #
-# A desc streamed to HW (36-bit): {2'b0, a_off[14:0], a_nnz[9:0], c_row[8:0]} — HW
-# reads a_off at bits [33:19] (15-bit, covers A_NNZ_SLOT_PER_PE=28672).  The test's
-# GLOBAL Ad reuses a_desc with offsets up to total-A-nnz (~17-bit); those live only
-# in Python (golden / partition / per-PE copy), never streamed, so a_desc_off reads 17b.
+# A desc streamed to HW (36-bit): {1'b0, a_off[15:0], a_nnz[9:0], c_row[8:0]} — HW
+# reads a_off at bits [34:19] (16-bit, covers A_NNZ_SLOT_PER_PE=40960 at N_PE=2).  The
+# test's GLOBAL Ad reuses a_desc with offsets up to total-A-nnz (~17-bit); those live
+# only in Python (golden / partition / per-PE copy), never streamed, so a_desc_off 17b.
 def a_desc(off, nnz, crow): return (int(off) << 19) | (int(nnz) << 9) | int(crow)
 def a_desc_crow(d): return int(d) & 0x1FF
 def a_desc_nnz(d):  return (int(d) >> 9) & 0x3FF
@@ -771,7 +771,7 @@ async def test_comp_case1_p1(dut):
 # Cluster helpers — packed-bus interface, N_PE-parametric
 #
 # Width constants must stay in sync with defines.vh:
-_A_NNZ_ADDR_W  = 15   # A_NNZ_ADDR_BITS
+_A_NNZ_ADDR_W  = 16   # A_NNZ_ADDR_BITS (per-PE stride in the packed a_*_waddr bus)
 _DATA_W        = 16   # DATA_WIDTH (FP16 input)
 _COL_W         = 9    # log2(MAX_N=512), matches ACC_COL_W in pe_top.v
 #=========================================================================
@@ -1168,13 +1168,13 @@ async def test_comp_peak_cluster(dut):
     max ROW weight (153 nnz/row) and B has max COLUMN weight (153 nnz/col) — the
     structural worst case for the per-PE A/B buffers.  Dataset: TC2_PEAK.
 
-    Uses output-column tiling T=2 (each PE holds 1/2 of B; full B=78336 nnz would
-    not fit B_NNZ_SLOT=40960, but a 256-col tile=39168 does).  Per-PE peak usage:
-    A ~26163/28672 nnz (91%), B-tile ~39168/40960 (96%), C ~171 rows -> needs
-    C_ROW_ADDR_BITS=8 (M=512 over 3 PEs = 171 rows/PE > 128).  Run with:
-        C_ROW_ADDR_BITS=8 COCOTB_TESTCASE=test_comp_peak_cluster bash run_cluster.sh
+    SINGLE PASS (no tiling, default PEAK_T=1): each PE holds the FULL B (78336 nnz
+    <= B_NNZ_SLOT=81920) and 1/2 of A (~39168 <= A_NNZ_SLOT_PER_PE=40960).  At N_PE=2,
+    M=512 -> 256 rows/PE so C needs C_ROW_ADDR_BITS=8 (the new default).  Run with:
+        COCOTB_TESTCASE=test_comp_peak_cluster bash run_cluster.sh
+    Set PEAK_T=2 to fall back to output-column tiling (smaller resident B).
     """
-    T = 2
+    T = int(os.environ.get('PEAK_T', '1'))
     sub = os.environ.get('PEAK_SUBDIR', 'TC2_PEAK')   # override for smaller dense repros
     Ad, Ac, Av, An, M, K  = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False, subdir=sub)
     Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True,  subdir=sub)
@@ -1207,7 +1207,7 @@ async def test_comp_peak_cluster(dut):
     dut._log.info("=" * 70)
     dut._log.info("%d-PE PEAK CLUSTER: A(%d,%d)xB(%d,%d) -> C(%d,%d), T=%d", n_pe, M, K, K2, N, M, N, T)
     dut._log.info("  A rows/PE=%s  A nnz/PE=%s (slot %d)  B nnz=%d (tile~%d, slot %d)",
-                  row_counts, a_nnz_pe, 28672, Bn, Bn // T, 40960)
+                  row_counts, a_nnz_pe, 40960, Bn, Bn // T, 81920)
 
     cp_full = {}
     tot_cyc = 0

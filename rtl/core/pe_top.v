@@ -72,8 +72,12 @@ module pe_top #(
     // the elementwise path read 16 consecutive A elements/cycle (16x its old 1/cycle);
     // the SpGEMM generator reads one element/cycle by muxing the bank for its offset.
     // Same total depth as the old single buffers (A_NNZ_SLOT_PER_PE), 1/16 per bank.
-    localparam A_BANK_DEPTH = `A_NNZ_SLOT_PER_PE / 16;   // 28672/16 = 1792
-    localparam A_BADDR_W    = `A_NNZ_ADDR_BITS - 4;      // 11 (bank-local address)
+    // *_val banks are 16-bit (FP16 data); *_col banks are 9-bit (col index <= 511,
+    // K/N <= 512) — the col stores were 16-bit out of DATA_WIDTH uniformity but only
+    // [8:0] is ever used downstream, so 9-bit halves their BRAM (2048x9 mode) with
+    // ZERO datapath change (writes auto-truncate, reads auto zero-extend to 16b).
+    localparam A_BANK_DEPTH = `A_NNZ_SLOT_PER_PE / 16;   // 40960/16 = 2560
+    localparam A_BADDR_W    = `A_NNZ_ADDR_BITS - 4;      // 12 (bank-local address)
     (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b0 [0:A_BANK_DEPTH-1];
     (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b1 [0:A_BANK_DEPTH-1];
     (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b2 [0:A_BANK_DEPTH-1];
@@ -90,44 +94,44 @@ module pe_top #(
     (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b13[0:A_BANK_DEPTH-1];
     (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b14[0:A_BANK_DEPTH-1];
     (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b15[0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b0 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b1 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b2 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b3 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b4 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b5 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b6 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b7 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b8 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b9 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b10[0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b11[0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b12[0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b13[0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b14[0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_col_b15[0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [8:0] A_col_b0 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [8:0] A_col_b1 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [8:0] A_col_b2 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [8:0] A_col_b3 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [8:0] A_col_b4 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [8:0] A_col_b5 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [8:0] A_col_b6 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [8:0] A_col_b7 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [8:0] A_col_b8 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [8:0] A_col_b9 [0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [8:0] A_col_b10[0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [8:0] A_col_b11[0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [8:0] A_col_b12[0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [8:0] A_col_b13[0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [8:0] A_col_b14[0:A_BANK_DEPTH-1];
+    (* ram_style="block" *) reg [8:0] A_col_b15[0:A_BANK_DEPTH-1];
 
     localparam B_BANK_DEPTH = `B_NNZ_SLOT / 16;
     localparam B_DESC_DEPTH = `B_ROW_SLOT;
 
     // All B reads are now synchronous (executor/generator/elem), so force Block
     // RAM — these 32 arrays (~4928x16 each) were the dominant LUTRAM consumer.
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b0  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b1  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b2  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b3  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b4  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b5  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b6  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b7  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b8  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b9  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b10 [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b11 [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b12 [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b13 [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b14 [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_col_b15 [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [8:0] B_col_b0  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [8:0] B_col_b1  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [8:0] B_col_b2  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [8:0] B_col_b3  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [8:0] B_col_b4  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [8:0] B_col_b5  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [8:0] B_col_b6  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [8:0] B_col_b7  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [8:0] B_col_b8  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [8:0] B_col_b9  [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [8:0] B_col_b10 [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [8:0] B_col_b11 [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [8:0] B_col_b12 [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [8:0] B_col_b13 [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [8:0] B_col_b14 [0:B_BANK_DEPTH-1];
+    (* ram_style = "block" *) reg [8:0] B_col_b15 [0:B_BANK_DEPTH-1];
     (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b0  [0:B_BANK_DEPTH-1];
     (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b1  [0:B_BANK_DEPTH-1];
     (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b2  [0:B_BANK_DEPTH-1];
@@ -1373,10 +1377,11 @@ module pe_top #(
                 PE_IDLE:          if (start) row_idx<=0;
                 PE_LOAD_ROW_DESC: if (a_desc_valid) begin
                     cur_c_row<={{(`MAX_DIM_BITS-9){1'b0}}, a_desc_data[8:0]};
-                    // a_off is 15 bits [33:19] (was 14 -> truncated above 16383,
-                    // which a dense PE's offset exceeds: 153 nnz/row x >=108 rows).
-                    // A_NNZ_SLOT_PER_PE=28672 needs 15 bits.
-                    cur_a_off<={17'b0,a_desc_data[33:19]};
+                    // a_off is 16 bits [34:19].  A_NNZ_SLOT_PER_PE=40960 (N_PE=2,
+                    // half of the 78643 peak A per PE -> offset reaches ~39322) needs
+                    // 16 bits; was 15 ([33:19]) for the 3-PE/28672 config which would
+                    // truncate above 32767.  Test packs off<<19 (no mask), reads 17b.
+                    cur_a_off<={16'b0,a_desc_data[34:19]};
                     cur_a_nnz<={6'b0, a_desc_data[18:9]};
                 end
                 // New row starting on this acc -> its generation is not done yet.

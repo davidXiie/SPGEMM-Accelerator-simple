@@ -21,7 +21,7 @@
 //=============================================================================
 // PE & MAC Configuration
 //=============================================================================
-`define N_PE          3      // cluster size — change here to scale
+`define N_PE          2      // cluster size — change here to scale
 `define N_MAC         16
 `define N_MAC_BITS    4       // log2(16)
 
@@ -93,19 +93,18 @@
 // 32768 gives ~1.67x headroom over the ideal 78643/4 = 19661 nnz/PE.
 //=============================================================================
 `define A_ROW_SLOT_PER_PE  256
-`define A_NNZ_SLOT_PER_PE  28672   // >= 78643/N_PE(=26214 at N_PE=3); BRAM-aligned (14*2048)
+`define A_NNZ_SLOT_PER_PE  40960   // >= 78643/N_PE(=39322 at N_PE=2); BRAM-aligned (20*2048)
 `define A_ROW_ADDR_BITS    8       // log2(256)
-`define A_NNZ_ADDR_BITS    15      // addr space 32768 >= 28672
+`define A_NNZ_ADDR_BITS    16      // addr space 65536 >= 40960 (per-PE A offset reaches ~39322)
 
 `define B_ROW_SLOT         512     // >= max K
-// OUTPUT-COLUMN TILING (T=2): each pass loads only one column-half of B, so the
-// resident B buffer holds ~1/2 of worst-case B nnz instead of the full 78643.
-// This is the per-PE B-BRAM saving that lets 4 PEs fit (B is broadcast/replicated).
-// 40960 = 16*2560 ≈ 0.52*78643 (small margin over an even column split); bump if
-// the matrices are column-skewed enough that one half exceeds this.
-`define B_NNZ_SLOT         40960   // 16-bank aligned: 2560*16
+// NO TILING (single pass): the resident B buffer holds the FULL worst-case B nnz
+// (B is broadcast/replicated, so this costs BRAM x N_PE).  Sized for the peak
+// 30%@512 column-weight case = 512*153 = 78336 nnz; 81920 = 16*5120 gives margin.
+// (Output-column tiling was the prior 40960 half-size scheme; dropped at N_PE=2.)
+`define B_NNZ_SLOT         81920   // 16-bank aligned: 5120*16, >= 78336 full B
 `define B_ROW_ADDR_BITS    9       // log2(512)
-`define B_NNZ_ADDR_BITS    17      // addr port width (over-provisioned; depth = SLOT/16)
+`define B_NNZ_ADDR_BITS    17      // addr port width (over-provisioned; depth = SLOT/16 = 5120 -> 13b)
 
 `define PE_ACC_DEPTH       512     // >= max N output columns
 `define PE_ACC_ADDR_BITS   9
@@ -120,11 +119,12 @@
 //
 //   C_ROW_ADDR_BITS is overridable on the iverilog command line
 //   (-DC_ROW_ADDR_BITS=N).  Default is the CLUSTER configuration:
-//     cluster (balanced, ceil(512/N_PE)=128 rows/PE): 7 → 128 slots (default)
-//     single PE (processes all M rows, up to 256):     8 → 256 slots (override)
+//     cluster (balanced, ceil(512/N_PE)=256 rows/PE at N_PE=2): 8 → 256 slots
+//     single PE (processes all M rows, up to 256):              8 → 256 slots
+//   (Row-imbalanced inputs putting >256 rows on one PE need 9 → 512.)
 //=============================================================================
 `ifndef C_ROW_ADDR_BITS
-`define C_ROW_ADDR_BITS  7
+`define C_ROW_ADDR_BITS  8
 `endif
 `define C_ROW_SLOTS      (1 << `C_ROW_ADDR_BITS)
 
