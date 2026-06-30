@@ -1267,8 +1267,9 @@ module pe_top #(
 
     // Per-bank scatter FIFO depth is the `BANK_FIFO_DEPTH knob (LUT vs throughput;
     // see defines.vh).  LOG is derived so only the one define needs setting.
-    row_accumulator_16bank #(
-        .OUT_COLS(512),.COL_W(9),.PROD_W(16),.ACC_W(16),.EPOCH_W(16),
+    row_accumulator #(
+        .OUT_COLS(512),.COL_W(9),.N_BANK(`N_MAC),.BIDX_W(`N_MAC_BITS),
+        .PROD_W(16),.ACC_W(16),.EPOCH_W(16),
         .BANK_FIFO_DEPTH(`BANK_FIFO_DEPTH),.BANK_FIFO_LOG($clog2(`BANK_FIFO_DEPTH)),.ROW_W(`A_ROW_ADDR_BITS)
     ) u_row_acc_0 (
         .clk(aclk),.rst_n(aresetn),
@@ -1281,8 +1282,9 @@ module pe_top #(
         .drain_active(drain_active_0)
     );
 
-    row_accumulator_16bank #(
-        .OUT_COLS(512),.COL_W(9),.PROD_W(16),.ACC_W(16),.EPOCH_W(16),
+    row_accumulator #(
+        .OUT_COLS(512),.COL_W(9),.N_BANK(`N_MAC),.BIDX_W(`N_MAC_BITS),
+        .PROD_W(16),.ACC_W(16),.EPOCH_W(16),
         .BANK_FIFO_DEPTH(`BANK_FIFO_DEPTH),.BANK_FIFO_LOG($clog2(`BANK_FIFO_DEPTH)),.ROW_W(`A_ROW_ADDR_BITS)
     ) u_row_acc_1 (
         .clk(aclk),.rst_n(aresetn),

@@ -22,8 +22,8 @@
 // PE & MAC Configuration
 //=============================================================================
 `define N_PE          2      // cluster size — change here to scale
-`define N_MAC         16
-`define N_MAC_BITS    4       // log2(16)
+`define N_MAC         16     // lanes/banks per PE (flip to 32 for 32-wide engine)
+`define N_MAC_BITS    4       // log2(N_MAC)
 
 // FP16 multiplier pipeline latency (1 = registered output)
 `define MUL_LAT       1
@@ -133,22 +133,23 @@
 `define INSTR_ADDR_BITS    16     // log2(65536)
 
 //=============================================================================
-// Task & Product Group FIFO parameters (widths are for N_MAC=16 lanes/group)
+// Task & Product Group FIFO parameters (widths scale with N_MAC lanes/group)
 //   task        = {b_val[15:0], a_val[15:0], col_id[8:0]}     41-bit
-//   task_group  = {comp_sel, lane_valid[15:0], task15..task0} 673-bit
+//   task_group  = {comp_sel, lane_valid[N_MAC-1:0], taskN..0} N_MAC+N_MAC*41+1
 //   product     = {col_id[8:0], fp16_val[15:0]}               25-bit
-//   prod_group  = {lane_valid[15:0], prod15..prod0}           416-bit
+//   prod_group  = {lane_valid[N_MAC-1:0], prodN..0}           N_MAC+N_MAC*25
 //
 //   col_id is 9-bit because MAX_N=512 needs only log2(512)=9 bits.
+//   At N_MAC=32: task_group=32+32*41+1=1345, prod_group=32+32*25=832.
 //=============================================================================
 `define TASK_WIDTH        41   // 9 + 16 + 16
 // +1 MSB carries comp_sel (which ping-pong accumulator this group belongs to)
 // so rows can be pipelined: the generator tags each group, and the product is
 // routed by that tag instead of a global comp_sel.
-`define TASK_GROUP_WIDTH  (`N_MAC + `N_MAC * `TASK_WIDTH + 1)   // 16+16*41+1 = 673
+`define TASK_GROUP_WIDTH  (`N_MAC + `N_MAC * `TASK_WIDTH + 1)   // 32+32*41+1 = 1345
 
 `define PRODUCT_WIDTH       25   // {col_id[8:0], fp16_val[15:0]}
-`define PRODUCT_GROUP_WIDTH (`N_MAC + `N_MAC * `PRODUCT_WIDTH)  // 16+16*25 = 416
+`define PRODUCT_GROUP_WIDTH (`N_MAC + `N_MAC * `PRODUCT_WIDTH)  // 32+32*25 = 832
 
 `define TASK_FIFO_DEPTH     512
 `define TASK_FIFO_DEPTH_LOG 9
