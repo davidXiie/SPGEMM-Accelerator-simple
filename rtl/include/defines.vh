@@ -22,8 +22,8 @@
 // PE & MAC Configuration
 //=============================================================================
 `define N_PE          2      // cluster size — change here to scale
-`define N_MAC         16     // lanes/banks per PE (flip to 32 for 32-wide engine)
-`define N_MAC_BITS    4       // log2(N_MAC)
+`define N_MAC         32     // lanes/banks per PE (32-wide single engine)
+`define N_MAC_BITS    5       // log2(N_MAC)
 
 // FP16 multiplier pipeline latency (1 = registered output)
 `define MUL_LAT       1
@@ -194,5 +194,10 @@
 // Derived
 //=============================================================================
 `define TOTAL_MAC (`N_PE * `N_MAC)
+
+// C bank column-group geometry: a row's MAX_N columns are drained NB at a time,
+// so there are MAX_N/N_MAC groups -> gaddr is C_GROUP_BITS wide (9 - N_MAC_BITS,
+// since COL_W=9 for MAX_N=512).  5 bits @N_MAC=16, 4 bits @N_MAC=32.
+`define C_GROUP_BITS (9 - `N_MAC_BITS)
 
 `endif // DEFINES_VH

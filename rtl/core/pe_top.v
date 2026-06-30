@@ -56,13 +56,13 @@ module pe_top #(
     input  wire [31:0]                   b_desc_wdata,
 
     // C buffer read port (independent C bank; synchronous 1-cycle read).
-    // Address = {local_row[C_ROW_ADDR_BITS-1:0], gaddr[4:0]}; data = 16 FP16
-    // lanes for column group gaddr (column j = gaddr*16 + lane).  c_rd_row
-    // returns the global C row id of this local slot (from C_row_map).
-    input  wire                          c_rd_en,
-    input  wire [`C_ROW_ADDR_BITS+4:0]  c_rd_addr,
-    output reg  [16*16-1:0]              c_rd_data,
-    output reg  [`MAX_DIM_BITS-1:0]      c_rd_row
+    // Address = {local_row[C_ROW_ADDR_BITS-1:0], gaddr[C_GROUP_BITS-1:0]}; data =
+    // N_MAC FP16 lanes for column group gaddr (column j = gaddr*N_MAC + lane).
+    // c_rd_row returns the global C row id of this local slot (from C_row_map).
+    input  wire                                  c_rd_en,
+    input  wire [`C_ROW_ADDR_BITS+`C_GROUP_BITS-1:0] c_rd_addr,
+    output reg  [`N_MAC*16-1:0]                  c_rd_data,
+    output reg  [`MAX_DIM_BITS-1:0]              c_rd_row
 );
 
     //=========================================================================
@@ -702,28 +702,13 @@ module pe_top #(
         if (!aresetn) begin
             mac_lane_valid_r<=0; mac_lane_task_r<=0; mac_comp_sel_r<=0;
         end else if (exec_valid_d1) begin
-            mac_lane_valid_r <= 16'hFFFF;
+            mac_lane_valid_r <= {`N_MAC{1'b1}};   // executor group: all NB lanes valid
             mac_comp_sel_r   <= exec_comp_d1;
             mac_lane_task_r<=exec_sg;
         end else if (task_fifo_rd_en_d1) begin
             mac_lane_valid_r <= task_fifo_rd_data_d1[`N_MAC-1:0];
             mac_comp_sel_r   <= task_fifo_rd_data_d1[`TASK_GROUP_WIDTH-1];
-            mac_lane_task_r[0 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+0 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[1 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+1 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[2 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+2 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[3 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+3 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[4 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+4 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[5 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+5 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[6 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+6 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[7 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+7 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[8 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+8 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[9 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+9 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[10*`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+10*`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[11*`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+11*`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[12*`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+12*`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[13*`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+13*`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[14*`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+14*`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[15*`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+15*`TASK_WIDTH+:`TASK_WIDTH];
+            mac_lane_task_r  <= task_fifo_rd_data_d1[`N_MAC +: `N_MAC*`TASK_WIDTH];
         end else begin
             mac_lane_valid_r<=0;
         end
@@ -765,22 +750,9 @@ module pe_top #(
     wire product_group_wr_en = |mul_valid && !product_fifo_full;
 
     assign product_group_wr_data[`N_MAC-1:0]=mul_valid;
-    assign product_group_wr_data[`N_MAC+0 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[0 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+1 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[1 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+2 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[2 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+3 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[3 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+4 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[4 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+5 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[5 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+6 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[6 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+7 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[7 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+8 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[8 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+9 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[9 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+10*`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[10*`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+11*`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[11*`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+12*`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[12*`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+13*`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[13*`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+14*`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[14*`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+15*`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[15*`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
+    generate for (gj = 0; gj < `N_MAC; gj = gj + 1) begin : g_prodpack
+        assign product_group_wr_data[`N_MAC + gj*`PRODUCT_WIDTH +: `PRODUCT_WIDTH] = mul_product[gj*`PRODUCT_WIDTH +: `PRODUCT_WIDTH];
+    end endgenerate
 
     wire prod_fifo_rd_en_0,prod_fifo_rd_en_1;
     wire [`PRODUCT_GROUP_WIDTH-1:0] prod_fifo_rd_data_0,prod_fifo_rd_data_1;
@@ -809,10 +781,10 @@ module pe_top #(
 
     wire acc_busy_0,acc_busy_1,acc_row_done_0,acc_row_done_1;
     wire acc_issue_ready_0,acc_issue_ready_1;
-    wire [15:0] drain_valid_0,drain_valid_1;
-    wire [4:0]  drain_gaddr_0,drain_gaddr_1;
+    wire [NB-1:0] drain_valid_0,drain_valid_1;
+    wire [`C_GROUP_BITS-1:0] drain_gaddr_0,drain_gaddr_1;
     wire [`A_ROW_ADDR_BITS-1:0] drain_row_id_0,drain_row_id_1;
-    wire [16*16-1:0] drain_values_0,drain_values_1;
+    wire [NB*16-1:0] drain_values_0,drain_values_1;
     wire drain_active_0,drain_active_1;
 
     wire other_acc_busy = comp_sel ? acc_busy_0 : acc_busy_1;
@@ -982,7 +954,7 @@ module pe_top #(
     //   The two ping-pong accumulators drain serially (guarded by
     //   other_acc_busy), so a priority mux on drain_active is race-free.
     //=========================================================================
-    localparam C_BANK_ADDR_W = `C_ROW_ADDR_BITS + 5;     // local_row + gaddr
+    localparam C_BANK_ADDR_W = `C_ROW_ADDR_BITS + `C_GROUP_BITS;   // local_row + gaddr
     localparam C_BANK_DEPTH  = 1 << C_BANK_ADDR_W;
 
     // C_bank is declared per-sub-bank INSIDE the generate loop below so each is
@@ -1001,20 +973,20 @@ module pe_top #(
     wire                        c_wr_sel0 = drain_active_0;
     wire [`C_ROW_ADDR_BITS-1:0] c_wr_row  = c_wr_sel0 ? drain_row_id_0[`C_ROW_ADDR_BITS-1:0]
                                                       : drain_row_id_1[`C_ROW_ADDR_BITS-1:0];
-    wire [4:0]                  c_wr_gaddr = c_wr_sel0 ? drain_gaddr_0  : drain_gaddr_1;
-    wire [15:0]                 c_wr_dv    = c_wr_sel0 ? drain_valid_0  : drain_valid_1;
-    wire [16*16-1:0]            c_wr_dat   = c_wr_sel0 ? drain_values_0 : drain_values_1;
+    wire [`C_GROUP_BITS-1:0]    c_wr_gaddr = c_wr_sel0 ? drain_gaddr_0  : drain_gaddr_1;
+    wire [NB-1:0]               c_wr_dv    = c_wr_sel0 ? drain_valid_0  : drain_valid_1;
+    wire [NB*16-1:0]            c_wr_dat   = c_wr_sel0 ? drain_values_0 : drain_values_1;
     wire [C_BANK_ADDR_W-1:0]    c_wr_addr  = {c_wr_row, c_wr_gaddr};
 
     // Registered map read (same address timing as the C bank data read).
     always @(posedge aclk) begin
         if (c_rd_en)
-            c_rd_row <= C_row_map[c_rd_addr[C_BANK_ADDR_W-1:5]];
+            c_rd_row <= C_row_map[c_rd_addr[C_BANK_ADDR_W-1:`C_GROUP_BITS]];
     end
 
     genvar cb;
     generate
-        for (cb = 0; cb < 16; cb = cb + 1) begin : gen_c_bank
+        for (cb = 0; cb < NB; cb = cb + 1) begin : gen_c_bank
             reg [15:0] mem [0:C_BANK_DEPTH-1];   // one sub-bank (own variable)
             always @(posedge aclk) begin
                 if (c_wr_en)

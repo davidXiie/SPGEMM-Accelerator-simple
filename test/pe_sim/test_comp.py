@@ -124,18 +124,19 @@ def load_comp_matrix(index_file, matrix_file, is_B=False, subdir='TC1_RAW'):
         return row_desc, col_arr, val_arr, offset, B_rows, B_cols
 
 def align_b_16wide(Bd, Bc, Bv):
-    """Lay out B elements in 16-bank storage with per-row rotation.
+    """Lay out B elements in NB-bank storage with per-row rotation.
 
-    Row r starts at absolute position b_off where b_off % 16 == r % 16.
-    This distributes the tail element of partial rows evenly across 16 lanes.
-    The hardware generator uses lane = (b_off + u) % 16 (general form).
+    Row r starts at absolute position b_off where b_off % NB == r % NB.
+    This distributes the tail element of partial rows evenly across NB lanes.
+    The hardware generator uses lane = (b_off + u) % NB (general form).
+    Alignment is load-balance only; correctness holds for any b_off.
     """
     new_Bc = []; new_Bv = []; new_Bd = []; new_off = 0
     for r, d in enumerate(Bd):
         start  = b_desc_off(d)
         nnz    = b_desc_nnz(d)
-        target_mod = r % 16
-        gap = (target_mod - new_off % 16) % 16
+        target_mod = r % _NB
+        gap = (target_mod - new_off % _NB) % _NB
         for _ in range(gap):
             new_Bc.append(0); new_Bv.append(0)
         new_off += gap
@@ -548,20 +549,20 @@ async def read_c_bank(c_rd_en, c_rd_addr, c_rd_data, c_rd_row, clk, rc, N):
     them as 0.  The host learns row placement from c_rd_row, not the partition.
     """
     cp = {}
-    ngroups = (N + 15) // 16
+    ngroups = (N + _NB - 1) // _NB
     c_rd_en.value = 1
     for local in range(rc):
         for g in range(ngroups):
-            c_rd_addr.value = (local << 5) | g
+            c_rd_addr.value = (local << _GBITS) | g
             await RisingEdge(clk)          # latch address
             await RisingEdge(clk)          # registered data now valid
             r    = int(c_rd_row.value)     # global C row for this local slot
             vals = int(c_rd_data.value)
-            for b in range(16):
+            for b in range(_NB):
                 fp16_bits = (vals >> (b * 16)) & 0xFFFF
                 if fp16_bits == 0:
                     continue
-                j = g * 16 + b
+                j = g * _NB + b
                 if j < N:
                     cp[r * C_ROW_STRIDE + j] = fp16_from_bits(fp16_bits)
     c_rd_en.value = 0
@@ -774,6 +775,8 @@ async def test_comp_case1_p1(dut):
 _A_NNZ_ADDR_W  = 16   # A_NNZ_ADDR_BITS (per-PE stride in the packed a_*_waddr bus)
 _DATA_W        = 16   # DATA_WIDTH (FP16 input)
 _COL_W         = 9    # log2(MAX_N=512), matches ACC_COL_W in pe_top.v
+_NB            = 32   # N_MAC: banks/MAC lanes per PE (must match defines.vh)
+_GBITS         = 9 - (_NB.bit_length() - 1)   # C gaddr width = 9 - log2(NB)
 #=========================================================================
 
 def partition_a(Ad, Ac, Av, M, n_pe, Bd=None):
@@ -991,22 +994,22 @@ async def run_cluster(dut, row_counts, n_pe, pe_desc, N, to=50000000):
     # correct regardless of the build's C_ROW_ADDR_BITS override.
     C_RD_ADDR_W  = len(dut.c_rd_addr) // n_pe
     MAX_DIM_BITS = len(dut.c_rd_row)  // n_pe
-    ngroups = (N + 15) // 16
+    ngroups = (N + _NB - 1) // _NB
     for pid in range(n_pe):
         for local in range(row_counts[pid]):
             for g in range(ngroups):
                 dut.c_rd_en.value   = 1 << pid
-                dut.c_rd_addr.value = ((local << 5) | g) << (pid * C_RD_ADDR_W)
+                dut.c_rd_addr.value = ((local << _GBITS) | g) << (pid * C_RD_ADDR_W)
                 await RisingEdge(dut.aclk)   # latch address
                 await RisingEdge(dut.aclk)   # registered data valid
                 # Only PE pid's slice is driven; others may be X → x/z resolve to 0.
                 r    = slice_bits(dut.c_rd_row.value,  pid * MAX_DIM_BITS, MAX_DIM_BITS)
-                vals = slice_bits(dut.c_rd_data.value, pid * 16 * 16, 16 * 16)
-                for b in range(16):
+                vals = slice_bits(dut.c_rd_data.value, pid * _NB * 16, _NB * 16)
+                for b in range(_NB):
                     fp16_bits = (vals >> (b * 16)) & 0xFFFF
                     if fp16_bits == 0:
                         continue
-                    j = g * 16 + b
+                    j = g * _NB + b
                     if j < N:
                         cp[r * C_ROW_STRIDE + j] = fp16_from_bits(fp16_bits)
     dut.c_rd_en.value = 0

@@ -59,12 +59,12 @@ module pe_cluster #(
     // addr = {local_row[C_ROW_ADDR_BITS-1:0], gaddr[4:0]}, data = 16 FP16 lanes,
     // c_rd_row = global C row of the addressed local slot.
     input  wire [N_PE-1:0]                          c_rd_en,
-    input  wire [N_PE*(`C_ROW_ADDR_BITS+5)-1:0]     c_rd_addr,
-    output wire [N_PE*16*16-1:0]                    c_rd_data,
+    input  wire [N_PE*(`C_ROW_ADDR_BITS+`C_GROUP_BITS)-1:0] c_rd_addr,
+    output wire [N_PE*`N_MAC*16-1:0]                c_rd_data,
     output wire [N_PE*`MAX_DIM_BITS-1:0]            c_rd_row
 );
 
-    localparam C_RD_ADDR_W = `C_ROW_ADDR_BITS + 5;
+    localparam C_RD_ADDR_W = `C_ROW_ADDR_BITS + `C_GROUP_BITS;
 
     wire [N_PE-1:0] done_vec;
     assign done = &done_vec;
@@ -106,7 +106,7 @@ module pe_cluster #(
 
                 .c_rd_en   (c_rd_en[i]),
                 .c_rd_addr (c_rd_addr[i*C_RD_ADDR_W +: C_RD_ADDR_W]),
-                .c_rd_data (c_rd_data[i*16*16 +: 16*16]),
+                .c_rd_data (c_rd_data[i*`N_MAC*16 +: `N_MAC*16]),
                 .c_rd_row  (c_rd_row[i*`MAX_DIM_BITS +: `MAX_DIM_BITS])
             );
         end
