@@ -191,7 +191,7 @@ module pe_top #(
     // A nonzero prefetch
     //=========================================================================
     wire [`A_NNZ_ADDR_BITS-1:0] fetch_a_addr =
-        cur_a_off[`A_NNZ_ADDR_BITS-1:0] + gen_t[`A_NNZ_ADDR_BITS-1:0];
+        cur_a_off[`A_NNZ_ADDR_BITS-1:0] + gen_t;   // gen_t is 16b (<=row nnz); auto zero-extends
     // Registered (BRAM) A read shared by SpGEMM and elem (driven below, after the
     // elem address is defined).  fetch_a_val/fetch_k_idx are now the data for the
     // address that was presented LAST cycle, so the generator FSM issues the
@@ -357,7 +357,7 @@ module pe_top #(
     // RAM (was ~29k LUT/PE of distributed RAM).
     wire [`A_NNZ_ADDR_BITS-1:0] a_rd_addr =
         op_mode ? elem_a_addr
-                : (cur_a_off[`A_NNZ_ADDR_BITS-1:0] + gen_t_next[`A_NNZ_ADDR_BITS-1:0]);
+                : (cur_a_off[`A_NNZ_ADDR_BITS-1:0] + gen_t_next);   // gen_t_next 16b, auto zero-extends
     assign a_rd_baddr          = a_rd_addr[`A_NNZ_ADDR_BITS-1:BIDX];   // bank-local addr
     wire [BIDX-1:0] a_rd_bsel   = a_rd_addr[BIDX-1:0];                  // bank of a_rd_addr
     reg  [BIDX-1:0] a_rd_bsel_d;                                       // delayed to match reg read
@@ -1017,11 +1017,10 @@ module pe_top #(
                 PE_IDLE:          if (start) row_idx<=0;
                 PE_LOAD_ROW_DESC: if (a_desc_valid) begin
                     cur_c_row<={{(`MAX_DIM_BITS-9){1'b0}}, a_desc_data[8:0]};
-                    // a_off is 16 bits [34:19].  A_NNZ_SLOT_PER_PE=40960 (N_PE=2,
-                    // half of the 78643 peak A per PE -> offset reaches ~39322) needs
-                    // 16 bits; was 15 ([33:19]) for the 3-PE/28672 config which would
-                    // truncate above 32767.  Test packs off<<19 (no mask), reads 17b.
-                    cur_a_off<={16'b0,a_desc_data[34:19]};
+                    // a_off is 17 bits [35:19].  N_PE=1: one PE holds the FULL A, so the
+                    // offset reaches the peak ~78643 (> 65535) and needs 17 bits;
+                    // a_desc_data is 36b and the test already packs off<<19 (17b read).
+                    cur_a_off<={15'b0,a_desc_data[35:19]};
                     cur_a_nnz<={6'b0, a_desc_data[18:9]};
                 end
                 // New row starting on this acc -> its generation is not done yet.

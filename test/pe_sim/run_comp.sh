@@ -79,7 +79,7 @@ mkdir -p sim_build
 
 iverilog -g2012 \
     -DCOCOTB_SIM=1 \
-    -DC_ROW_ADDR_BITS="${C_ROW_ADDR_BITS:-8}" \
+    -DC_ROW_ADDR_BITS="${C_ROW_ADDR_BITS:-9}" \
     -I"$PROJ_ROOT/rtl/include" \
     -s "$COCOTB_TOPLEVEL" \
     -o sim_build/sim.vvp \

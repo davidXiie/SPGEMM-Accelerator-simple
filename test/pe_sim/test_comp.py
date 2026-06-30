@@ -772,7 +772,7 @@ async def test_comp_case1_p1(dut):
 # Cluster helpers — packed-bus interface, N_PE-parametric
 #
 # Width constants must stay in sync with defines.vh:
-_A_NNZ_ADDR_W  = 16   # A_NNZ_ADDR_BITS (per-PE stride in the packed a_*_waddr bus)
+_A_NNZ_ADDR_W  = 17   # A_NNZ_ADDR_BITS (per-PE stride in the packed a_*_waddr bus)
 _DATA_W        = 16   # DATA_WIDTH (FP16 input)
 _COL_W         = 9    # log2(MAX_N=512), matches ACC_COL_W in pe_top.v
 _NB            = 32   # N_MAC: banks/MAC lanes per PE (must match defines.vh)

@@ -21,7 +21,7 @@
 //=============================================================================
 // PE & MAC Configuration
 //=============================================================================
-`define N_PE          2      // cluster size — change here to scale
+`define N_PE          1      // single 32-MAC PE handles the whole problem
 `define N_MAC         32     // lanes/banks per PE (32-wide single engine)
 `define N_MAC_BITS    5       // log2(N_MAC)
 
@@ -92,19 +92,19 @@
 // NOTE: per-PE A sizing assumes the host balances the row partition by work;
 // 32768 gives ~1.67x headroom over the ideal 78643/4 = 19661 nnz/PE.
 //=============================================================================
-`define A_ROW_SLOT_PER_PE  256
-`define A_NNZ_SLOT_PER_PE  40960   // >= 78643/N_PE(=39322 at N_PE=2); BRAM-aligned (20*2048)
-`define A_ROW_ADDR_BITS    8       // log2(256)
-`define A_NNZ_ADDR_BITS    16      // addr space 65536 >= 40960 (per-PE A offset reaches ~39322)
+`define A_ROW_SLOT_PER_PE  512     // single PE holds ALL rows (N_PE=1)
+`define A_NNZ_SLOT_PER_PE  81920   // single PE holds FULL peak A (>=78643); =32*2560, BRAM-aligned
+`define A_ROW_ADDR_BITS    9       // log2(512)
+`define A_NNZ_ADDR_BITS    17      // addr space 131072 >= 81920 (full A offset reaches ~78643 > 65535)
 
 `define B_ROW_SLOT         512     // >= max K
 // NO TILING (single pass): the resident B buffer holds the FULL worst-case B nnz
 // (B is broadcast/replicated, so this costs BRAM x N_PE).  Sized for the peak
 // 30%@512 column-weight case = 512*153 = 78336 nnz; 81920 = 16*5120 gives margin.
 // (Output-column tiling was the prior 40960 half-size scheme; dropped at N_PE=2.)
-`define B_NNZ_SLOT         81920   // 16-bank aligned: 5120*16, >= 78336 full B
+`define B_NNZ_SLOT         81920   // N_MAC-bank aligned: 2560*32 @N_MAC=32, >= 78336 full B
 `define B_ROW_ADDR_BITS    9       // log2(512)
-`define B_NNZ_ADDR_BITS    17      // addr port width (over-provisioned; depth = SLOT/16 = 5120 -> 13b)
+`define B_NNZ_ADDR_BITS    17      // addr port width (over-provisioned; depth = SLOT/N_MAC = 2560 -> 12b)
 
 `define PE_ACC_DEPTH       512     // >= max N output columns
 `define PE_ACC_ADDR_BITS   9
@@ -124,7 +124,7 @@
 //   (Row-imbalanced inputs putting >256 rows on one PE need 9 → 512.)
 //=============================================================================
 `ifndef C_ROW_ADDR_BITS
-`define C_ROW_ADDR_BITS  8
+`define C_ROW_ADDR_BITS  9       // single PE holds ALL 512 output rows (N_PE=1)
 `endif
 `define C_ROW_SLOTS      (1 << `C_ROW_ADDR_BITS)
 
