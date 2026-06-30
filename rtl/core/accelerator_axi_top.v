@@ -40,10 +40,12 @@ module accelerator_axi_top #(
     output wire                    ddr_RREADY,
 
     // === PE C read ports (for cocotb drain) ===
-    output wire [N_PE-1:0]                           c_rd_en,
-    output wire [N_PE*(`C_ROW_ADDR_BITS+5)-1:0]     c_rd_addr,
-    input  wire [N_PE*16*16-1:0]                     c_rd_data,
-    input  wire [N_PE*`MAX_DIM_BITS-1:0]             c_rd_row
+    // c_rd_en/addr are driven by cocotb → pass through to pe_cluster input
+    input  wire [N_PE-1:0]                           c_rd_en,
+    input  wire [N_PE*(`C_ROW_ADDR_BITS+5)-1:0]     c_rd_addr,
+    // c_rd_data/row come from pe_cluster output → pass through to cocotb
+    output wire [N_PE*16*16-1:0]                     c_rd_data,
+    output wire [N_PE*`MAX_DIM_BITS-1:0]             c_rd_row
 );
 
     //=========================================================================

@@ -1,13 +1,15 @@
 //=============================================================================
 // File     : axi_loader.v
 // Brief    : Reads pre-partitioned A and broadcast B from DDR via AXI.
-//            DDR stores A partitioned per PE (header + desc + col + val),
-//            B as broadcast.  No partitioning logic in HW — just sequential load.
+//            DDR stores A partitioned per PE at non-overlapping zones,
+//            B as broadcast at a fixed zone.
 //
-//   DDR layout (16-bit word addresses):
-//     Header (6 words): row_counts[0..2] + nnz_counts[0..2]
-//     A_desc[] at 0x100, A_col[] at 0x2000, A_val[] at 0x18000
-//     B_desc[] at 0x200000, B_col[] at 0x210000
+//   DDR layout (16-bit word addresses, PE_ZONE = 0x12000):
+//     Header   @ 0x000000: 6 words (pe_rows[0..2], pe_nnz[0..2])
+//     PE0 zone @ 0x000100: A_desc@base+0x000, A_col@base+0x0400, A_val@base+0x9000
+//     PE1 zone @ 0x012000: same layout
+//     PE2 zone @ 0x024000: same layout
+//     B zone   @ 0x036000: B_desc@base+0x000, B_col@base+0x0400, B_val@base+0x8000
 //=============================================================================
 
 `include "defines.vh"
@@ -93,6 +95,22 @@ module axi_loader #(
     // AXI
     reg [511:0] rdat; reg [4:0] rcnt;
     reg [31:0]  a_desc_offs;              // starting word offset for A_desc/col/val
+    reg [31:0]  pe_base;                  // per-PE base address in DDR
+
+    // Per-PE DDR base addresses (word address)
+    // Use simple function for reliable synthesis
+    function [31:0] get_pe_base;
+        input [2:0] pid;
+        begin
+            case (pid)
+                3'd0: get_pe_base = 32'h000100;
+                3'd1: get_pe_base = 32'h012000;
+                3'd2: get_pe_base = 32'h024000;
+                default: get_pe_base = 32'h000100;
+            endcase
+        end
+    endfunction
+    wire [31:0] B_BASE = 32'h036000;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -109,6 +127,7 @@ module axi_loader #(
                 S_IDLE: begin
                     if (start) begin
                         cur_pe <= 0; pe_lrow <= 0; pe_loff <= 0;
+                        pe_base <= get_pe_base(0);
                         state  <= S_HEADER_AR;
                     end
                 end
@@ -123,15 +142,17 @@ module axi_loader #(
                 S_HEADER_R: begin
                     axi_rready <= 1'b1;
                     if (r_fire) begin
-                        // rcnt goes 0..5, capturing row_counts[0..2], nnz_counts[0..2]
-                        if (rcnt < 3) pe_rows[rcnt] <= axi_rdata[15:0];
-                        else           pe_nnz[rcnt-3] <= axi_rdata[15:0];
+                        // Header layout: {row0, nnz0, row1, nnz1, row2, nnz2}
+                        // Even rcnt → pe_rows, odd rcnt → pe_nnz
+                        if (rcnt[0] == 0) pe_rows[rcnt[3:1]] <= axi_rdata[15:0];
+                        else              pe_nnz[rcnt[3:1]]  <= axi_rdata[15:0];
                         rcnt <= rcnt + 1;
                         if (axi_rlast) begin
                             axi_rready <= 1'b0; rcnt <= 0;
                             cur_row <= pe_rows[0]; cur_nnz <= pe_nnz[0];
                             cur_pe <= 0; pe_lrow <= 0; pe_loff <= 0;
-                            a_desc_offs <= 32'h100;  // A_desc base
+                            pe_base <= get_pe_base(0);
+                            a_desc_offs <= get_pe_base(0);  // PE0 A_desc base
                             state <= S_A_DESC_AR;
                         end
                     end
@@ -163,16 +184,29 @@ module axi_loader #(
                 end
 
                 S_A_DESC_WR: begin
-                    // Write desc to PE cur_pe at local row pe_lrow
-                    // rdat[63:0] = {off[31:0], nnz[15:0], crow[15:0]} stored as 4×16-bit words
-                    // PE expects 36-bit: {3'b0, off[13:0], nnz[9:0], crow[8:0]}
+                    // Write desc to PE cur_pe at local row pe_lrow.
+                    // rdat accumulates 4×16-bit words from the 4-beat burst.
+                    //
+                    // DDR stores 36-bit desc d = (off<<19)|(nnz<<9)|crow as 4 words:
+                    //   word0 = d[15:0]  = {nnz[6:0], crow[8:0]}
+                    //   word1 = d[31:16] = {off[12:0], nnz[9:7]}
+                    //   word2 = d[47:32] = {12'b0, off[13]} (upper bits zero)
+                    //
+                    // Reconstruct from rdat = {word3,word2,word1,word0}:
+                    //   crow = rdat[8:0]
+                    //   nnz  = {rdat[18:16], rdat[15:9]}
+                    //   off  = {rdat[32],  rdat[31:19]}
                     pe_a_desc_we    <= 1 << cur_pe;
                     pe_a_desc_waddr <= pe_lrow << (cur_pe * `A_ROW_ADDR_BITS);
-                    pe_a_desc_wdata <= ({3'd0, rdat[13:0], rdat[25:16], rdat[8:0]}) << (cur_pe * 36);
+                    pe_a_desc_wdata <= ({3'd0,
+                        rdat[32], rdat[31:19],          // off[13:0]
+                        rdat[18:16], rdat[15:9],        // nnz[9:0]
+                        rdat[8:0]})                     // crow[8:0]
+                        << (cur_pe * 36);
                     pe_lrow <= pe_lrow + 1;
                     if (pe_lrow + 1 >= cur_row) begin
                         pe_lrow <= 0;
-                        a_desc_offs <= 32'h2000;  // A_col base for this PE
+                        a_desc_offs <= pe_base + 32'h400;  // A_col within PE zone
                         state <= (cur_nnz == 0) ? S_A_VAL_AR : S_A_COL_AR;
                     end else begin
                         state <= S_A_DESC_AR;
@@ -204,7 +238,7 @@ module axi_loader #(
                     rcnt <= rcnt + 1; a_desc_offs <= a_desc_offs + 1;
                     if (rcnt + 1 >= cur_nnz || rcnt + 1 == 32) begin
                         if (rcnt + 1 >= cur_nnz) begin
-                            a_desc_offs <= 32'h18000;  // switch to val base
+                            a_desc_offs <= pe_base + 32'h9000;  // A_val within PE zone
                             state <= S_A_VAL_AR;
                         end else begin
                             state <= S_A_COL_AR;
@@ -243,7 +277,8 @@ module axi_loader #(
                     if (cur_pe + 1 < N_PE) begin
                         cur_pe <= cur_pe + 1; pe_lrow <= 0; pe_loff <= 0;
                         cur_row <= pe_rows[cur_pe + 1]; cur_nnz <= pe_nnz[cur_pe + 1];
-                        a_desc_offs <= 32'h100; state <= S_A_DESC_AR;
+                        pe_base <= get_pe_base(cur_pe + 1);
+                        a_desc_offs <= get_pe_base(cur_pe + 1); state <= S_A_DESC_AR;
                     end else begin
                         pe_row_counts <= {pe_rows[2][15:0], pe_rows[1][15:0], pe_rows[0][15:0]};
                         state <= S_B_DESC;

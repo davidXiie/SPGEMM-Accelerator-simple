@@ -98,17 +98,56 @@ module ddr_model #(
 
                 AR_BURST: begin
                     // Read 512-bit = 32 × 16-bit from consecutive 16-bit addresses
-                    // axi_araddr is byte-addressable; word_addr = axi_araddr >> 1
-                    // For simplicity: axi_araddr is 16-bit word address
+                    // ar_addr is a 16-bit word address
                     axi_rvalid <= 1'b1;
                     axi_rlast  <= (ar_cnt == ar_len);
                     axi_rresp  <= 2'b00;
-                    if ((ar_cnt == ar_len) && axi_rready) begin
-                        axi_rvalid <= 1'b0;
-                        axi_rlast  <= 1'b0;
-                        ar_state <= AR_IDLE;
-                    end else if (axi_rready) begin
-                        ar_cnt <= ar_cnt + 8'd1;
+                    // Compute rdata: 32 consecutive words
+                    // Simple sequential 16-bit word read
+`ifdef COCOTB_SIM
+                    $display("[DDR] BURST beat=%0d addr=%0d word0=%h", ar_cnt, ar_addr+ar_cnt, mem[ar_addr + ar_cnt]);
+`endif
+                    axi_rdata[ 15:  0] <= mem[ar_addr[21:0] + {14'd0, ar_cnt} +  0];
+                    axi_rdata[ 31: 16] <= mem[ar_addr[21:0] + {14'd0, ar_cnt} +  1];
+                    axi_rdata[ 47: 32] <= mem[ar_addr + ar_cnt[21:0] + 21'd2];
+                    axi_rdata[ 63: 48] <= mem[ar_addr + ar_cnt[21:0] + 21'd3];
+                    axi_rdata[ 79: 64] <= mem[ar_addr + ar_cnt[21:0] + 21'd4];
+                    axi_rdata[ 95: 80] <= mem[ar_addr + ar_cnt[21:0] + 21'd5];
+                    axi_rdata[111: 96] <= mem[ar_addr + ar_cnt[21:0] + 21'd6];
+                    axi_rdata[127:112] <= mem[ar_addr + ar_cnt[21:0] + 21'd7];
+                    axi_rdata[143:128] <= mem[ar_addr + ar_cnt[21:0] + 21'd8];
+                    axi_rdata[159:144] <= mem[ar_addr + ar_cnt[21:0] + 21'd9];
+                    axi_rdata[175:160] <= mem[ar_addr + ar_cnt[21:0] + 21'd10];
+                    axi_rdata[191:176] <= mem[ar_addr + ar_cnt[21:0] + 21'd11];
+                    axi_rdata[207:192] <= mem[ar_addr + ar_cnt[21:0] + 21'd12];
+                    axi_rdata[223:208] <= mem[ar_addr + ar_cnt[21:0] + 21'd13];
+                    axi_rdata[239:224] <= mem[ar_addr + ar_cnt[21:0] + 21'd14];
+                    axi_rdata[255:240] <= mem[ar_addr + ar_cnt[21:0] + 21'd15];
+                    axi_rdata[271:256] <= mem[ar_addr + ar_cnt[21:0] + 21'd16];
+                    axi_rdata[287:272] <= mem[ar_addr + ar_cnt[21:0] + 21'd17];
+                    axi_rdata[303:288] <= mem[ar_addr + ar_cnt[21:0] + 21'd18];
+                    axi_rdata[319:304] <= mem[ar_addr + ar_cnt[21:0] + 21'd19];
+                    axi_rdata[335:320] <= mem[ar_addr + ar_cnt[21:0] + 21'd20];
+                    axi_rdata[351:336] <= mem[ar_addr + ar_cnt[21:0] + 21'd21];
+                    axi_rdata[367:352] <= mem[ar_addr + ar_cnt[21:0] + 21'd22];
+                    axi_rdata[383:368] <= mem[ar_addr + ar_cnt[21:0] + 21'd23];
+                    axi_rdata[399:384] <= mem[ar_addr + ar_cnt[21:0] + 21'd24];
+                    axi_rdata[415:400] <= mem[ar_addr + ar_cnt[21:0] + 21'd25];
+                    axi_rdata[431:416] <= mem[ar_addr + ar_cnt[21:0] + 21'd26];
+                    axi_rdata[447:432] <= mem[ar_addr + ar_cnt[21:0] + 21'd27];
+                    axi_rdata[463:448] <= mem[ar_addr + ar_cnt[21:0] + 21'd28];
+                    axi_rdata[479:464] <= mem[ar_addr + ar_cnt[21:0] + 21'd29];
+                    axi_rdata[495:480] <= mem[ar_addr + ar_cnt[21:0] + 21'd30];
+                    axi_rdata[511:496] <= mem[ar_addr + ar_cnt[21:0] + 21'd31];
+
+                    // Handshake — don't override rvalid on last beat!
+                    if (axi_rready) begin
+                        if (ar_cnt == ar_len) begin
+                            // Last beat accepted → go idle (rvalid deasserts next cycle)
+                            ar_state <= AR_IDLE;
+                        end else begin
+                            ar_cnt <= ar_cnt + 8'd1;
+                        end
                     end
                 end
 
