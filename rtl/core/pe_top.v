@@ -60,8 +60,8 @@ module pe_top #(
     // lanes for column group gaddr (column j = gaddr*16 + lane).  c_rd_row
     // returns the global C row id of this local slot (from C_row_map).
     input  wire                          c_rd_en,
-    input  wire [`C_ROW_ADDR_BITS+4:0]  c_rd_addr,
-    output reg  [16*16-1:0]              c_rd_data,
+    input  wire [`C_ROW_ADDR_BITS + $clog2(`MAX_N/`N_MAC) - 1:0]  c_rd_addr,
+    output reg  [`N_MAC*16-1:0]              c_rd_data,
     output reg  [`MAX_DIM_BITS-1:0]      c_rd_row
 );
 
@@ -72,78 +72,17 @@ module pe_top #(
     // the elementwise path read 16 consecutive A elements/cycle (16x its old 1/cycle);
     // the SpGEMM generator reads one element/cycle by muxing the bank for its offset.
     // Same total depth as the old single buffers (A_NNZ_SLOT_PER_PE), 1/16 per bank.
-    localparam A_BANK_DEPTH = `A_NNZ_SLOT_PER_PE / 16;   // 28672/16 = 1792
-    localparam A_BADDR_W    = `A_NNZ_ADDR_BITS - 4;      // 11 (bank-local address)
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b0 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b1 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b2 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b3 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b4 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b5 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b6 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b7 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b8 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b9 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b10[0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b11[0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b12[0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b13[0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b14[0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [`DATA_WIDTH-1:0] A_val_b15[0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [8:0] A_col_b0 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [8:0] A_col_b1 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [8:0] A_col_b2 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [8:0] A_col_b3 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [8:0] A_col_b4 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [8:0] A_col_b5 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [8:0] A_col_b6 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [8:0] A_col_b7 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [8:0] A_col_b8 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [8:0] A_col_b9 [0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [8:0] A_col_b10[0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [8:0] A_col_b11[0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [8:0] A_col_b12[0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [8:0] A_col_b13[0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [8:0] A_col_b14[0:A_BANK_DEPTH-1];
-    (* ram_style="block" *) reg [8:0] A_col_b15[0:A_BANK_DEPTH-1];
+    localparam A_BANK_DEPTH = `A_NNZ_SLOT_PER_PE / `N_MAC;
+    localparam A_BADDR_W    = `A_NNZ_ADDR_BITS - `N_MAC_BITS;
+    localparam GADDR_W      = $clog2(`MAX_N / `N_MAC);
+    // A_val/A_col banks are declared per-bank in the gen_a_bank generate (end of module).
 
-    localparam B_BANK_DEPTH = `B_NNZ_SLOT / 16;
+    localparam B_BANK_DEPTH = `B_NNZ_SLOT / `N_MAC;
     localparam B_DESC_DEPTH = `B_ROW_SLOT;
 
     // All B reads are now synchronous (executor/generator/elem), so force Block
     // RAM — these 32 arrays (~4928x16 each) were the dominant LUTRAM consumer.
-    (* ram_style = "block" *) reg [8:0] B_col_b0  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [8:0] B_col_b1  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [8:0] B_col_b2  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [8:0] B_col_b3  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [8:0] B_col_b4  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [8:0] B_col_b5  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [8:0] B_col_b6  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [8:0] B_col_b7  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [8:0] B_col_b8  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [8:0] B_col_b9  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [8:0] B_col_b10 [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [8:0] B_col_b11 [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [8:0] B_col_b12 [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [8:0] B_col_b13 [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [8:0] B_col_b14 [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [8:0] B_col_b15 [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b0  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b1  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b2  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b3  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b4  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b5  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b6  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b7  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b8  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b9  [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b10 [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b11 [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b12 [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b13 [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b14 [0:B_BANK_DEPTH-1];
-    (* ram_style = "block" *) reg [`DATA_WIDTH-1:0] B_val_b15 [0:B_BANK_DEPTH-1];
+    // B_col/B_val banks are declared per-bank in the gen_b_bank generate (end of module).
 
     reg [31:0] B_desc_buf [0:B_DESC_DEPTH-1];
 
@@ -151,26 +90,6 @@ module pe_top #(
     // SRAM write ports
     //=========================================================================
     always @(posedge aclk) begin
-        if (a_val_we) case (a_val_waddr[3:0])
-            4'd0: A_val_b0[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;  4'd1: A_val_b1[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;
-            4'd2: A_val_b2[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;  4'd3: A_val_b3[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;
-            4'd4: A_val_b4[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;  4'd5: A_val_b5[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;
-            4'd6: A_val_b6[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;  4'd7: A_val_b7[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;
-            4'd8: A_val_b8[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;  4'd9: A_val_b9[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;
-            4'd10:A_val_b10[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata; 4'd11:A_val_b11[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;
-            4'd12:A_val_b12[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata; 4'd13:A_val_b13[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;
-            4'd14:A_val_b14[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata; 4'd15:A_val_b15[a_val_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_val_wdata;
-        endcase
-        if (a_col_we) case (a_col_waddr[3:0])
-            4'd0: A_col_b0[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;  4'd1: A_col_b1[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;
-            4'd2: A_col_b2[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;  4'd3: A_col_b3[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;
-            4'd4: A_col_b4[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;  4'd5: A_col_b5[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;
-            4'd6: A_col_b6[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;  4'd7: A_col_b7[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;
-            4'd8: A_col_b8[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;  4'd9: A_col_b9[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;
-            4'd10:A_col_b10[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata; 4'd11:A_col_b11[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;
-            4'd12:A_col_b12[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata; 4'd13:A_col_b13[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;
-            4'd14:A_col_b14[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata; 4'd15:A_col_b15[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;
-        endcase
         if (b_desc_we) B_desc_buf[b_desc_waddr] <= b_desc_wdata;
     end
 
@@ -228,246 +147,73 @@ module pe_top #(
     //=========================================================================
     // Generator: aligned groups (→ ptr_fifo) and remainder (→ Gen2)
     //=========================================================================
-    wire [15:0] gen_num_groups = {4'b0,  gen_b_nnz[15:4]};
-    wire [3:0]  gen_remainder  = gen_b_nnz[3:0];
+    wire [15:0] gen_num_groups = gen_b_nnz >> `N_MAC_BITS;
+    wire [`N_MAC_BITS-1:0] gen_remainder = gen_b_nnz[`N_MAC_BITS-1:0];
 
-    wire [31:0] gen_abs_base = gen_b_off + {gen_num_groups[13:0], 4'b0000};
-    wire [3:0]  gen_r        = gen_abs_base[3:0];
-    wire [13:0] gen_m        = gen_abs_base[17:4];
+    wire [31:0] gen_abs_base = gen_b_off + (gen_num_groups << `N_MAC_BITS);
+    wire [`N_MAC_BITS-1:0] gen_r = gen_abs_base[`N_MAC_BITS-1:0];
+    wire [13:0] gen_m        = gen_abs_base[`N_MAC_BITS+13:`N_MAC_BITS];
 
-    wire [13:0] gen_bg0  = (gen_r == 4'd0)  ? gen_m : gen_m + 14'd1;
-    wire [13:0] gen_bg1  = (gen_r <= 4'd1)  ? gen_m : gen_m + 14'd1;
-    wire [13:0] gen_bg2  = (gen_r <= 4'd2)  ? gen_m : gen_m + 14'd1;
-    wire [13:0] gen_bg3  = (gen_r <= 4'd3)  ? gen_m : gen_m + 14'd1;
-    wire [13:0] gen_bg4  = (gen_r <= 4'd4)  ? gen_m : gen_m + 14'd1;
-    wire [13:0] gen_bg5  = (gen_r <= 4'd5)  ? gen_m : gen_m + 14'd1;
-    wire [13:0] gen_bg6  = (gen_r <= 4'd6)  ? gen_m : gen_m + 14'd1;
-    wire [13:0] gen_bg7  = (gen_r <= 4'd7)  ? gen_m : gen_m + 14'd1;
-    wire [13:0] gen_bg8  = (gen_r <= 4'd8)  ? gen_m : gen_m + 14'd1;
-    wire [13:0] gen_bg9  = (gen_r <= 4'd9)  ? gen_m : gen_m + 14'd1;
-    wire [13:0] gen_bg10 = (gen_r <= 4'd10) ? gen_m : gen_m + 14'd1;
-    wire [13:0] gen_bg11 = (gen_r <= 4'd11) ? gen_m : gen_m + 14'd1;
-    wire [13:0] gen_bg12 = (gen_r <= 4'd12) ? gen_m : gen_m + 14'd1;
-    wire [13:0] gen_bg13 = (gen_r <= 4'd13) ? gen_m : gen_m + 14'd1;
-    wire [13:0] gen_bg14 = (gen_r <= 4'd14) ? gen_m : gen_m + 14'd1;
-    wire [13:0] gen_bg15 = gen_m;
+    // (aligned-group bank addresses gen_bg* were dead code; removed)
 
     // PREFETCH B-read address — computed from the prefetch descriptor (fetch_*,
     // i.e. the NEXT A-nnz) so the registered read lands exactly when that A-nnz
     // becomes current.  This pipelines the generator (1 A-nnz/cycle) without the
     // 2-phase stall; the rotation below still uses the CURRENT gen_r, which by
     // construction equals this cycle's gen_r_pf delayed one step.
-    wire [15:0] fetch_num_groups = {4'b0, fetch_b_nnz[15:4]};
-    wire [31:0] gen_abs_base_pf  = fetch_b_off + {fetch_num_groups[13:0], 4'b0000};
-    wire [3:0]  gen_r_pf         = gen_abs_base_pf[3:0];
-    wire [13:0] gen_m_pf         = gen_abs_base_pf[17:4];
+    wire [15:0] fetch_num_groups = fetch_b_nnz >> `N_MAC_BITS;
+    wire [31:0] gen_abs_base_pf  = fetch_b_off + (fetch_num_groups << `N_MAC_BITS);
+    wire [`N_MAC_BITS-1:0] gen_r_pf = gen_abs_base_pf[`N_MAC_BITS-1:0];
+    wire [13:0] gen_m_pf         = gen_abs_base_pf[`N_MAC_BITS+13:`N_MAC_BITS];
 
-    wire [13:0] gen_bg0_pf  = (gen_r_pf == 4'd0)  ? gen_m_pf : gen_m_pf + 14'd1;
-    wire [13:0] gen_bg1_pf  = (gen_r_pf <= 4'd1)  ? gen_m_pf : gen_m_pf + 14'd1;
-    wire [13:0] gen_bg2_pf  = (gen_r_pf <= 4'd2)  ? gen_m_pf : gen_m_pf + 14'd1;
-    wire [13:0] gen_bg3_pf  = (gen_r_pf <= 4'd3)  ? gen_m_pf : gen_m_pf + 14'd1;
-    wire [13:0] gen_bg4_pf  = (gen_r_pf <= 4'd4)  ? gen_m_pf : gen_m_pf + 14'd1;
-    wire [13:0] gen_bg5_pf  = (gen_r_pf <= 4'd5)  ? gen_m_pf : gen_m_pf + 14'd1;
-    wire [13:0] gen_bg6_pf  = (gen_r_pf <= 4'd6)  ? gen_m_pf : gen_m_pf + 14'd1;
-    wire [13:0] gen_bg7_pf  = (gen_r_pf <= 4'd7)  ? gen_m_pf : gen_m_pf + 14'd1;
-    wire [13:0] gen_bg8_pf  = (gen_r_pf <= 4'd8)  ? gen_m_pf : gen_m_pf + 14'd1;
-    wire [13:0] gen_bg9_pf  = (gen_r_pf <= 4'd9)  ? gen_m_pf : gen_m_pf + 14'd1;
-    wire [13:0] gen_bg10_pf = (gen_r_pf <= 4'd10) ? gen_m_pf : gen_m_pf + 14'd1;
-    wire [13:0] gen_bg11_pf = (gen_r_pf <= 4'd11) ? gen_m_pf : gen_m_pf + 14'd1;
-    wire [13:0] gen_bg12_pf = (gen_r_pf <= 4'd12) ? gen_m_pf : gen_m_pf + 14'd1;
-    wire [13:0] gen_bg13_pf = (gen_r_pf <= 4'd13) ? gen_m_pf : gen_m_pf + 14'd1;
-    wire [13:0] gen_bg14_pf = (gen_r_pf <= 4'd14) ? gen_m_pf : gen_m_pf + 14'd1;
-    wire [13:0] gen_bg15_pf = gen_m_pf;
+    wire [13:0] gen_bg_pf [0:`N_MAC-1];
+    genvar gpf;
+    generate for (gpf=0; gpf<`N_MAC; gpf=gpf+1) begin: g_gen_bg_pf
+        assign gen_bg_pf[gpf] = (gen_r_pf <= gpf) ? gen_m_pf : gen_m_pf + 14'd1;
+    end endgenerate
 
     // Registered (synchronous) B reads -> infer Block RAM.  Issued from the
     // PREFETCH address (next A-nnz) and clock-enabled only when the generator
     // advances (gen_b_read_en), so bcN/bvN hold the CURRENT A-nnz's data while
     // stalled and update exactly when the next A-nnz is loaded into gen_*.
-    reg [15:0] bc0,bc1,bc2,bc3,bc4,bc5,bc6,bc7,bc8,bc9,bc10,bc11,bc12,bc13,bc14,bc15;
-    reg [15:0] bv0,bv1,bv2,bv3,bv4,bv5,bv6,bv7,bv8,bv9,bv10,bv11,bv12,bv13,bv14,bv15;
-    wire gen_b_read_en;   // declared here (driven below) so the B RW port sees it
-    // Port A of each B bank: WRITE (load) OR gen-prefetch READ (compute) at ONE
-    // muxed address -> a single BRAM RW port (they never overlap in time); the
-    // executor read is port B.  => each B bank = ONE BRAM (no duplication).
-    wire [13:0] b_colA_addr_0 = (b_col_we && b_col_waddr[3:0]==0) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg0_pf;
-    wire [13:0] b_colA_addr_1 = (b_col_we && b_col_waddr[3:0]==1) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg1_pf;
-    wire [13:0] b_colA_addr_2 = (b_col_we && b_col_waddr[3:0]==2) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg2_pf;
-    wire [13:0] b_colA_addr_3 = (b_col_we && b_col_waddr[3:0]==3) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg3_pf;
-    wire [13:0] b_colA_addr_4 = (b_col_we && b_col_waddr[3:0]==4) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg4_pf;
-    wire [13:0] b_colA_addr_5 = (b_col_we && b_col_waddr[3:0]==5) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg5_pf;
-    wire [13:0] b_colA_addr_6 = (b_col_we && b_col_waddr[3:0]==6) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg6_pf;
-    wire [13:0] b_colA_addr_7 = (b_col_we && b_col_waddr[3:0]==7) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg7_pf;
-    wire [13:0] b_colA_addr_8 = (b_col_we && b_col_waddr[3:0]==8) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg8_pf;
-    wire [13:0] b_colA_addr_9 = (b_col_we && b_col_waddr[3:0]==9) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg9_pf;
-    wire [13:0] b_colA_addr_10 = (b_col_we && b_col_waddr[3:0]==10) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg10_pf;
-    wire [13:0] b_colA_addr_11 = (b_col_we && b_col_waddr[3:0]==11) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg11_pf;
-    wire [13:0] b_colA_addr_12 = (b_col_we && b_col_waddr[3:0]==12) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg12_pf;
-    wire [13:0] b_colA_addr_13 = (b_col_we && b_col_waddr[3:0]==13) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg13_pf;
-    wire [13:0] b_colA_addr_14 = (b_col_we && b_col_waddr[3:0]==14) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg14_pf;
-    wire [13:0] b_colA_addr_15 = (b_col_we && b_col_waddr[3:0]==15) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg15_pf;
-    wire [13:0] b_valA_addr_0 = (b_val_we && b_val_waddr[3:0]==0) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg0_pf;
-    wire [13:0] b_valA_addr_1 = (b_val_we && b_val_waddr[3:0]==1) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg1_pf;
-    wire [13:0] b_valA_addr_2 = (b_val_we && b_val_waddr[3:0]==2) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg2_pf;
-    wire [13:0] b_valA_addr_3 = (b_val_we && b_val_waddr[3:0]==3) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg3_pf;
-    wire [13:0] b_valA_addr_4 = (b_val_we && b_val_waddr[3:0]==4) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg4_pf;
-    wire [13:0] b_valA_addr_5 = (b_val_we && b_val_waddr[3:0]==5) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg5_pf;
-    wire [13:0] b_valA_addr_6 = (b_val_we && b_val_waddr[3:0]==6) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg6_pf;
-    wire [13:0] b_valA_addr_7 = (b_val_we && b_val_waddr[3:0]==7) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg7_pf;
-    wire [13:0] b_valA_addr_8 = (b_val_we && b_val_waddr[3:0]==8) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg8_pf;
-    wire [13:0] b_valA_addr_9 = (b_val_we && b_val_waddr[3:0]==9) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg9_pf;
-    wire [13:0] b_valA_addr_10 = (b_val_we && b_val_waddr[3:0]==10) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg10_pf;
-    wire [13:0] b_valA_addr_11 = (b_val_we && b_val_waddr[3:0]==11) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg11_pf;
-    wire [13:0] b_valA_addr_12 = (b_val_we && b_val_waddr[3:0]==12) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg12_pf;
-    wire [13:0] b_valA_addr_13 = (b_val_we && b_val_waddr[3:0]==13) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg13_pf;
-    wire [13:0] b_valA_addr_14 = (b_val_we && b_val_waddr[3:0]==14) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg14_pf;
-    wire [13:0] b_valA_addr_15 = (b_val_we && b_val_waddr[3:0]==15) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg15_pf;
-    always @(posedge aclk) begin
-        if (b_col_we && b_col_waddr[3:0]==0) B_col_b0[b_colA_addr_0] <= b_col_wdata;
-        else if (gen_b_read_en) bc0 <= B_col_b0[b_colA_addr_0];
-        if (b_col_we && b_col_waddr[3:0]==1) B_col_b1[b_colA_addr_1] <= b_col_wdata;
-        else if (gen_b_read_en) bc1 <= B_col_b1[b_colA_addr_1];
-        if (b_col_we && b_col_waddr[3:0]==2) B_col_b2[b_colA_addr_2] <= b_col_wdata;
-        else if (gen_b_read_en) bc2 <= B_col_b2[b_colA_addr_2];
-        if (b_col_we && b_col_waddr[3:0]==3) B_col_b3[b_colA_addr_3] <= b_col_wdata;
-        else if (gen_b_read_en) bc3 <= B_col_b3[b_colA_addr_3];
-        if (b_col_we && b_col_waddr[3:0]==4) B_col_b4[b_colA_addr_4] <= b_col_wdata;
-        else if (gen_b_read_en) bc4 <= B_col_b4[b_colA_addr_4];
-        if (b_col_we && b_col_waddr[3:0]==5) B_col_b5[b_colA_addr_5] <= b_col_wdata;
-        else if (gen_b_read_en) bc5 <= B_col_b5[b_colA_addr_5];
-        if (b_col_we && b_col_waddr[3:0]==6) B_col_b6[b_colA_addr_6] <= b_col_wdata;
-        else if (gen_b_read_en) bc6 <= B_col_b6[b_colA_addr_6];
-        if (b_col_we && b_col_waddr[3:0]==7) B_col_b7[b_colA_addr_7] <= b_col_wdata;
-        else if (gen_b_read_en) bc7 <= B_col_b7[b_colA_addr_7];
-        if (b_col_we && b_col_waddr[3:0]==8) B_col_b8[b_colA_addr_8] <= b_col_wdata;
-        else if (gen_b_read_en) bc8 <= B_col_b8[b_colA_addr_8];
-        if (b_col_we && b_col_waddr[3:0]==9) B_col_b9[b_colA_addr_9] <= b_col_wdata;
-        else if (gen_b_read_en) bc9 <= B_col_b9[b_colA_addr_9];
-        if (b_col_we && b_col_waddr[3:0]==10) B_col_b10[b_colA_addr_10] <= b_col_wdata;
-        else if (gen_b_read_en) bc10 <= B_col_b10[b_colA_addr_10];
-        if (b_col_we && b_col_waddr[3:0]==11) B_col_b11[b_colA_addr_11] <= b_col_wdata;
-        else if (gen_b_read_en) bc11 <= B_col_b11[b_colA_addr_11];
-        if (b_col_we && b_col_waddr[3:0]==12) B_col_b12[b_colA_addr_12] <= b_col_wdata;
-        else if (gen_b_read_en) bc12 <= B_col_b12[b_colA_addr_12];
-        if (b_col_we && b_col_waddr[3:0]==13) B_col_b13[b_colA_addr_13] <= b_col_wdata;
-        else if (gen_b_read_en) bc13 <= B_col_b13[b_colA_addr_13];
-        if (b_col_we && b_col_waddr[3:0]==14) B_col_b14[b_colA_addr_14] <= b_col_wdata;
-        else if (gen_b_read_en) bc14 <= B_col_b14[b_colA_addr_14];
-        if (b_col_we && b_col_waddr[3:0]==15) B_col_b15[b_colA_addr_15] <= b_col_wdata;
-        else if (gen_b_read_en) bc15 <= B_col_b15[b_colA_addr_15];
-        if (b_val_we && b_val_waddr[3:0]==0) B_val_b0[b_valA_addr_0] <= b_val_wdata;
-        else if (gen_b_read_en) bv0 <= B_val_b0[b_valA_addr_0];
-        if (b_val_we && b_val_waddr[3:0]==1) B_val_b1[b_valA_addr_1] <= b_val_wdata;
-        else if (gen_b_read_en) bv1 <= B_val_b1[b_valA_addr_1];
-        if (b_val_we && b_val_waddr[3:0]==2) B_val_b2[b_valA_addr_2] <= b_val_wdata;
-        else if (gen_b_read_en) bv2 <= B_val_b2[b_valA_addr_2];
-        if (b_val_we && b_val_waddr[3:0]==3) B_val_b3[b_valA_addr_3] <= b_val_wdata;
-        else if (gen_b_read_en) bv3 <= B_val_b3[b_valA_addr_3];
-        if (b_val_we && b_val_waddr[3:0]==4) B_val_b4[b_valA_addr_4] <= b_val_wdata;
-        else if (gen_b_read_en) bv4 <= B_val_b4[b_valA_addr_4];
-        if (b_val_we && b_val_waddr[3:0]==5) B_val_b5[b_valA_addr_5] <= b_val_wdata;
-        else if (gen_b_read_en) bv5 <= B_val_b5[b_valA_addr_5];
-        if (b_val_we && b_val_waddr[3:0]==6) B_val_b6[b_valA_addr_6] <= b_val_wdata;
-        else if (gen_b_read_en) bv6 <= B_val_b6[b_valA_addr_6];
-        if (b_val_we && b_val_waddr[3:0]==7) B_val_b7[b_valA_addr_7] <= b_val_wdata;
-        else if (gen_b_read_en) bv7 <= B_val_b7[b_valA_addr_7];
-        if (b_val_we && b_val_waddr[3:0]==8) B_val_b8[b_valA_addr_8] <= b_val_wdata;
-        else if (gen_b_read_en) bv8 <= B_val_b8[b_valA_addr_8];
-        if (b_val_we && b_val_waddr[3:0]==9) B_val_b9[b_valA_addr_9] <= b_val_wdata;
-        else if (gen_b_read_en) bv9 <= B_val_b9[b_valA_addr_9];
-        if (b_val_we && b_val_waddr[3:0]==10) B_val_b10[b_valA_addr_10] <= b_val_wdata;
-        else if (gen_b_read_en) bv10 <= B_val_b10[b_valA_addr_10];
-        if (b_val_we && b_val_waddr[3:0]==11) B_val_b11[b_valA_addr_11] <= b_val_wdata;
-        else if (gen_b_read_en) bv11 <= B_val_b11[b_valA_addr_11];
-        if (b_val_we && b_val_waddr[3:0]==12) B_val_b12[b_valA_addr_12] <= b_val_wdata;
-        else if (gen_b_read_en) bv12 <= B_val_b12[b_valA_addr_12];
-        if (b_val_we && b_val_waddr[3:0]==13) B_val_b13[b_valA_addr_13] <= b_val_wdata;
-        else if (gen_b_read_en) bv13 <= B_val_b13[b_valA_addr_13];
-        if (b_val_we && b_val_waddr[3:0]==14) B_val_b14[b_valA_addr_14] <= b_val_wdata;
-        else if (gen_b_read_en) bv14 <= B_val_b14[b_valA_addr_14];
-        if (b_val_we && b_val_waddr[3:0]==15) B_val_b15[b_valA_addr_15] <= b_val_wdata;
-        else if (gen_b_read_en) bv15 <= B_val_b15[b_valA_addr_15];
-    end
+    reg [15:0] bc  [0:`N_MAC-1];
+    reg [15:0] bv  [0:`N_MAC-1];
+    reg [15:0] ebc [0:`N_MAC-1];
+    reg [15:0] ebv [0:`N_MAC-1];
+    wire gen_b_read_en;   // driven below; consumed by gen_b_bank RW port (end of module)
 
-    // Rotation mux: ne_bv[j] = bv at bank (gen_r+j)%16
-    wire [15:0] ne_bv [0:15]; wire [15:0] ne_bc [0:15];
-    assign ne_bv[0] =(gen_r==0)?bv0 :(gen_r==1)?bv1 :(gen_r==2)?bv2 :(gen_r==3)?bv3 :(gen_r==4)?bv4 :(gen_r==5)?bv5 :(gen_r==6)?bv6 :(gen_r==7)?bv7 :(gen_r==8)?bv8 :(gen_r==9)?bv9 :(gen_r==10)?bv10:(gen_r==11)?bv11:(gen_r==12)?bv12:(gen_r==13)?bv13:(gen_r==14)?bv14:bv15;
-    assign ne_bc[0] =(gen_r==0)?bc0 :(gen_r==1)?bc1 :(gen_r==2)?bc2 :(gen_r==3)?bc3 :(gen_r==4)?bc4 :(gen_r==5)?bc5 :(gen_r==6)?bc6 :(gen_r==7)?bc7 :(gen_r==8)?bc8 :(gen_r==9)?bc9 :(gen_r==10)?bc10:(gen_r==11)?bc11:(gen_r==12)?bc12:(gen_r==13)?bc13:(gen_r==14)?bc14:bc15;
-    assign ne_bv[1] =(gen_r==0)?bv1 :(gen_r==1)?bv2 :(gen_r==2)?bv3 :(gen_r==3)?bv4 :(gen_r==4)?bv5 :(gen_r==5)?bv6 :(gen_r==6)?bv7 :(gen_r==7)?bv8 :(gen_r==8)?bv9 :(gen_r==9)?bv10:(gen_r==10)?bv11:(gen_r==11)?bv12:(gen_r==12)?bv13:(gen_r==13)?bv14:(gen_r==14)?bv15:bv0;
-    assign ne_bc[1] =(gen_r==0)?bc1 :(gen_r==1)?bc2 :(gen_r==2)?bc3 :(gen_r==3)?bc4 :(gen_r==4)?bc5 :(gen_r==5)?bc6 :(gen_r==6)?bc7 :(gen_r==7)?bc8 :(gen_r==8)?bc9 :(gen_r==9)?bc10:(gen_r==10)?bc11:(gen_r==11)?bc12:(gen_r==12)?bc13:(gen_r==13)?bc14:(gen_r==14)?bc15:bc0;
-    assign ne_bv[2] =(gen_r==0)?bv2 :(gen_r==1)?bv3 :(gen_r==2)?bv4 :(gen_r==3)?bv5 :(gen_r==4)?bv6 :(gen_r==5)?bv7 :(gen_r==6)?bv8 :(gen_r==7)?bv9 :(gen_r==8)?bv10:(gen_r==9)?bv11:(gen_r==10)?bv12:(gen_r==11)?bv13:(gen_r==12)?bv14:(gen_r==13)?bv15:(gen_r==14)?bv0:bv1;
-    assign ne_bc[2] =(gen_r==0)?bc2 :(gen_r==1)?bc3 :(gen_r==2)?bc4 :(gen_r==3)?bc5 :(gen_r==4)?bc6 :(gen_r==5)?bc7 :(gen_r==6)?bc8 :(gen_r==7)?bc9 :(gen_r==8)?bc10:(gen_r==9)?bc11:(gen_r==10)?bc12:(gen_r==11)?bc13:(gen_r==12)?bc14:(gen_r==13)?bc15:(gen_r==14)?bc0:bc1;
-    assign ne_bv[3] =(gen_r==0)?bv3 :(gen_r==1)?bv4 :(gen_r==2)?bv5 :(gen_r==3)?bv6 :(gen_r==4)?bv7 :(gen_r==5)?bv8 :(gen_r==6)?bv9 :(gen_r==7)?bv10:(gen_r==8)?bv11:(gen_r==9)?bv12:(gen_r==10)?bv13:(gen_r==11)?bv14:(gen_r==12)?bv15:(gen_r==13)?bv0:(gen_r==14)?bv1:bv2;
-    assign ne_bc[3] =(gen_r==0)?bc3 :(gen_r==1)?bc4 :(gen_r==2)?bc5 :(gen_r==3)?bc6 :(gen_r==4)?bc7 :(gen_r==5)?bc8 :(gen_r==6)?bc9 :(gen_r==7)?bc10:(gen_r==8)?bc11:(gen_r==9)?bc12:(gen_r==10)?bc13:(gen_r==11)?bc14:(gen_r==12)?bc15:(gen_r==13)?bc0:(gen_r==14)?bc1:bc2;
-    assign ne_bv[4] =(gen_r==0)?bv4 :(gen_r==1)?bv5 :(gen_r==2)?bv6 :(gen_r==3)?bv7 :(gen_r==4)?bv8 :(gen_r==5)?bv9 :(gen_r==6)?bv10:(gen_r==7)?bv11:(gen_r==8)?bv12:(gen_r==9)?bv13:(gen_r==10)?bv14:(gen_r==11)?bv15:(gen_r==12)?bv0:(gen_r==13)?bv1:(gen_r==14)?bv2:bv3;
-    assign ne_bc[4] =(gen_r==0)?bc4 :(gen_r==1)?bc5 :(gen_r==2)?bc6 :(gen_r==3)?bc7 :(gen_r==4)?bc8 :(gen_r==5)?bc9 :(gen_r==6)?bc10:(gen_r==7)?bc11:(gen_r==8)?bc12:(gen_r==9)?bc13:(gen_r==10)?bc14:(gen_r==11)?bc15:(gen_r==12)?bc0:(gen_r==13)?bc1:(gen_r==14)?bc2:bc3;
-    assign ne_bv[5] =(gen_r==0)?bv5 :(gen_r==1)?bv6 :(gen_r==2)?bv7 :(gen_r==3)?bv8 :(gen_r==4)?bv9 :(gen_r==5)?bv10:(gen_r==6)?bv11:(gen_r==7)?bv12:(gen_r==8)?bv13:(gen_r==9)?bv14:(gen_r==10)?bv15:(gen_r==11)?bv0:(gen_r==12)?bv1:(gen_r==13)?bv2:(gen_r==14)?bv3:bv4;
-    assign ne_bc[5] =(gen_r==0)?bc5 :(gen_r==1)?bc6 :(gen_r==2)?bc7 :(gen_r==3)?bc8 :(gen_r==4)?bc9 :(gen_r==5)?bc10:(gen_r==6)?bc11:(gen_r==7)?bc12:(gen_r==8)?bc13:(gen_r==9)?bc14:(gen_r==10)?bc15:(gen_r==11)?bc0:(gen_r==12)?bc1:(gen_r==13)?bc2:(gen_r==14)?bc3:bc4;
-    assign ne_bv[6] =(gen_r==0)?bv6 :(gen_r==1)?bv7 :(gen_r==2)?bv8 :(gen_r==3)?bv9 :(gen_r==4)?bv10:(gen_r==5)?bv11:(gen_r==6)?bv12:(gen_r==7)?bv13:(gen_r==8)?bv14:(gen_r==9)?bv15:(gen_r==10)?bv0:(gen_r==11)?bv1:(gen_r==12)?bv2:(gen_r==13)?bv3:(gen_r==14)?bv4:bv5;
-    assign ne_bc[6] =(gen_r==0)?bc6 :(gen_r==1)?bc7 :(gen_r==2)?bc8 :(gen_r==3)?bc9 :(gen_r==4)?bc10:(gen_r==5)?bc11:(gen_r==6)?bc12:(gen_r==7)?bc13:(gen_r==8)?bc14:(gen_r==9)?bc15:(gen_r==10)?bc0:(gen_r==11)?bc1:(gen_r==12)?bc2:(gen_r==13)?bc3:(gen_r==14)?bc4:bc5;
-    assign ne_bv[7] =(gen_r==0)?bv7 :(gen_r==1)?bv8 :(gen_r==2)?bv9 :(gen_r==3)?bv10:(gen_r==4)?bv11:(gen_r==5)?bv12:(gen_r==6)?bv13:(gen_r==7)?bv14:(gen_r==8)?bv15:(gen_r==9)?bv0:(gen_r==10)?bv1:(gen_r==11)?bv2:(gen_r==12)?bv3:(gen_r==13)?bv4:(gen_r==14)?bv5:bv6;
-    assign ne_bc[7] =(gen_r==0)?bc7 :(gen_r==1)?bc8 :(gen_r==2)?bc9 :(gen_r==3)?bc10:(gen_r==4)?bc11:(gen_r==5)?bc12:(gen_r==6)?bc13:(gen_r==7)?bc14:(gen_r==8)?bc15:(gen_r==9)?bc0:(gen_r==10)?bc1:(gen_r==11)?bc2:(gen_r==12)?bc3:(gen_r==13)?bc4:(gen_r==14)?bc5:bc6;
-    assign ne_bv[8] =(gen_r==0)?bv8 :(gen_r==1)?bv9 :(gen_r==2)?bv10:(gen_r==3)?bv11:(gen_r==4)?bv12:(gen_r==5)?bv13:(gen_r==6)?bv14:(gen_r==7)?bv15:(gen_r==8)?bv0:(gen_r==9)?bv1:(gen_r==10)?bv2:(gen_r==11)?bv3:(gen_r==12)?bv4:(gen_r==13)?bv5:(gen_r==14)?bv6:bv7;
-    assign ne_bc[8] =(gen_r==0)?bc8 :(gen_r==1)?bc9 :(gen_r==2)?bc10:(gen_r==3)?bc11:(gen_r==4)?bc12:(gen_r==5)?bc13:(gen_r==6)?bc14:(gen_r==7)?bc15:(gen_r==8)?bc0:(gen_r==9)?bc1:(gen_r==10)?bc2:(gen_r==11)?bc3:(gen_r==12)?bc4:(gen_r==13)?bc5:(gen_r==14)?bc6:bc7;
-    assign ne_bv[9] =(gen_r==0)?bv9 :(gen_r==1)?bv10:(gen_r==2)?bv11:(gen_r==3)?bv12:(gen_r==4)?bv13:(gen_r==5)?bv14:(gen_r==6)?bv15:(gen_r==7)?bv0:(gen_r==8)?bv1:(gen_r==9)?bv2:(gen_r==10)?bv3:(gen_r==11)?bv4:(gen_r==12)?bv5:(gen_r==13)?bv6:(gen_r==14)?bv7:bv8;
-    assign ne_bc[9] =(gen_r==0)?bc9 :(gen_r==1)?bc10:(gen_r==2)?bc11:(gen_r==3)?bc12:(gen_r==4)?bc13:(gen_r==5)?bc14:(gen_r==6)?bc15:(gen_r==7)?bc0:(gen_r==8)?bc1:(gen_r==9)?bc2:(gen_r==10)?bc3:(gen_r==11)?bc4:(gen_r==12)?bc5:(gen_r==13)?bc6:(gen_r==14)?bc7:bc8;
-    assign ne_bv[10]=(gen_r==0)?bv10:(gen_r==1)?bv11:(gen_r==2)?bv12:(gen_r==3)?bv13:(gen_r==4)?bv14:(gen_r==5)?bv15:(gen_r==6)?bv0:(gen_r==7)?bv1:(gen_r==8)?bv2:(gen_r==9)?bv3:(gen_r==10)?bv4:(gen_r==11)?bv5:(gen_r==12)?bv6:(gen_r==13)?bv7:(gen_r==14)?bv8:bv9;
-    assign ne_bc[10]=(gen_r==0)?bc10:(gen_r==1)?bc11:(gen_r==2)?bc12:(gen_r==3)?bc13:(gen_r==4)?bc14:(gen_r==5)?bc15:(gen_r==6)?bc0:(gen_r==7)?bc1:(gen_r==8)?bc2:(gen_r==9)?bc3:(gen_r==10)?bc4:(gen_r==11)?bc5:(gen_r==12)?bc6:(gen_r==13)?bc7:(gen_r==14)?bc8:bc9;
-    assign ne_bv[11]=(gen_r==0)?bv11:(gen_r==1)?bv12:(gen_r==2)?bv13:(gen_r==3)?bv14:(gen_r==4)?bv15:(gen_r==5)?bv0:(gen_r==6)?bv1:(gen_r==7)?bv2:(gen_r==8)?bv3:(gen_r==9)?bv4:(gen_r==10)?bv5:(gen_r==11)?bv6:(gen_r==12)?bv7:(gen_r==13)?bv8:(gen_r==14)?bv9:bv10;
-    assign ne_bc[11]=(gen_r==0)?bc11:(gen_r==1)?bc12:(gen_r==2)?bc13:(gen_r==3)?bc14:(gen_r==4)?bc15:(gen_r==5)?bc0:(gen_r==6)?bc1:(gen_r==7)?bc2:(gen_r==8)?bc3:(gen_r==9)?bc4:(gen_r==10)?bc5:(gen_r==11)?bc6:(gen_r==12)?bc7:(gen_r==13)?bc8:(gen_r==14)?bc9:bc10;
-    assign ne_bv[12]=(gen_r==0)?bv12:(gen_r==1)?bv13:(gen_r==2)?bv14:(gen_r==3)?bv15:(gen_r==4)?bv0:(gen_r==5)?bv1:(gen_r==6)?bv2:(gen_r==7)?bv3:(gen_r==8)?bv4:(gen_r==9)?bv5:(gen_r==10)?bv6:(gen_r==11)?bv7:(gen_r==12)?bv8:(gen_r==13)?bv9:(gen_r==14)?bv10:bv11;
-    assign ne_bc[12]=(gen_r==0)?bc12:(gen_r==1)?bc13:(gen_r==2)?bc14:(gen_r==3)?bc15:(gen_r==4)?bc0:(gen_r==5)?bc1:(gen_r==6)?bc2:(gen_r==7)?bc3:(gen_r==8)?bc4:(gen_r==9)?bc5:(gen_r==10)?bc6:(gen_r==11)?bc7:(gen_r==12)?bc8:(gen_r==13)?bc9:(gen_r==14)?bc10:bc11;
-    assign ne_bv[13]=(gen_r==0)?bv13:(gen_r==1)?bv14:(gen_r==2)?bv15:(gen_r==3)?bv0:(gen_r==4)?bv1:(gen_r==5)?bv2:(gen_r==6)?bv3:(gen_r==7)?bv4:(gen_r==8)?bv5:(gen_r==9)?bv6:(gen_r==10)?bv7:(gen_r==11)?bv8:(gen_r==12)?bv9:(gen_r==13)?bv10:(gen_r==14)?bv11:bv12;
-    assign ne_bc[13]=(gen_r==0)?bc13:(gen_r==1)?bc14:(gen_r==2)?bc15:(gen_r==3)?bc0:(gen_r==4)?bc1:(gen_r==5)?bc2:(gen_r==6)?bc3:(gen_r==7)?bc4:(gen_r==8)?bc5:(gen_r==9)?bc6:(gen_r==10)?bc7:(gen_r==11)?bc8:(gen_r==12)?bc9:(gen_r==13)?bc10:(gen_r==14)?bc11:bc12;
-    assign ne_bv[14]=(gen_r==0)?bv14:(gen_r==1)?bv15:(gen_r==2)?bv0:(gen_r==3)?bv1:(gen_r==4)?bv2:(gen_r==5)?bv3:(gen_r==6)?bv4:(gen_r==7)?bv5:(gen_r==8)?bv6:(gen_r==9)?bv7:(gen_r==10)?bv8:(gen_r==11)?bv9:(gen_r==12)?bv10:(gen_r==13)?bv11:(gen_r==14)?bv12:bv13;
-    assign ne_bc[14]=(gen_r==0)?bc14:(gen_r==1)?bc15:(gen_r==2)?bc0:(gen_r==3)?bc1:(gen_r==4)?bc2:(gen_r==5)?bc3:(gen_r==6)?bc4:(gen_r==7)?bc5:(gen_r==8)?bc6:(gen_r==9)?bc7:(gen_r==10)?bc8:(gen_r==11)?bc9:(gen_r==12)?bc10:(gen_r==13)?bc11:(gen_r==14)?bc12:bc13;
-    assign ne_bv[15]=(gen_r==0)?bv15:(gen_r==1)?bv0:(gen_r==2)?bv1:(gen_r==3)?bv2:(gen_r==4)?bv3:(gen_r==5)?bv4:(gen_r==6)?bv5:(gen_r==7)?bv6:(gen_r==8)?bv7:(gen_r==9)?bv8:(gen_r==10)?bv9:(gen_r==11)?bv10:(gen_r==12)?bv11:(gen_r==13)?bv12:(gen_r==14)?bv13:bv14;
-    assign ne_bc[15]=(gen_r==0)?bc15:(gen_r==1)?bc0:(gen_r==2)?bc1:(gen_r==3)?bc2:(gen_r==4)?bc3:(gen_r==5)?bc4:(gen_r==6)?bc5:(gen_r==7)?bc6:(gen_r==8)?bc7:(gen_r==9)?bc8:(gen_r==10)?bc9:(gen_r==11)?bc10:(gen_r==12)?bc11:(gen_r==13)?bc12:(gen_r==14)?bc13:bc14;
+    wire [15:0] ne_bv [0:`N_MAC-1]; wire [15:0] ne_bc [0:`N_MAC-1];
+    genvar nr;
+    generate for (nr=0; nr<`N_MAC; nr=nr+1) begin: g_ne_rot
+        assign ne_bv[nr] = bv[(gen_r + nr) & (`N_MAC-1)];
+        assign ne_bc[nr] = bc[(gen_r + nr) & (`N_MAC-1)];
+    end endgenerate
 
-    wire [`TASK_WIDTH-1:0] pack_sg0 ={ne_bv[0], gen_a_val,ne_bc[0][8:0]};
-    wire [`TASK_WIDTH-1:0] pack_sg1 ={ne_bv[1], gen_a_val,ne_bc[1][8:0]};
-    wire [`TASK_WIDTH-1:0] pack_sg2 ={ne_bv[2], gen_a_val,ne_bc[2][8:0]};
-    wire [`TASK_WIDTH-1:0] pack_sg3 ={ne_bv[3], gen_a_val,ne_bc[3][8:0]};
-    wire [`TASK_WIDTH-1:0] pack_sg4 ={ne_bv[4], gen_a_val,ne_bc[4][8:0]};
-    wire [`TASK_WIDTH-1:0] pack_sg5 ={ne_bv[5], gen_a_val,ne_bc[5][8:0]};
-    wire [`TASK_WIDTH-1:0] pack_sg6 ={ne_bv[6], gen_a_val,ne_bc[6][8:0]};
-    wire [`TASK_WIDTH-1:0] pack_sg7 ={ne_bv[7], gen_a_val,ne_bc[7][8:0]};
-    wire [`TASK_WIDTH-1:0] pack_sg8 ={ne_bv[8], gen_a_val,ne_bc[8][8:0]};
-    wire [`TASK_WIDTH-1:0] pack_sg9 ={ne_bv[9], gen_a_val,ne_bc[9][8:0]};
-    wire [`TASK_WIDTH-1:0] pack_sg10={ne_bv[10],gen_a_val,ne_bc[10][8:0]};
-    wire [`TASK_WIDTH-1:0] pack_sg11={ne_bv[11],gen_a_val,ne_bc[11][8:0]};
-    wire [`TASK_WIDTH-1:0] pack_sg12={ne_bv[12],gen_a_val,ne_bc[12][8:0]};
-    wire [`TASK_WIDTH-1:0] pack_sg13={ne_bv[13],gen_a_val,ne_bc[13][8:0]};
-    wire [`TASK_WIDTH-1:0] pack_sg14={ne_bv[14],gen_a_val,ne_bc[14][8:0]};
+    wire [`TASK_WIDTH-1:0] pack_sg [0:`N_MAC-1];
+    genvar ps;
+    generate for (ps=0; ps<`N_MAC; ps=ps+1) begin: g_pack_sg
+        assign pack_sg[ps] = {ne_bv[ps], gen_a_val, ne_bc[ps][8:0]};
+    end endgenerate
 
     //=========================================================================
     // Gen2: accumulate cross-A-nnz remainders (up to 15 carry elements)
     //=========================================================================
-    reg [3:0]             carry2_cnt;
-    reg [`TASK_WIDTH-1:0] carry2_task [0:14];
+    reg [`N_MAC_BITS-1:0] carry2_cnt;
+    reg [`TASK_WIDTH-1:0] carry2_task [0:`N_MAC-1];
 
-    wire [4:0] g2_combined = {1'b0, carry2_cnt} + {1'b0, gen_remainder};
-    wire       g2_can_emit = g2_combined[4];
-    wire [3:0] g2_overflow = g2_combined[3:0];
+    wire [`N_MAC_BITS:0] g2_combined = carry2_cnt + gen_remainder;
+    wire       g2_can_emit = g2_combined[`N_MAC_BITS];
+    wire [`N_MAC_BITS-1:0] g2_overflow = g2_combined[`N_MAC_BITS-1:0];
 
-    // g2_sg_j = carry2_task[j] if j < carry2_cnt, else pack_sg[j - carry2_cnt]
-    wire [`TASK_WIDTH-1:0] g2_sg0 =(carry2_cnt>=1)?carry2_task[0]:pack_sg0;
-    wire [`TASK_WIDTH-1:0] g2_sg1 =(carry2_cnt>=2)?carry2_task[1]:(carry2_cnt==1)?pack_sg0:pack_sg1;
-    wire [`TASK_WIDTH-1:0] g2_sg2 =(carry2_cnt>=3)?carry2_task[2]:(carry2_cnt==2)?pack_sg0:(carry2_cnt==1)?pack_sg1:pack_sg2;
-    wire [`TASK_WIDTH-1:0] g2_sg3 =(carry2_cnt>=4)?carry2_task[3]:(carry2_cnt==3)?pack_sg0:(carry2_cnt==2)?pack_sg1:(carry2_cnt==1)?pack_sg2:pack_sg3;
-    wire [`TASK_WIDTH-1:0] g2_sg4 =(carry2_cnt>=5)?carry2_task[4]:(carry2_cnt==4)?pack_sg0:(carry2_cnt==3)?pack_sg1:(carry2_cnt==2)?pack_sg2:(carry2_cnt==1)?pack_sg3:pack_sg4;
-    wire [`TASK_WIDTH-1:0] g2_sg5 =(carry2_cnt>=6)?carry2_task[5]:(carry2_cnt==5)?pack_sg0:(carry2_cnt==4)?pack_sg1:(carry2_cnt==3)?pack_sg2:(carry2_cnt==2)?pack_sg3:(carry2_cnt==1)?pack_sg4:pack_sg5;
-    wire [`TASK_WIDTH-1:0] g2_sg6 =(carry2_cnt>=7)?carry2_task[6]:(carry2_cnt==6)?pack_sg0:(carry2_cnt==5)?pack_sg1:(carry2_cnt==4)?pack_sg2:(carry2_cnt==3)?pack_sg3:(carry2_cnt==2)?pack_sg4:(carry2_cnt==1)?pack_sg5:pack_sg6;
-    wire [`TASK_WIDTH-1:0] g2_sg7 =(carry2_cnt>=8)?carry2_task[7]:(carry2_cnt==7)?pack_sg0:(carry2_cnt==6)?pack_sg1:(carry2_cnt==5)?pack_sg2:(carry2_cnt==4)?pack_sg3:(carry2_cnt==3)?pack_sg4:(carry2_cnt==2)?pack_sg5:(carry2_cnt==1)?pack_sg6:pack_sg7;
-    wire [`TASK_WIDTH-1:0] g2_sg8 =(carry2_cnt>=9)?carry2_task[8]:(carry2_cnt==8)?pack_sg0:(carry2_cnt==7)?pack_sg1:(carry2_cnt==6)?pack_sg2:(carry2_cnt==5)?pack_sg3:(carry2_cnt==4)?pack_sg4:(carry2_cnt==3)?pack_sg5:(carry2_cnt==2)?pack_sg6:(carry2_cnt==1)?pack_sg7:pack_sg8;
-    wire [`TASK_WIDTH-1:0] g2_sg9 =(carry2_cnt>=10)?carry2_task[9]:(carry2_cnt==9)?pack_sg0:(carry2_cnt==8)?pack_sg1:(carry2_cnt==7)?pack_sg2:(carry2_cnt==6)?pack_sg3:(carry2_cnt==5)?pack_sg4:(carry2_cnt==4)?pack_sg5:(carry2_cnt==3)?pack_sg6:(carry2_cnt==2)?pack_sg7:(carry2_cnt==1)?pack_sg8:pack_sg9;
-    wire [`TASK_WIDTH-1:0] g2_sg10=(carry2_cnt>=11)?carry2_task[10]:(carry2_cnt==10)?pack_sg0:(carry2_cnt==9)?pack_sg1:(carry2_cnt==8)?pack_sg2:(carry2_cnt==7)?pack_sg3:(carry2_cnt==6)?pack_sg4:(carry2_cnt==5)?pack_sg5:(carry2_cnt==4)?pack_sg6:(carry2_cnt==3)?pack_sg7:(carry2_cnt==2)?pack_sg8:(carry2_cnt==1)?pack_sg9:pack_sg10;
-    wire [`TASK_WIDTH-1:0] g2_sg11=(carry2_cnt>=12)?carry2_task[11]:(carry2_cnt==11)?pack_sg0:(carry2_cnt==10)?pack_sg1:(carry2_cnt==9)?pack_sg2:(carry2_cnt==8)?pack_sg3:(carry2_cnt==7)?pack_sg4:(carry2_cnt==6)?pack_sg5:(carry2_cnt==5)?pack_sg6:(carry2_cnt==4)?pack_sg7:(carry2_cnt==3)?pack_sg8:(carry2_cnt==2)?pack_sg9:(carry2_cnt==1)?pack_sg10:pack_sg11;
-    wire [`TASK_WIDTH-1:0] g2_sg12=(carry2_cnt>=13)?carry2_task[12]:(carry2_cnt==12)?pack_sg0:(carry2_cnt==11)?pack_sg1:(carry2_cnt==10)?pack_sg2:(carry2_cnt==9)?pack_sg3:(carry2_cnt==8)?pack_sg4:(carry2_cnt==7)?pack_sg5:(carry2_cnt==6)?pack_sg6:(carry2_cnt==5)?pack_sg7:(carry2_cnt==4)?pack_sg8:(carry2_cnt==3)?pack_sg9:(carry2_cnt==2)?pack_sg10:(carry2_cnt==1)?pack_sg11:pack_sg12;
-    wire [`TASK_WIDTH-1:0] g2_sg13=(carry2_cnt>=14)?carry2_task[13]:(carry2_cnt==13)?pack_sg0:(carry2_cnt==12)?pack_sg1:(carry2_cnt==11)?pack_sg2:(carry2_cnt==10)?pack_sg3:(carry2_cnt==9)?pack_sg4:(carry2_cnt==8)?pack_sg5:(carry2_cnt==7)?pack_sg6:(carry2_cnt==6)?pack_sg7:(carry2_cnt==5)?pack_sg8:(carry2_cnt==4)?pack_sg9:(carry2_cnt==3)?pack_sg10:(carry2_cnt==2)?pack_sg11:(carry2_cnt==1)?pack_sg12:pack_sg13;
-    wire [`TASK_WIDTH-1:0] g2_sg14=(carry2_cnt>=15)?carry2_task[14]:(carry2_cnt==14)?pack_sg0:(carry2_cnt==13)?pack_sg1:(carry2_cnt==12)?pack_sg2:(carry2_cnt==11)?pack_sg3:(carry2_cnt==10)?pack_sg4:(carry2_cnt==9)?pack_sg5:(carry2_cnt==8)?pack_sg6:(carry2_cnt==7)?pack_sg7:(carry2_cnt==6)?pack_sg8:(carry2_cnt==5)?pack_sg9:(carry2_cnt==4)?pack_sg10:(carry2_cnt==3)?pack_sg11:(carry2_cnt==2)?pack_sg12:(carry2_cnt==1)?pack_sg13:pack_sg14;
-    wire [`TASK_WIDTH-1:0] g2_sg15=(carry2_cnt==15)?pack_sg0:(carry2_cnt==14)?pack_sg1:(carry2_cnt==13)?pack_sg2:(carry2_cnt==12)?pack_sg3:(carry2_cnt==11)?pack_sg4:(carry2_cnt==10)?pack_sg5:(carry2_cnt==9)?pack_sg6:(carry2_cnt==8)?pack_sg7:(carry2_cnt==7)?pack_sg8:(carry2_cnt==6)?pack_sg9:(carry2_cnt==5)?pack_sg10:(carry2_cnt==4)?pack_sg11:(carry2_cnt==3)?pack_sg12:(carry2_cnt==2)?pack_sg13:(carry2_cnt==1)?pack_sg14:pack_sg0;
+    // g2_sg[j] = carry2_task[j] if j < carry2_cnt else pack_sg[j - carry2_cnt]
+    wire [`TASK_WIDTH-1:0] g2_sg [0:`N_MAC-1];
+    genvar gs;
+    generate for (gs=0; gs<`N_MAC; gs=gs+1) begin: g_g2_sg
+        assign g2_sg[gs] = (carry2_cnt > gs) ? carry2_task[gs]
+                                             : pack_sg[(gs - carry2_cnt) & (`N_MAC-1)];
+    end endgenerate
 
-    wire [15:0] g2_flush_lane_valid = (16'd1 << carry2_cnt) - 16'd1;
+    wire [`N_MAC-1:0] g2_flush_lane_valid = ((1 << carry2_cnt) - 1);
 
     wire task_fifo_full;
     wire ptr_fifo_full;
@@ -500,15 +246,16 @@ module pe_top #(
 
     // ---- SpGEMM (Gen2) task-group source ----
     wire gen2_task_wr_en = (g2_want_emit || g2_want_flush) && !task_fifo_full;
+    wire [`N_MAC*`TASK_WIDTH-1:0] g2_emit_lanes, g2_flush_lanes;
+    genvar gg;
+    generate for (gg=0; gg<`N_MAC; gg=gg+1) begin: g_g2_lanes
+        assign g2_emit_lanes [gg*`TASK_WIDTH +: `TASK_WIDTH] = g2_sg[gg];
+        assign g2_flush_lanes[gg*`TASK_WIDTH +: `TASK_WIDTH] =
+            (gg==`N_MAC-1) ? carry2_task[0] : carry2_task[gg];
+    end endgenerate
     wire [`TASK_GROUP_WIDTH-1:0] gen2_task_data =
-        g2_want_flush
-        ? {carry2_task[0],carry2_task[14],carry2_task[13],carry2_task[12],
-           carry2_task[11],carry2_task[10],carry2_task[9],carry2_task[8],
-           carry2_task[7],carry2_task[6],carry2_task[5],carry2_task[4],
-           carry2_task[3],carry2_task[2],carry2_task[1],carry2_task[0],
-           g2_flush_lane_valid}
-        : {g2_sg15,g2_sg14,g2_sg13,g2_sg12,g2_sg11,g2_sg10,g2_sg9,g2_sg8,
-           g2_sg7,g2_sg6,g2_sg5,g2_sg4,g2_sg3,g2_sg2,g2_sg1,g2_sg0,16'hFFFF};
+        g2_want_flush ? {1'b0, g2_flush_lanes, g2_flush_lane_valid}
+                      : {1'b0, g2_emit_lanes, {`N_MAC{1'b1}}};
 
     //=========================================================================
     // Elementwise generator (op_mode=1): stream A[row] then B[row] elements
@@ -527,10 +274,10 @@ module pe_top #(
 
     // Elementwise reads A 16 ELEMENTS / cycle: elem_j is the WINDOW bank-address
     // (16 consecutive elements = the 16 banks at elem_j).  Window range = start..last.
-    wire [12:0] a_win_start = cur_a_off[16:4];
-    wire [12:0] a_win_last  = (cur_a_off[16:0] + {1'b0,cur_a_nnz} - 17'd1) >> 4;
-    wire [12:0] b_win_start = elem_b_off[16:4];
-    wire [12:0] b_win_last  = (elem_b_off        + {1'b0,elem_b_nnz} - 17'd1) >> 4;
+    wire [12:0] a_win_start = cur_a_off[16:0] >> `N_MAC_BITS;
+    wire [12:0] a_win_last  = (cur_a_off[16:0] + {1'b0,cur_a_nnz} - 17'd1) >> `N_MAC_BITS;
+    wire [12:0] b_win_start = elem_b_off >> `N_MAC_BITS;
+    wire [12:0] b_win_last  = (elem_b_off        + {1'b0,elem_b_nnz} - 17'd1) >> `N_MAC_BITS;
     // elem_j NEXT-state (mirrors the FSM).  Addressing the registered A/B reads with
     // it makes a_val_bank_r/ebcN hold the CURRENT window EVERY cycle -> 1 window/cycle,
     // no 2-phase (same trick as SpGEMM gen_t_next; survives task_fifo_full stalls).
@@ -544,7 +291,7 @@ module pe_top #(
         (elem_state==ELEM_B && !task_fifo_full && elem_j[12:0] < b_win_last) ? elem_j + 16'd1 :
         elem_j;
     // A read window address = NEXT window (so the registered read lands it in time).
-    wire [`A_NNZ_ADDR_BITS-1:0] elem_a_addr = {elem_j_next[A_BADDR_W-1:0], 4'b0};
+    wire [`A_NNZ_ADDR_BITS-1:0] elem_a_addr = {elem_j_next[A_BADDR_W-1:0], {`N_MAC_BITS{1'b0}}};
 
     // 2-deep A prefetch: address the SpGEMM read with gen_t's NEXT-state value, so
     // a_val_r/a_col_r registered this cycle == A[gen_t] next cycle, holding the
@@ -566,31 +313,13 @@ module pe_top #(
     wire [`A_NNZ_ADDR_BITS-1:0] a_rd_addr =
         op_mode ? elem_a_addr
                 : (cur_a_off[`A_NNZ_ADDR_BITS-1:0] + gen_t_next[`A_NNZ_ADDR_BITS-1:0]);
-    wire [A_BADDR_W-1:0] a_rd_baddr = a_rd_addr[`A_NNZ_ADDR_BITS-1:4];  // bank-local addr
-    wire [3:0]           a_rd_bsel  = a_rd_addr[3:0];                   // bank of a_rd_addr
-    reg  [3:0]           a_rd_bsel_d;                                   // delayed to match reg read
+    wire [A_BADDR_W-1:0] a_rd_baddr = a_rd_addr[`A_NNZ_ADDR_BITS-1:`N_MAC_BITS];
+    wire [`N_MAC_BITS-1:0] a_rd_bsel = a_rd_addr[`N_MAC_BITS-1:0];
+    reg  [`N_MAC_BITS-1:0] a_rd_bsel_d;
     // 16-bank registered read (one address, all banks).  Packed so the SpGEMM mux
     // is a simple part-select; the elem path (Step 2) consumes all 16 lanes.
-    reg [16*16-1:0] a_val_bank_r, a_col_bank_r;
-    always @(posedge aclk) begin
-        a_rd_bsel_d <= a_rd_bsel;
-        a_val_bank_r[ 0*16+:16]<=A_val_b0 [a_rd_baddr]; a_val_bank_r[ 1*16+:16]<=A_val_b1 [a_rd_baddr];
-        a_val_bank_r[ 2*16+:16]<=A_val_b2 [a_rd_baddr]; a_val_bank_r[ 3*16+:16]<=A_val_b3 [a_rd_baddr];
-        a_val_bank_r[ 4*16+:16]<=A_val_b4 [a_rd_baddr]; a_val_bank_r[ 5*16+:16]<=A_val_b5 [a_rd_baddr];
-        a_val_bank_r[ 6*16+:16]<=A_val_b6 [a_rd_baddr]; a_val_bank_r[ 7*16+:16]<=A_val_b7 [a_rd_baddr];
-        a_val_bank_r[ 8*16+:16]<=A_val_b8 [a_rd_baddr]; a_val_bank_r[ 9*16+:16]<=A_val_b9 [a_rd_baddr];
-        a_val_bank_r[10*16+:16]<=A_val_b10[a_rd_baddr]; a_val_bank_r[11*16+:16]<=A_val_b11[a_rd_baddr];
-        a_val_bank_r[12*16+:16]<=A_val_b12[a_rd_baddr]; a_val_bank_r[13*16+:16]<=A_val_b13[a_rd_baddr];
-        a_val_bank_r[14*16+:16]<=A_val_b14[a_rd_baddr]; a_val_bank_r[15*16+:16]<=A_val_b15[a_rd_baddr];
-        a_col_bank_r[ 0*16+:16]<=A_col_b0 [a_rd_baddr]; a_col_bank_r[ 1*16+:16]<=A_col_b1 [a_rd_baddr];
-        a_col_bank_r[ 2*16+:16]<=A_col_b2 [a_rd_baddr]; a_col_bank_r[ 3*16+:16]<=A_col_b3 [a_rd_baddr];
-        a_col_bank_r[ 4*16+:16]<=A_col_b4 [a_rd_baddr]; a_col_bank_r[ 5*16+:16]<=A_col_b5 [a_rd_baddr];
-        a_col_bank_r[ 6*16+:16]<=A_col_b6 [a_rd_baddr]; a_col_bank_r[ 7*16+:16]<=A_col_b7 [a_rd_baddr];
-        a_col_bank_r[ 8*16+:16]<=A_col_b8 [a_rd_baddr]; a_col_bank_r[ 9*16+:16]<=A_col_b9 [a_rd_baddr];
-        a_col_bank_r[10*16+:16]<=A_col_b10[a_rd_baddr]; a_col_bank_r[11*16+:16]<=A_col_b11[a_rd_baddr];
-        a_col_bank_r[12*16+:16]<=A_col_b12[a_rd_baddr]; a_col_bank_r[13*16+:16]<=A_col_b13[a_rd_baddr];
-        a_col_bank_r[14*16+:16]<=A_col_b14[a_rd_baddr]; a_col_bank_r[15*16+:16]<=A_col_b15[a_rd_baddr];
-    end
+    reg [`N_MAC*16-1:0] a_val_bank_r, a_col_bank_r;
+    always @(posedge aclk) a_rd_bsel_d <= a_rd_bsel;
     // SpGEMM single-element read: mux the bank for a_rd_addr (1-cyc-delayed select).
     assign a_val_r = a_val_bank_r[a_rd_bsel_d*16 +: 16];
     assign a_col_r = a_col_bank_r[a_rd_bsel_d*16 +: 16];
@@ -605,17 +334,21 @@ module pe_top #(
     wire [12:0] elem_b_addr = elem_j_next[12:0];            // B window bank addr (NEXT, like A)
     wire        elem_in_b   = (elem_state==ELEM_B);
     wire        elem_active = (elem_state==ELEM_A) || elem_in_b;
-    wire [16:0] elem_win0   = {elem_j[12:0], 4'b0};         // 16*elem_j (window's first offset)
+    wire [16:0] elem_win0   = {elem_j[12:0], {`N_MAC_BITS{1'b0}}};   // N_MAC*elem_j (window's first offset)
     wire [16:0] elem_base   = elem_in_b ? elem_b_off : cur_a_off[16:0];
     wire [16:0] elem_end    = elem_base + (elem_in_b ? {1'b0,elem_b_nnz} : {1'b0,cur_a_nnz});
 
-    wire [16*16-1:0] ebc_vec = {ebc15,ebc14,ebc13,ebc12,ebc11,ebc10,ebc9,ebc8,ebc7,ebc6,ebc5,ebc4,ebc3,ebc2,ebc1,ebc0};
-    wire [16*16-1:0] ebv_vec = {ebv15,ebv14,ebv13,ebv12,ebv11,ebv10,ebv9,ebv8,ebv7,ebv6,ebv5,ebv4,ebv3,ebv2,ebv1,ebv0};
+    wire [`N_MAC*16-1:0] ebc_vec, ebv_vec;
+    genvar ev;
+    generate for (ev=0; ev<`N_MAC; ev=ev+1) begin: g_eb_vec
+        assign ebc_vec[ev*16 +: 16] = ebc[ev];
+        assign ebv_vec[ev*16 +: 16] = ebv[ev];
+    end endgenerate
 
-    wire [15:0]                elem_lv;
-    wire [16*`TASK_WIDTH-1:0]  elem_tasks_flat;
+    wire [`N_MAC-1:0]          elem_lv;
+    wire [`N_MAC*`TASK_WIDTH-1:0]  elem_tasks_flat;
     genvar ek;
-    generate for (ek=0; ek<16; ek=ek+1) begin : g_elem_lane
+    generate for (ek=0; ek<`N_MAC; ek=ek+1) begin : g_elem_lane
         wire [16:0] eabs  = elem_win0 + ek[16:0];
         assign elem_lv[ek] = (eabs >= elem_base) && (eabs < elem_end);
         wire [15:0] eval  = elem_in_b ? ebv_vec[ek*16+:16] : a_val_bank_r[ek*16+:16];
@@ -716,59 +449,26 @@ module pe_top #(
     //=========================================================================
     // Gen2 sequential
     //=========================================================================
+    integer ci2;
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
-            carry2_cnt<=0;
-            carry2_task[0]<=0; carry2_task[1]<=0; carry2_task[2]<=0; carry2_task[3]<=0;
-            carry2_task[4]<=0; carry2_task[5]<=0; carry2_task[6]<=0; carry2_task[7]<=0;
-            carry2_task[8]<=0; carry2_task[9]<=0; carry2_task[10]<=0; carry2_task[11]<=0;
-            carry2_task[12]<=0; carry2_task[13]<=0; carry2_task[14]<=0;
+            carry2_cnt <= 0;
+            for (ci2=0; ci2<`N_MAC; ci2=ci2+1) carry2_task[ci2] <= 0;
         end else begin
             if (g1_acc_advances) begin
                 if (g2_can_emit) begin
                     carry2_cnt <= g2_overflow;
-                    // new carry: pack_sg[16-carry2_cnt .. gen_remainder-1]
-                    case (carry2_cnt)
-                        4'd2:  begin if(g2_overflow>=1) carry2_task[0]<=pack_sg14; end
-                        4'd3:  begin if(g2_overflow>=1) carry2_task[0]<=pack_sg13; if(g2_overflow>=2) carry2_task[1]<=pack_sg14; end
-                        4'd4:  begin if(g2_overflow>=1) carry2_task[0]<=pack_sg12; if(g2_overflow>=2) carry2_task[1]<=pack_sg13; if(g2_overflow>=3) carry2_task[2]<=pack_sg14; end
-                        4'd5:  begin if(g2_overflow>=1) carry2_task[0]<=pack_sg11; if(g2_overflow>=2) carry2_task[1]<=pack_sg12; if(g2_overflow>=3) carry2_task[2]<=pack_sg13; if(g2_overflow>=4) carry2_task[3]<=pack_sg14; end
-                        4'd6:  begin if(g2_overflow>=1) carry2_task[0]<=pack_sg10; if(g2_overflow>=2) carry2_task[1]<=pack_sg11; if(g2_overflow>=3) carry2_task[2]<=pack_sg12; if(g2_overflow>=4) carry2_task[3]<=pack_sg13; if(g2_overflow>=5) carry2_task[4]<=pack_sg14; end
-                        4'd7:  begin if(g2_overflow>=1) carry2_task[0]<=pack_sg9;  if(g2_overflow>=2) carry2_task[1]<=pack_sg10; if(g2_overflow>=3) carry2_task[2]<=pack_sg11; if(g2_overflow>=4) carry2_task[3]<=pack_sg12; if(g2_overflow>=5) carry2_task[4]<=pack_sg13; if(g2_overflow>=6) carry2_task[5]<=pack_sg14; end
-                        4'd8:  begin if(g2_overflow>=1) carry2_task[0]<=pack_sg8;  if(g2_overflow>=2) carry2_task[1]<=pack_sg9;  if(g2_overflow>=3) carry2_task[2]<=pack_sg10; if(g2_overflow>=4) carry2_task[3]<=pack_sg11; if(g2_overflow>=5) carry2_task[4]<=pack_sg12; if(g2_overflow>=6) carry2_task[5]<=pack_sg13; if(g2_overflow>=7) carry2_task[6]<=pack_sg14; end
-                        4'd9:  begin if(g2_overflow>=1) carry2_task[0]<=pack_sg7;  if(g2_overflow>=2) carry2_task[1]<=pack_sg8;  if(g2_overflow>=3) carry2_task[2]<=pack_sg9;  if(g2_overflow>=4) carry2_task[3]<=pack_sg10; if(g2_overflow>=5) carry2_task[4]<=pack_sg11; if(g2_overflow>=6) carry2_task[5]<=pack_sg12; if(g2_overflow>=7) carry2_task[6]<=pack_sg13; if(g2_overflow>=8) carry2_task[7]<=pack_sg14; end
-                        4'd10: begin if(g2_overflow>=1) carry2_task[0]<=pack_sg6;  if(g2_overflow>=2) carry2_task[1]<=pack_sg7;  if(g2_overflow>=3) carry2_task[2]<=pack_sg8;  if(g2_overflow>=4) carry2_task[3]<=pack_sg9;  if(g2_overflow>=5) carry2_task[4]<=pack_sg10; if(g2_overflow>=6) carry2_task[5]<=pack_sg11; if(g2_overflow>=7) carry2_task[6]<=pack_sg12; if(g2_overflow>=8) carry2_task[7]<=pack_sg13; if(g2_overflow>=9) carry2_task[8]<=pack_sg14; end
-                        4'd11: begin if(g2_overflow>=1) carry2_task[0]<=pack_sg5;  if(g2_overflow>=2) carry2_task[1]<=pack_sg6;  if(g2_overflow>=3) carry2_task[2]<=pack_sg7;  if(g2_overflow>=4) carry2_task[3]<=pack_sg8;  if(g2_overflow>=5) carry2_task[4]<=pack_sg9;  if(g2_overflow>=6) carry2_task[5]<=pack_sg10; if(g2_overflow>=7) carry2_task[6]<=pack_sg11; if(g2_overflow>=8) carry2_task[7]<=pack_sg12; if(g2_overflow>=9) carry2_task[8]<=pack_sg13; if(g2_overflow>=10) carry2_task[9]<=pack_sg14; end
-                        4'd12: begin if(g2_overflow>=1) carry2_task[0]<=pack_sg4;  if(g2_overflow>=2) carry2_task[1]<=pack_sg5;  if(g2_overflow>=3) carry2_task[2]<=pack_sg6;  if(g2_overflow>=4) carry2_task[3]<=pack_sg7;  if(g2_overflow>=5) carry2_task[4]<=pack_sg8;  if(g2_overflow>=6) carry2_task[5]<=pack_sg9;  if(g2_overflow>=7) carry2_task[6]<=pack_sg10; if(g2_overflow>=8) carry2_task[7]<=pack_sg11; if(g2_overflow>=9) carry2_task[8]<=pack_sg12; if(g2_overflow>=10) carry2_task[9]<=pack_sg13; if(g2_overflow>=11) carry2_task[10]<=pack_sg14; end
-                        4'd13: begin if(g2_overflow>=1) carry2_task[0]<=pack_sg3;  if(g2_overflow>=2) carry2_task[1]<=pack_sg4;  if(g2_overflow>=3) carry2_task[2]<=pack_sg5;  if(g2_overflow>=4) carry2_task[3]<=pack_sg6;  if(g2_overflow>=5) carry2_task[4]<=pack_sg7;  if(g2_overflow>=6) carry2_task[5]<=pack_sg8;  if(g2_overflow>=7) carry2_task[6]<=pack_sg9;  if(g2_overflow>=8) carry2_task[7]<=pack_sg10; if(g2_overflow>=9) carry2_task[8]<=pack_sg11; if(g2_overflow>=10) carry2_task[9]<=pack_sg12; if(g2_overflow>=11) carry2_task[10]<=pack_sg13; if(g2_overflow>=12) carry2_task[11]<=pack_sg14; end
-                        4'd14: begin if(g2_overflow>=1) carry2_task[0]<=pack_sg2;  if(g2_overflow>=2) carry2_task[1]<=pack_sg3;  if(g2_overflow>=3) carry2_task[2]<=pack_sg4;  if(g2_overflow>=4) carry2_task[3]<=pack_sg5;  if(g2_overflow>=5) carry2_task[4]<=pack_sg6;  if(g2_overflow>=6) carry2_task[5]<=pack_sg7;  if(g2_overflow>=7) carry2_task[6]<=pack_sg8;  if(g2_overflow>=8) carry2_task[7]<=pack_sg9;  if(g2_overflow>=9) carry2_task[8]<=pack_sg10; if(g2_overflow>=10) carry2_task[9]<=pack_sg11; if(g2_overflow>=11) carry2_task[10]<=pack_sg12; if(g2_overflow>=12) carry2_task[11]<=pack_sg13; if(g2_overflow>=13) carry2_task[12]<=pack_sg14; end
-                        4'd15: begin if(g2_overflow>=1) carry2_task[0]<=pack_sg1;  if(g2_overflow>=2) carry2_task[1]<=pack_sg2;  if(g2_overflow>=3) carry2_task[2]<=pack_sg3;  if(g2_overflow>=4) carry2_task[3]<=pack_sg4;  if(g2_overflow>=5) carry2_task[4]<=pack_sg5;  if(g2_overflow>=6) carry2_task[5]<=pack_sg6;  if(g2_overflow>=7) carry2_task[6]<=pack_sg7;  if(g2_overflow>=8) carry2_task[7]<=pack_sg8;  if(g2_overflow>=9) carry2_task[8]<=pack_sg9;  if(g2_overflow>=10) carry2_task[9]<=pack_sg10; if(g2_overflow>=11) carry2_task[10]<=pack_sg11; if(g2_overflow>=12) carry2_task[11]<=pack_sg12; if(g2_overflow>=13) carry2_task[12]<=pack_sg13; if(g2_overflow>=14) carry2_task[13]<=pack_sg14; end
-                        default: ; // carry2_cnt 0 or 1: overflow always 0
-                    endcase
+                    for (ci2=0; ci2<`N_MAC-1; ci2=ci2+1)
+                        if (ci2 < g2_overflow)
+                            carry2_task[ci2] <= pack_sg[(`N_MAC - carry2_cnt + ci2) & (`N_MAC-1)];
                 end else begin
-                    carry2_cnt <= g2_combined[3:0];
-                    // accumulate: carry2_task[carry2_cnt + j] = pack_sg[j] for j=0..gen_remainder-1
-                    case (carry2_cnt)
-                        4'd0:  begin if(gen_remainder>=1) carry2_task[0]<=pack_sg0; if(gen_remainder>=2) carry2_task[1]<=pack_sg1; if(gen_remainder>=3) carry2_task[2]<=pack_sg2; if(gen_remainder>=4) carry2_task[3]<=pack_sg3; if(gen_remainder>=5) carry2_task[4]<=pack_sg4; if(gen_remainder>=6) carry2_task[5]<=pack_sg5; if(gen_remainder>=7) carry2_task[6]<=pack_sg6; if(gen_remainder>=8) carry2_task[7]<=pack_sg7; if(gen_remainder>=9) carry2_task[8]<=pack_sg8; if(gen_remainder>=10) carry2_task[9]<=pack_sg9; if(gen_remainder>=11) carry2_task[10]<=pack_sg10; if(gen_remainder>=12) carry2_task[11]<=pack_sg11; if(gen_remainder>=13) carry2_task[12]<=pack_sg12; if(gen_remainder>=14) carry2_task[13]<=pack_sg13; if(gen_remainder>=15) carry2_task[14]<=pack_sg14; end
-                        4'd1:  begin if(gen_remainder>=1) carry2_task[1]<=pack_sg0; if(gen_remainder>=2) carry2_task[2]<=pack_sg1; if(gen_remainder>=3) carry2_task[3]<=pack_sg2; if(gen_remainder>=4) carry2_task[4]<=pack_sg3; if(gen_remainder>=5) carry2_task[5]<=pack_sg4; if(gen_remainder>=6) carry2_task[6]<=pack_sg5; if(gen_remainder>=7) carry2_task[7]<=pack_sg6; if(gen_remainder>=8) carry2_task[8]<=pack_sg7; if(gen_remainder>=9) carry2_task[9]<=pack_sg8; if(gen_remainder>=10) carry2_task[10]<=pack_sg9; if(gen_remainder>=11) carry2_task[11]<=pack_sg10; if(gen_remainder>=12) carry2_task[12]<=pack_sg11; if(gen_remainder>=13) carry2_task[13]<=pack_sg12; if(gen_remainder>=14) carry2_task[14]<=pack_sg13; end
-                        4'd2:  begin if(gen_remainder>=1) carry2_task[2]<=pack_sg0; if(gen_remainder>=2) carry2_task[3]<=pack_sg1; if(gen_remainder>=3) carry2_task[4]<=pack_sg2; if(gen_remainder>=4) carry2_task[5]<=pack_sg3; if(gen_remainder>=5) carry2_task[6]<=pack_sg4; if(gen_remainder>=6) carry2_task[7]<=pack_sg5; if(gen_remainder>=7) carry2_task[8]<=pack_sg6; if(gen_remainder>=8) carry2_task[9]<=pack_sg7; if(gen_remainder>=9) carry2_task[10]<=pack_sg8; if(gen_remainder>=10) carry2_task[11]<=pack_sg9; if(gen_remainder>=11) carry2_task[12]<=pack_sg10; if(gen_remainder>=12) carry2_task[13]<=pack_sg11; if(gen_remainder>=13) carry2_task[14]<=pack_sg12; end
-                        4'd3:  begin if(gen_remainder>=1) carry2_task[3]<=pack_sg0; if(gen_remainder>=2) carry2_task[4]<=pack_sg1; if(gen_remainder>=3) carry2_task[5]<=pack_sg2; if(gen_remainder>=4) carry2_task[6]<=pack_sg3; if(gen_remainder>=5) carry2_task[7]<=pack_sg4; if(gen_remainder>=6) carry2_task[8]<=pack_sg5; if(gen_remainder>=7) carry2_task[9]<=pack_sg6; if(gen_remainder>=8) carry2_task[10]<=pack_sg7; if(gen_remainder>=9) carry2_task[11]<=pack_sg8; if(gen_remainder>=10) carry2_task[12]<=pack_sg9; if(gen_remainder>=11) carry2_task[13]<=pack_sg10; if(gen_remainder>=12) carry2_task[14]<=pack_sg11; end
-                        4'd4:  begin if(gen_remainder>=1) carry2_task[4]<=pack_sg0; if(gen_remainder>=2) carry2_task[5]<=pack_sg1; if(gen_remainder>=3) carry2_task[6]<=pack_sg2; if(gen_remainder>=4) carry2_task[7]<=pack_sg3; if(gen_remainder>=5) carry2_task[8]<=pack_sg4; if(gen_remainder>=6) carry2_task[9]<=pack_sg5; if(gen_remainder>=7) carry2_task[10]<=pack_sg6; if(gen_remainder>=8) carry2_task[11]<=pack_sg7; if(gen_remainder>=9) carry2_task[12]<=pack_sg8; if(gen_remainder>=10) carry2_task[13]<=pack_sg9; if(gen_remainder>=11) carry2_task[14]<=pack_sg10; end
-                        4'd5:  begin if(gen_remainder>=1) carry2_task[5]<=pack_sg0; if(gen_remainder>=2) carry2_task[6]<=pack_sg1; if(gen_remainder>=3) carry2_task[7]<=pack_sg2; if(gen_remainder>=4) carry2_task[8]<=pack_sg3; if(gen_remainder>=5) carry2_task[9]<=pack_sg4; if(gen_remainder>=6) carry2_task[10]<=pack_sg5; if(gen_remainder>=7) carry2_task[11]<=pack_sg6; if(gen_remainder>=8) carry2_task[12]<=pack_sg7; if(gen_remainder>=9) carry2_task[13]<=pack_sg8; if(gen_remainder>=10) carry2_task[14]<=pack_sg9; end
-                        4'd6:  begin if(gen_remainder>=1) carry2_task[6]<=pack_sg0; if(gen_remainder>=2) carry2_task[7]<=pack_sg1; if(gen_remainder>=3) carry2_task[8]<=pack_sg2; if(gen_remainder>=4) carry2_task[9]<=pack_sg3; if(gen_remainder>=5) carry2_task[10]<=pack_sg4; if(gen_remainder>=6) carry2_task[11]<=pack_sg5; if(gen_remainder>=7) carry2_task[12]<=pack_sg6; if(gen_remainder>=8) carry2_task[13]<=pack_sg7; if(gen_remainder>=9) carry2_task[14]<=pack_sg8; end
-                        4'd7:  begin if(gen_remainder>=1) carry2_task[7]<=pack_sg0; if(gen_remainder>=2) carry2_task[8]<=pack_sg1; if(gen_remainder>=3) carry2_task[9]<=pack_sg2; if(gen_remainder>=4) carry2_task[10]<=pack_sg3; if(gen_remainder>=5) carry2_task[11]<=pack_sg4; if(gen_remainder>=6) carry2_task[12]<=pack_sg5; if(gen_remainder>=7) carry2_task[13]<=pack_sg6; if(gen_remainder>=8) carry2_task[14]<=pack_sg7; end
-                        4'd8:  begin if(gen_remainder>=1) carry2_task[8]<=pack_sg0; if(gen_remainder>=2) carry2_task[9]<=pack_sg1; if(gen_remainder>=3) carry2_task[10]<=pack_sg2; if(gen_remainder>=4) carry2_task[11]<=pack_sg3; if(gen_remainder>=5) carry2_task[12]<=pack_sg4; if(gen_remainder>=6) carry2_task[13]<=pack_sg5; if(gen_remainder>=7) carry2_task[14]<=pack_sg6; end
-                        4'd9:  begin if(gen_remainder>=1) carry2_task[9]<=pack_sg0; if(gen_remainder>=2) carry2_task[10]<=pack_sg1; if(gen_remainder>=3) carry2_task[11]<=pack_sg2; if(gen_remainder>=4) carry2_task[12]<=pack_sg3; if(gen_remainder>=5) carry2_task[13]<=pack_sg4; if(gen_remainder>=6) carry2_task[14]<=pack_sg5; end
-                        4'd10: begin if(gen_remainder>=1) carry2_task[10]<=pack_sg0; if(gen_remainder>=2) carry2_task[11]<=pack_sg1; if(gen_remainder>=3) carry2_task[12]<=pack_sg2; if(gen_remainder>=4) carry2_task[13]<=pack_sg3; if(gen_remainder>=5) carry2_task[14]<=pack_sg4; end
-                        4'd11: begin if(gen_remainder>=1) carry2_task[11]<=pack_sg0; if(gen_remainder>=2) carry2_task[12]<=pack_sg1; if(gen_remainder>=3) carry2_task[13]<=pack_sg2; if(gen_remainder>=4) carry2_task[14]<=pack_sg3; end
-                        4'd12: begin if(gen_remainder>=1) carry2_task[12]<=pack_sg0; if(gen_remainder>=2) carry2_task[13]<=pack_sg1; if(gen_remainder>=3) carry2_task[14]<=pack_sg2; end
-                        4'd13: begin if(gen_remainder>=1) carry2_task[13]<=pack_sg0; if(gen_remainder>=2) carry2_task[14]<=pack_sg1; end
-                        4'd14: begin if(gen_remainder>=1) carry2_task[14]<=pack_sg0; end
-                        default: ;
-                    endcase
+                    carry2_cnt <= g2_combined[`N_MAC_BITS-1:0];
+                    for (ci2=0; ci2<`N_MAC-1; ci2=ci2+1)
+                        if (ci2 < gen_remainder)
+                            carry2_task[(carry2_cnt + ci2) & (`N_MAC-1)] <= pack_sg[ci2];
                 end
             end else if (g2_want_flush && !task_fifo_full) begin
-                carry2_cnt <= 4'd0;
+                carry2_cnt <= 0;
             end
         end
     end
@@ -883,32 +583,21 @@ module pe_top #(
     //=========================================================================
     // Executor B bank reads (16-bank, group stride = 16)
     //=========================================================================
-    wire [31:0] exec_abs_base = {15'b0, exec_b_off} + {21'b0, exec_g, 4'b0000};
-    wire [3:0]  exec_r_addr   = exec_abs_base[3:0];   // stage-1 (address) rotation amt
-    wire [13:0] exec_m        = exec_abs_base[17:4];
+    wire [31:0] exec_abs_base = {15'b0, exec_b_off} + ({25'b0, exec_g} << `N_MAC_BITS);
+    wire [`N_MAC_BITS-1:0] exec_r_addr = exec_abs_base[`N_MAC_BITS-1:0];
+    wire [13:0] exec_m        = exec_abs_base[`N_MAC_BITS+13:`N_MAC_BITS];
 
-    wire [13:0] exec_bg0 =(exec_r_addr==0)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg1 =(exec_r_addr<=1)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg2 =(exec_r_addr<=2)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg3 =(exec_r_addr<=3)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg4 =(exec_r_addr<=4)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg5 =(exec_r_addr<=5)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg6 =(exec_r_addr<=6)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg7 =(exec_r_addr<=7)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg8 =(exec_r_addr<=8)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg9 =(exec_r_addr<=9)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg10=(exec_r_addr<=10)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg11=(exec_r_addr<=11)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg12=(exec_r_addr<=12)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg13=(exec_r_addr<=13)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg14=(exec_r_addr<=14)?exec_m:exec_m+14'd1;
-    wire [13:0] exec_bg15=exec_m;
+    wire [13:0] exec_bg [0:`N_MAC-1];
+    genvar xbg;
+    generate for (xbg=0; xbg<`N_MAC; xbg=xbg+1) begin: g_exec_bg
+        assign exec_bg[xbg] = (exec_r_addr <= xbg) ? exec_m : exec_m + 14'd1;
+    end endgenerate
 
     // Stage-2 control, delayed 1 cycle to align with the registered B reads:
     //   exec_r        = rotation amount for the data now arriving
     //   exec_a_val_d1 = A value for that group
     //   exec_valid_d1 = "a B-read group is landing this cycle" (write enable)
-    reg [3:0]  exec_r;
+    reg [`N_MAC_BITS-1:0] exec_r;
     reg [15:0] exec_a_val_d1;
     reg        exec_valid_d1;
     reg        exec_comp_d1;     // exec_comp delayed to match exec_valid_d1
@@ -923,85 +612,20 @@ module pe_top #(
         end
     end
 
-    // Registered (synchronous) B reads -> infer Block RAM.  Data for the address
-    // issued at cycle T (from exec_g, exec_b_off) is available here at T+1, so the
-    // rotation/pack below uses the 1-cycle-delayed control (exec_r_d1, exec_a_val_d1).
-    reg [15:0] ebc0,ebc1,ebc2,ebc3,ebc4,ebc5,ebc6,ebc7,ebc8,ebc9,ebc10,ebc11,ebc12,ebc13,ebc14,ebc15;
-    reg [15:0] ebv0,ebv1,ebv2,ebv3,ebv4,ebv5,ebv6,ebv7,ebv8,ebv9,ebv10,ebv11,ebv12,ebv13,ebv14,ebv15;
-    // Address is muxed by op_mode so the elementwise path reuses these SAME 16
-    // registered B read ports (elem and SpGEMM are mutually exclusive), avoiding
-    // a 3rd read port on each B bank.  SpGEMM: per-bank rotated addr exec_bgN.
-    // Elementwise: all banks read elem_b_addr; elem then picks bank elem_b_bank.
-    always @(posedge aclk) begin
-        ebc0 <=B_col_b0 [op_mode?elem_b_addr:exec_bg0];  ebv0 <=B_val_b0 [op_mode?elem_b_addr:exec_bg0];
-        ebc1 <=B_col_b1 [op_mode?elem_b_addr:exec_bg1];  ebv1 <=B_val_b1 [op_mode?elem_b_addr:exec_bg1];
-        ebc2 <=B_col_b2 [op_mode?elem_b_addr:exec_bg2];  ebv2 <=B_val_b2 [op_mode?elem_b_addr:exec_bg2];
-        ebc3 <=B_col_b3 [op_mode?elem_b_addr:exec_bg3];  ebv3 <=B_val_b3 [op_mode?elem_b_addr:exec_bg3];
-        ebc4 <=B_col_b4 [op_mode?elem_b_addr:exec_bg4];  ebv4 <=B_val_b4 [op_mode?elem_b_addr:exec_bg4];
-        ebc5 <=B_col_b5 [op_mode?elem_b_addr:exec_bg5];  ebv5 <=B_val_b5 [op_mode?elem_b_addr:exec_bg5];
-        ebc6 <=B_col_b6 [op_mode?elem_b_addr:exec_bg6];  ebv6 <=B_val_b6 [op_mode?elem_b_addr:exec_bg6];
-        ebc7 <=B_col_b7 [op_mode?elem_b_addr:exec_bg7];  ebv7 <=B_val_b7 [op_mode?elem_b_addr:exec_bg7];
-        ebc8 <=B_col_b8 [op_mode?elem_b_addr:exec_bg8];  ebv8 <=B_val_b8 [op_mode?elem_b_addr:exec_bg8];
-        ebc9 <=B_col_b9 [op_mode?elem_b_addr:exec_bg9];  ebv9 <=B_val_b9 [op_mode?elem_b_addr:exec_bg9];
-        ebc10<=B_col_b10[op_mode?elem_b_addr:exec_bg10]; ebv10<=B_val_b10[op_mode?elem_b_addr:exec_bg10];
-        ebc11<=B_col_b11[op_mode?elem_b_addr:exec_bg11]; ebv11<=B_val_b11[op_mode?elem_b_addr:exec_bg11];
-        ebc12<=B_col_b12[op_mode?elem_b_addr:exec_bg12]; ebv12<=B_val_b12[op_mode?elem_b_addr:exec_bg12];
-        ebc13<=B_col_b13[op_mode?elem_b_addr:exec_bg13]; ebv13<=B_val_b13[op_mode?elem_b_addr:exec_bg13];
-        ebc14<=B_col_b14[op_mode?elem_b_addr:exec_bg14]; ebv14<=B_val_b14[op_mode?elem_b_addr:exec_bg14];
-        ebc15<=B_col_b15[op_mode?elem_b_addr:exec_bg15]; ebv15<=B_val_b15[op_mode?elem_b_addr:exec_bg15];
-    end
+    // ebc/ebv (executor + elementwise B reads) are produced by the gen_b_bank generate (end of module).
 
-    // Rotation mux: enebv[j] = ebv at bank (exec_r+j)%16
-    wire [15:0] enebv [0:15]; wire [15:0] enebc [0:15];
-    assign enebv[0] =(exec_r==0)?ebv0 :(exec_r==1)?ebv1 :(exec_r==2)?ebv2 :(exec_r==3)?ebv3 :(exec_r==4)?ebv4 :(exec_r==5)?ebv5 :(exec_r==6)?ebv6 :(exec_r==7)?ebv7 :(exec_r==8)?ebv8 :(exec_r==9)?ebv9 :(exec_r==10)?ebv10:(exec_r==11)?ebv11:(exec_r==12)?ebv12:(exec_r==13)?ebv13:(exec_r==14)?ebv14:ebv15;
-    assign enebc[0] =(exec_r==0)?ebc0 :(exec_r==1)?ebc1 :(exec_r==2)?ebc2 :(exec_r==3)?ebc3 :(exec_r==4)?ebc4 :(exec_r==5)?ebc5 :(exec_r==6)?ebc6 :(exec_r==7)?ebc7 :(exec_r==8)?ebc8 :(exec_r==9)?ebc9 :(exec_r==10)?ebc10:(exec_r==11)?ebc11:(exec_r==12)?ebc12:(exec_r==13)?ebc13:(exec_r==14)?ebc14:ebc15;
-    assign enebv[1] =(exec_r==0)?ebv1 :(exec_r==1)?ebv2 :(exec_r==2)?ebv3 :(exec_r==3)?ebv4 :(exec_r==4)?ebv5 :(exec_r==5)?ebv6 :(exec_r==6)?ebv7 :(exec_r==7)?ebv8 :(exec_r==8)?ebv9 :(exec_r==9)?ebv10:(exec_r==10)?ebv11:(exec_r==11)?ebv12:(exec_r==12)?ebv13:(exec_r==13)?ebv14:(exec_r==14)?ebv15:ebv0;
-    assign enebc[1] =(exec_r==0)?ebc1 :(exec_r==1)?ebc2 :(exec_r==2)?ebc3 :(exec_r==3)?ebc4 :(exec_r==4)?ebc5 :(exec_r==5)?ebc6 :(exec_r==6)?ebc7 :(exec_r==7)?ebc8 :(exec_r==8)?ebc9 :(exec_r==9)?ebc10:(exec_r==10)?ebc11:(exec_r==11)?ebc12:(exec_r==12)?ebc13:(exec_r==13)?ebc14:(exec_r==14)?ebc15:ebc0;
-    assign enebv[2] =(exec_r==0)?ebv2 :(exec_r==1)?ebv3 :(exec_r==2)?ebv4 :(exec_r==3)?ebv5 :(exec_r==4)?ebv6 :(exec_r==5)?ebv7 :(exec_r==6)?ebv8 :(exec_r==7)?ebv9 :(exec_r==8)?ebv10:(exec_r==9)?ebv11:(exec_r==10)?ebv12:(exec_r==11)?ebv13:(exec_r==12)?ebv14:(exec_r==13)?ebv15:(exec_r==14)?ebv0:ebv1;
-    assign enebc[2] =(exec_r==0)?ebc2 :(exec_r==1)?ebc3 :(exec_r==2)?ebc4 :(exec_r==3)?ebc5 :(exec_r==4)?ebc6 :(exec_r==5)?ebc7 :(exec_r==6)?ebc8 :(exec_r==7)?ebc9 :(exec_r==8)?ebc10:(exec_r==9)?ebc11:(exec_r==10)?ebc12:(exec_r==11)?ebc13:(exec_r==12)?ebc14:(exec_r==13)?ebc15:(exec_r==14)?ebc0:ebc1;
-    assign enebv[3] =(exec_r==0)?ebv3 :(exec_r==1)?ebv4 :(exec_r==2)?ebv5 :(exec_r==3)?ebv6 :(exec_r==4)?ebv7 :(exec_r==5)?ebv8 :(exec_r==6)?ebv9 :(exec_r==7)?ebv10:(exec_r==8)?ebv11:(exec_r==9)?ebv12:(exec_r==10)?ebv13:(exec_r==11)?ebv14:(exec_r==12)?ebv15:(exec_r==13)?ebv0:(exec_r==14)?ebv1:ebv2;
-    assign enebc[3] =(exec_r==0)?ebc3 :(exec_r==1)?ebc4 :(exec_r==2)?ebc5 :(exec_r==3)?ebc6 :(exec_r==4)?ebc7 :(exec_r==5)?ebc8 :(exec_r==6)?ebc9 :(exec_r==7)?ebc10:(exec_r==8)?ebc11:(exec_r==9)?ebc12:(exec_r==10)?ebc13:(exec_r==11)?ebc14:(exec_r==12)?ebc15:(exec_r==13)?ebc0:(exec_r==14)?ebc1:ebc2;
-    assign enebv[4] =(exec_r==0)?ebv4 :(exec_r==1)?ebv5 :(exec_r==2)?ebv6 :(exec_r==3)?ebv7 :(exec_r==4)?ebv8 :(exec_r==5)?ebv9 :(exec_r==6)?ebv10:(exec_r==7)?ebv11:(exec_r==8)?ebv12:(exec_r==9)?ebv13:(exec_r==10)?ebv14:(exec_r==11)?ebv15:(exec_r==12)?ebv0:(exec_r==13)?ebv1:(exec_r==14)?ebv2:ebv3;
-    assign enebc[4] =(exec_r==0)?ebc4 :(exec_r==1)?ebc5 :(exec_r==2)?ebc6 :(exec_r==3)?ebc7 :(exec_r==4)?ebc8 :(exec_r==5)?ebc9 :(exec_r==6)?ebc10:(exec_r==7)?ebc11:(exec_r==8)?ebc12:(exec_r==9)?ebc13:(exec_r==10)?ebc14:(exec_r==11)?ebc15:(exec_r==12)?ebc0:(exec_r==13)?ebc1:(exec_r==14)?ebc2:ebc3;
-    assign enebv[5] =(exec_r==0)?ebv5 :(exec_r==1)?ebv6 :(exec_r==2)?ebv7 :(exec_r==3)?ebv8 :(exec_r==4)?ebv9 :(exec_r==5)?ebv10:(exec_r==6)?ebv11:(exec_r==7)?ebv12:(exec_r==8)?ebv13:(exec_r==9)?ebv14:(exec_r==10)?ebv15:(exec_r==11)?ebv0:(exec_r==12)?ebv1:(exec_r==13)?ebv2:(exec_r==14)?ebv3:ebv4;
-    assign enebc[5] =(exec_r==0)?ebc5 :(exec_r==1)?ebc6 :(exec_r==2)?ebc7 :(exec_r==3)?ebc8 :(exec_r==4)?ebc9 :(exec_r==5)?ebc10:(exec_r==6)?ebc11:(exec_r==7)?ebc12:(exec_r==8)?ebc13:(exec_r==9)?ebc14:(exec_r==10)?ebc15:(exec_r==11)?ebc0:(exec_r==12)?ebc1:(exec_r==13)?ebc2:(exec_r==14)?ebc3:ebc4;
-    assign enebv[6] =(exec_r==0)?ebv6 :(exec_r==1)?ebv7 :(exec_r==2)?ebv8 :(exec_r==3)?ebv9 :(exec_r==4)?ebv10:(exec_r==5)?ebv11:(exec_r==6)?ebv12:(exec_r==7)?ebv13:(exec_r==8)?ebv14:(exec_r==9)?ebv15:(exec_r==10)?ebv0:(exec_r==11)?ebv1:(exec_r==12)?ebv2:(exec_r==13)?ebv3:(exec_r==14)?ebv4:ebv5;
-    assign enebc[6] =(exec_r==0)?ebc6 :(exec_r==1)?ebc7 :(exec_r==2)?ebc8 :(exec_r==3)?ebc9 :(exec_r==4)?ebc10:(exec_r==5)?ebc11:(exec_r==6)?ebc12:(exec_r==7)?ebc13:(exec_r==8)?ebc14:(exec_r==9)?ebc15:(exec_r==10)?ebc0:(exec_r==11)?ebc1:(exec_r==12)?ebc2:(exec_r==13)?ebc3:(exec_r==14)?ebc4:ebc5;
-    assign enebv[7] =(exec_r==0)?ebv7 :(exec_r==1)?ebv8 :(exec_r==2)?ebv9 :(exec_r==3)?ebv10:(exec_r==4)?ebv11:(exec_r==5)?ebv12:(exec_r==6)?ebv13:(exec_r==7)?ebv14:(exec_r==8)?ebv15:(exec_r==9)?ebv0:(exec_r==10)?ebv1:(exec_r==11)?ebv2:(exec_r==12)?ebv3:(exec_r==13)?ebv4:(exec_r==14)?ebv5:ebv6;
-    assign enebc[7] =(exec_r==0)?ebc7 :(exec_r==1)?ebc8 :(exec_r==2)?ebc9 :(exec_r==3)?ebc10:(exec_r==4)?ebc11:(exec_r==5)?ebc12:(exec_r==6)?ebc13:(exec_r==7)?ebc14:(exec_r==8)?ebc15:(exec_r==9)?ebc0:(exec_r==10)?ebc1:(exec_r==11)?ebc2:(exec_r==12)?ebc3:(exec_r==13)?ebc4:(exec_r==14)?ebc5:ebc6;
-    assign enebv[8] =(exec_r==0)?ebv8 :(exec_r==1)?ebv9 :(exec_r==2)?ebv10:(exec_r==3)?ebv11:(exec_r==4)?ebv12:(exec_r==5)?ebv13:(exec_r==6)?ebv14:(exec_r==7)?ebv15:(exec_r==8)?ebv0:(exec_r==9)?ebv1:(exec_r==10)?ebv2:(exec_r==11)?ebv3:(exec_r==12)?ebv4:(exec_r==13)?ebv5:(exec_r==14)?ebv6:ebv7;
-    assign enebc[8] =(exec_r==0)?ebc8 :(exec_r==1)?ebc9 :(exec_r==2)?ebc10:(exec_r==3)?ebc11:(exec_r==4)?ebc12:(exec_r==5)?ebc13:(exec_r==6)?ebc14:(exec_r==7)?ebc15:(exec_r==8)?ebc0:(exec_r==9)?ebc1:(exec_r==10)?ebc2:(exec_r==11)?ebc3:(exec_r==12)?ebc4:(exec_r==13)?ebc5:(exec_r==14)?ebc6:ebc7;
-    assign enebv[9] =(exec_r==0)?ebv9 :(exec_r==1)?ebv10:(exec_r==2)?ebv11:(exec_r==3)?ebv12:(exec_r==4)?ebv13:(exec_r==5)?ebv14:(exec_r==6)?ebv15:(exec_r==7)?ebv0:(exec_r==8)?ebv1:(exec_r==9)?ebv2:(exec_r==10)?ebv3:(exec_r==11)?ebv4:(exec_r==12)?ebv5:(exec_r==13)?ebv6:(exec_r==14)?ebv7:ebv8;
-    assign enebc[9] =(exec_r==0)?ebc9 :(exec_r==1)?ebc10:(exec_r==2)?ebc11:(exec_r==3)?ebc12:(exec_r==4)?ebc13:(exec_r==5)?ebc14:(exec_r==6)?ebc15:(exec_r==7)?ebc0:(exec_r==8)?ebc1:(exec_r==9)?ebc2:(exec_r==10)?ebc3:(exec_r==11)?ebc4:(exec_r==12)?ebc5:(exec_r==13)?ebc6:(exec_r==14)?ebc7:ebc8;
-    assign enebv[10]=(exec_r==0)?ebv10:(exec_r==1)?ebv11:(exec_r==2)?ebv12:(exec_r==3)?ebv13:(exec_r==4)?ebv14:(exec_r==5)?ebv15:(exec_r==6)?ebv0:(exec_r==7)?ebv1:(exec_r==8)?ebv2:(exec_r==9)?ebv3:(exec_r==10)?ebv4:(exec_r==11)?ebv5:(exec_r==12)?ebv6:(exec_r==13)?ebv7:(exec_r==14)?ebv8:ebv9;
-    assign enebc[10]=(exec_r==0)?ebc10:(exec_r==1)?ebc11:(exec_r==2)?ebc12:(exec_r==3)?ebc13:(exec_r==4)?ebc14:(exec_r==5)?ebc15:(exec_r==6)?ebc0:(exec_r==7)?ebc1:(exec_r==8)?ebc2:(exec_r==9)?ebc3:(exec_r==10)?ebc4:(exec_r==11)?ebc5:(exec_r==12)?ebc6:(exec_r==13)?ebc7:(exec_r==14)?ebc8:ebc9;
-    assign enebv[11]=(exec_r==0)?ebv11:(exec_r==1)?ebv12:(exec_r==2)?ebv13:(exec_r==3)?ebv14:(exec_r==4)?ebv15:(exec_r==5)?ebv0:(exec_r==6)?ebv1:(exec_r==7)?ebv2:(exec_r==8)?ebv3:(exec_r==9)?ebv4:(exec_r==10)?ebv5:(exec_r==11)?ebv6:(exec_r==12)?ebv7:(exec_r==13)?ebv8:(exec_r==14)?ebv9:ebv10;
-    assign enebc[11]=(exec_r==0)?ebc11:(exec_r==1)?ebc12:(exec_r==2)?ebc13:(exec_r==3)?ebc14:(exec_r==4)?ebc15:(exec_r==5)?ebc0:(exec_r==6)?ebc1:(exec_r==7)?ebc2:(exec_r==8)?ebc3:(exec_r==9)?ebc4:(exec_r==10)?ebc5:(exec_r==11)?ebc6:(exec_r==12)?ebc7:(exec_r==13)?ebc8:(exec_r==14)?ebc9:ebc10;
-    assign enebv[12]=(exec_r==0)?ebv12:(exec_r==1)?ebv13:(exec_r==2)?ebv14:(exec_r==3)?ebv15:(exec_r==4)?ebv0:(exec_r==5)?ebv1:(exec_r==6)?ebv2:(exec_r==7)?ebv3:(exec_r==8)?ebv4:(exec_r==9)?ebv5:(exec_r==10)?ebv6:(exec_r==11)?ebv7:(exec_r==12)?ebv8:(exec_r==13)?ebv9:(exec_r==14)?ebv10:ebv11;
-    assign enebc[12]=(exec_r==0)?ebc12:(exec_r==1)?ebc13:(exec_r==2)?ebc14:(exec_r==3)?ebc15:(exec_r==4)?ebc0:(exec_r==5)?ebc1:(exec_r==6)?ebc2:(exec_r==7)?ebc3:(exec_r==8)?ebc4:(exec_r==9)?ebc5:(exec_r==10)?ebc6:(exec_r==11)?ebc7:(exec_r==12)?ebc8:(exec_r==13)?ebc9:(exec_r==14)?ebc10:ebc11;
-    assign enebv[13]=(exec_r==0)?ebv13:(exec_r==1)?ebv14:(exec_r==2)?ebv15:(exec_r==3)?ebv0:(exec_r==4)?ebv1:(exec_r==5)?ebv2:(exec_r==6)?ebv3:(exec_r==7)?ebv4:(exec_r==8)?ebv5:(exec_r==9)?ebv6:(exec_r==10)?ebv7:(exec_r==11)?ebv8:(exec_r==12)?ebv9:(exec_r==13)?ebv10:(exec_r==14)?ebv11:ebv12;
-    assign enebc[13]=(exec_r==0)?ebc13:(exec_r==1)?ebc14:(exec_r==2)?ebc15:(exec_r==3)?ebc0:(exec_r==4)?ebc1:(exec_r==5)?ebc2:(exec_r==6)?ebc3:(exec_r==7)?ebc4:(exec_r==8)?ebc5:(exec_r==9)?ebc6:(exec_r==10)?ebc7:(exec_r==11)?ebc8:(exec_r==12)?ebc9:(exec_r==13)?ebc10:(exec_r==14)?ebc11:ebc12;
-    assign enebv[14]=(exec_r==0)?ebv14:(exec_r==1)?ebv15:(exec_r==2)?ebv0:(exec_r==3)?ebv1:(exec_r==4)?ebv2:(exec_r==5)?ebv3:(exec_r==6)?ebv4:(exec_r==7)?ebv5:(exec_r==8)?ebv6:(exec_r==9)?ebv7:(exec_r==10)?ebv8:(exec_r==11)?ebv9:(exec_r==12)?ebv10:(exec_r==13)?ebv11:(exec_r==14)?ebv12:ebv13;
-    assign enebc[14]=(exec_r==0)?ebc14:(exec_r==1)?ebc15:(exec_r==2)?ebc0:(exec_r==3)?ebc1:(exec_r==4)?ebc2:(exec_r==5)?ebc3:(exec_r==6)?ebc4:(exec_r==7)?ebc5:(exec_r==8)?ebc6:(exec_r==9)?ebc7:(exec_r==10)?ebc8:(exec_r==11)?ebc9:(exec_r==12)?ebc10:(exec_r==13)?ebc11:(exec_r==14)?ebc12:ebc13;
-    assign enebv[15]=(exec_r==0)?ebv15:(exec_r==1)?ebv0:(exec_r==2)?ebv1:(exec_r==3)?ebv2:(exec_r==4)?ebv3:(exec_r==5)?ebv4:(exec_r==6)?ebv5:(exec_r==7)?ebv6:(exec_r==8)?ebv7:(exec_r==9)?ebv8:(exec_r==10)?ebv9:(exec_r==11)?ebv10:(exec_r==12)?ebv11:(exec_r==13)?ebv12:(exec_r==14)?ebv13:ebv14;
-    assign enebc[15]=(exec_r==0)?ebc15:(exec_r==1)?ebc0:(exec_r==2)?ebc1:(exec_r==3)?ebc2:(exec_r==4)?ebc3:(exec_r==5)?ebc4:(exec_r==6)?ebc5:(exec_r==7)?ebc6:(exec_r==8)?ebc7:(exec_r==9)?ebc8:(exec_r==10)?ebc9:(exec_r==11)?ebc10:(exec_r==12)?ebc11:(exec_r==13)?ebc12:(exec_r==14)?ebc13:ebc14;
+    wire [15:0] enebv [0:`N_MAC-1]; wire [15:0] enebc [0:`N_MAC-1];
+    genvar xr;
+    generate for (xr=0; xr<`N_MAC; xr=xr+1) begin: g_eneb_rot
+        assign enebv[xr] = ebv[(exec_r + xr) & (`N_MAC-1)];
+        assign enebc[xr] = ebc[(exec_r + xr) & (`N_MAC-1)];
+    end endgenerate
 
-    wire [`TASK_WIDTH-1:0] exec_sg0 ={enebv[0], exec_a_val_d1,enebc[0][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg1 ={enebv[1], exec_a_val_d1,enebc[1][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg2 ={enebv[2], exec_a_val_d1,enebc[2][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg3 ={enebv[3], exec_a_val_d1,enebc[3][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg4 ={enebv[4], exec_a_val_d1,enebc[4][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg5 ={enebv[5], exec_a_val_d1,enebc[5][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg6 ={enebv[6], exec_a_val_d1,enebc[6][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg7 ={enebv[7], exec_a_val_d1,enebc[7][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg8 ={enebv[8], exec_a_val_d1,enebc[8][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg9 ={enebv[9], exec_a_val_d1,enebc[9][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg10={enebv[10],exec_a_val_d1,enebc[10][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg11={enebv[11],exec_a_val_d1,enebc[11][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg12={enebv[12],exec_a_val_d1,enebc[12][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg13={enebv[13],exec_a_val_d1,enebc[13][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg14={enebv[14],exec_a_val_d1,enebc[14][8:0]};
-    wire [`TASK_WIDTH-1:0] exec_sg15={enebv[15],exec_a_val_d1,enebc[15][8:0]};
+    wire [`TASK_WIDTH-1:0] exec_sg [0:`N_MAC-1];
+    genvar xs;
+    generate for (xs=0; xs<`N_MAC; xs=xs+1) begin: g_exec_sg
+        assign exec_sg[xs] = {enebv[xs], exec_a_val_d1, enebc[xs][8:0]};
+    end endgenerate
 
     //=========================================================================
     // MAC array input: executor (ptr_fifo path) or Gen2 (task_fifo path)
@@ -1033,48 +657,22 @@ module pe_top #(
     reg [`N_MAC-1:0]             mac_lane_valid_r;
     reg [`N_MAC*`TASK_WIDTH-1:0] mac_lane_task_r;
     reg                          mac_comp_sel_r;   // target acc of the current MAC group
+    integer mi;
 
     always @(posedge aclk or negedge aresetn) begin
         if (!aresetn) begin
             mac_lane_valid_r<=0; mac_lane_task_r<=0; mac_comp_sel_r<=0;
         end else if (exec_valid_d1) begin
-            mac_lane_valid_r <= 16'hFFFF;
+            mac_lane_valid_r <= {`N_MAC{1'b1}};
             mac_comp_sel_r   <= exec_comp_d1;
-            mac_lane_task_r[0 *`TASK_WIDTH+:`TASK_WIDTH]<=exec_sg0;
-            mac_lane_task_r[1 *`TASK_WIDTH+:`TASK_WIDTH]<=exec_sg1;
-            mac_lane_task_r[2 *`TASK_WIDTH+:`TASK_WIDTH]<=exec_sg2;
-            mac_lane_task_r[3 *`TASK_WIDTH+:`TASK_WIDTH]<=exec_sg3;
-            mac_lane_task_r[4 *`TASK_WIDTH+:`TASK_WIDTH]<=exec_sg4;
-            mac_lane_task_r[5 *`TASK_WIDTH+:`TASK_WIDTH]<=exec_sg5;
-            mac_lane_task_r[6 *`TASK_WIDTH+:`TASK_WIDTH]<=exec_sg6;
-            mac_lane_task_r[7 *`TASK_WIDTH+:`TASK_WIDTH]<=exec_sg7;
-            mac_lane_task_r[8 *`TASK_WIDTH+:`TASK_WIDTH]<=exec_sg8;
-            mac_lane_task_r[9 *`TASK_WIDTH+:`TASK_WIDTH]<=exec_sg9;
-            mac_lane_task_r[10*`TASK_WIDTH+:`TASK_WIDTH]<=exec_sg10;
-            mac_lane_task_r[11*`TASK_WIDTH+:`TASK_WIDTH]<=exec_sg11;
-            mac_lane_task_r[12*`TASK_WIDTH+:`TASK_WIDTH]<=exec_sg12;
-            mac_lane_task_r[13*`TASK_WIDTH+:`TASK_WIDTH]<=exec_sg13;
-            mac_lane_task_r[14*`TASK_WIDTH+:`TASK_WIDTH]<=exec_sg14;
-            mac_lane_task_r[15*`TASK_WIDTH+:`TASK_WIDTH]<=exec_sg15;
+            for (mi=0; mi<`N_MAC; mi=mi+1)
+                mac_lane_task_r[mi*`TASK_WIDTH +: `TASK_WIDTH] <= exec_sg[mi];
         end else if (task_fifo_rd_en_d1) begin
             mac_lane_valid_r <= task_fifo_rd_data_d1[`N_MAC-1:0];
             mac_comp_sel_r   <= task_fifo_rd_data_d1[`TASK_GROUP_WIDTH-1];
-            mac_lane_task_r[0 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+0 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[1 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+1 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[2 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+2 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[3 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+3 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[4 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+4 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[5 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+5 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[6 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+6 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[7 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+7 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[8 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+8 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[9 *`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+9 *`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[10*`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+10*`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[11*`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+11*`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[12*`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+12*`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[13*`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+13*`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[14*`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+14*`TASK_WIDTH+:`TASK_WIDTH];
-            mac_lane_task_r[15*`TASK_WIDTH+:`TASK_WIDTH]<=task_fifo_rd_data_d1[`N_MAC+15*`TASK_WIDTH+:`TASK_WIDTH];
+            for (mi=0; mi<`N_MAC; mi=mi+1)
+                mac_lane_task_r[mi*`TASK_WIDTH +: `TASK_WIDTH] <=
+                    task_fifo_rd_data_d1[`N_MAC + mi*`TASK_WIDTH +: `TASK_WIDTH];
         end else begin
             mac_lane_valid_r<=0;
         end
@@ -1116,22 +714,11 @@ module pe_top #(
     wire product_group_wr_en = |mul_valid && !product_fifo_full;
 
     assign product_group_wr_data[`N_MAC-1:0]=mul_valid;
-    assign product_group_wr_data[`N_MAC+0 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[0 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+1 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[1 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+2 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[2 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+3 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[3 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+4 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[4 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+5 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[5 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+6 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[6 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+7 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[7 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+8 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[8 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+9 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[9 *`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+10*`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[10*`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+11*`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[11*`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+12*`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[12*`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+13*`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[13*`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+14*`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[14*`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
-    assign product_group_wr_data[`N_MAC+15*`PRODUCT_WIDTH+:`PRODUCT_WIDTH]=mul_product[15*`PRODUCT_WIDTH+:`PRODUCT_WIDTH];
+    genvar pg;
+    generate for (pg=0; pg<`N_MAC; pg=pg+1) begin: g_prod_pack
+        assign product_group_wr_data[`N_MAC + pg*`PRODUCT_WIDTH +: `PRODUCT_WIDTH]
+             = mul_product[pg*`PRODUCT_WIDTH +: `PRODUCT_WIDTH];
+    end endgenerate
 
     wire prod_fifo_rd_en_0,prod_fifo_rd_en_1;
     wire [`PRODUCT_GROUP_WIDTH-1:0] prod_fifo_rd_data_0,prod_fifo_rd_data_1;
@@ -1160,10 +747,10 @@ module pe_top #(
 
     wire acc_busy_0,acc_busy_1,acc_row_done_0,acc_row_done_1;
     wire acc_issue_ready_0,acc_issue_ready_1;
-    wire [15:0] drain_valid_0,drain_valid_1;
-    wire [4:0]  drain_gaddr_0,drain_gaddr_1;
+    wire [`N_MAC-1:0] drain_valid_0,drain_valid_1;
+    wire [GADDR_W-1:0]  drain_gaddr_0,drain_gaddr_1;
     wire [`A_ROW_ADDR_BITS-1:0] drain_row_id_0,drain_row_id_1;
-    wire [16*16-1:0] drain_values_0,drain_values_1;
+    wire [`N_MAC*16-1:0] drain_values_0,drain_values_1;
     wire drain_active_0,drain_active_1;
 
     wire other_acc_busy = comp_sel ? acc_busy_0 : acc_busy_1;
@@ -1270,74 +857,51 @@ module pe_top #(
                           && !prd_hold_1 && !prd_rd_d1_1;
 
     // Extract 16 lane_valid, 16 col_ids, 16 products from effective data
-    wire [15:0]    alv0 = eff_dat_0[`N_MAC-1:0];
-    wire [16*9-1:0] alc0 = {
-        eff_dat_0[`N_MAC+15*`PRODUCT_WIDTH+16+:9],eff_dat_0[`N_MAC+14*`PRODUCT_WIDTH+16+:9],
-        eff_dat_0[`N_MAC+13*`PRODUCT_WIDTH+16+:9],eff_dat_0[`N_MAC+12*`PRODUCT_WIDTH+16+:9],
-        eff_dat_0[`N_MAC+11*`PRODUCT_WIDTH+16+:9],eff_dat_0[`N_MAC+10*`PRODUCT_WIDTH+16+:9],
-        eff_dat_0[`N_MAC+9 *`PRODUCT_WIDTH+16+:9],eff_dat_0[`N_MAC+8 *`PRODUCT_WIDTH+16+:9],
-        eff_dat_0[`N_MAC+7 *`PRODUCT_WIDTH+16+:9],eff_dat_0[`N_MAC+6 *`PRODUCT_WIDTH+16+:9],
-        eff_dat_0[`N_MAC+5 *`PRODUCT_WIDTH+16+:9],eff_dat_0[`N_MAC+4 *`PRODUCT_WIDTH+16+:9],
-        eff_dat_0[`N_MAC+3 *`PRODUCT_WIDTH+16+:9],eff_dat_0[`N_MAC+2 *`PRODUCT_WIDTH+16+:9],
-        eff_dat_0[`N_MAC+1 *`PRODUCT_WIDTH+16+:9],eff_dat_0[`N_MAC+0 *`PRODUCT_WIDTH+16+:9]};
-    wire [16*16-1:0] alp0 = {
-        eff_dat_0[`N_MAC+15*`PRODUCT_WIDTH+:16],eff_dat_0[`N_MAC+14*`PRODUCT_WIDTH+:16],
-        eff_dat_0[`N_MAC+13*`PRODUCT_WIDTH+:16],eff_dat_0[`N_MAC+12*`PRODUCT_WIDTH+:16],
-        eff_dat_0[`N_MAC+11*`PRODUCT_WIDTH+:16],eff_dat_0[`N_MAC+10*`PRODUCT_WIDTH+:16],
-        eff_dat_0[`N_MAC+9 *`PRODUCT_WIDTH+:16],eff_dat_0[`N_MAC+8 *`PRODUCT_WIDTH+:16],
-        eff_dat_0[`N_MAC+7 *`PRODUCT_WIDTH+:16],eff_dat_0[`N_MAC+6 *`PRODUCT_WIDTH+:16],
-        eff_dat_0[`N_MAC+5 *`PRODUCT_WIDTH+:16],eff_dat_0[`N_MAC+4 *`PRODUCT_WIDTH+:16],
-        eff_dat_0[`N_MAC+3 *`PRODUCT_WIDTH+:16],eff_dat_0[`N_MAC+2 *`PRODUCT_WIDTH+:16],
-        eff_dat_0[`N_MAC+1 *`PRODUCT_WIDTH+:16],eff_dat_0[`N_MAC+0 *`PRODUCT_WIDTH+:16]};
-    wire [15:0]    alv1 = eff_dat_1[`N_MAC-1:0];
-    wire [16*9-1:0] alc1 = {
-        eff_dat_1[`N_MAC+15*`PRODUCT_WIDTH+16+:9],eff_dat_1[`N_MAC+14*`PRODUCT_WIDTH+16+:9],
-        eff_dat_1[`N_MAC+13*`PRODUCT_WIDTH+16+:9],eff_dat_1[`N_MAC+12*`PRODUCT_WIDTH+16+:9],
-        eff_dat_1[`N_MAC+11*`PRODUCT_WIDTH+16+:9],eff_dat_1[`N_MAC+10*`PRODUCT_WIDTH+16+:9],
-        eff_dat_1[`N_MAC+9 *`PRODUCT_WIDTH+16+:9],eff_dat_1[`N_MAC+8 *`PRODUCT_WIDTH+16+:9],
-        eff_dat_1[`N_MAC+7 *`PRODUCT_WIDTH+16+:9],eff_dat_1[`N_MAC+6 *`PRODUCT_WIDTH+16+:9],
-        eff_dat_1[`N_MAC+5 *`PRODUCT_WIDTH+16+:9],eff_dat_1[`N_MAC+4 *`PRODUCT_WIDTH+16+:9],
-        eff_dat_1[`N_MAC+3 *`PRODUCT_WIDTH+16+:9],eff_dat_1[`N_MAC+2 *`PRODUCT_WIDTH+16+:9],
-        eff_dat_1[`N_MAC+1 *`PRODUCT_WIDTH+16+:9],eff_dat_1[`N_MAC+0 *`PRODUCT_WIDTH+16+:9]};
-    wire [16*16-1:0] alp1 = {
-        eff_dat_1[`N_MAC+15*`PRODUCT_WIDTH+:16],eff_dat_1[`N_MAC+14*`PRODUCT_WIDTH+:16],
-        eff_dat_1[`N_MAC+13*`PRODUCT_WIDTH+:16],eff_dat_1[`N_MAC+12*`PRODUCT_WIDTH+:16],
-        eff_dat_1[`N_MAC+11*`PRODUCT_WIDTH+:16],eff_dat_1[`N_MAC+10*`PRODUCT_WIDTH+:16],
-        eff_dat_1[`N_MAC+9 *`PRODUCT_WIDTH+:16],eff_dat_1[`N_MAC+8 *`PRODUCT_WIDTH+:16],
-        eff_dat_1[`N_MAC+7 *`PRODUCT_WIDTH+:16],eff_dat_1[`N_MAC+6 *`PRODUCT_WIDTH+:16],
-        eff_dat_1[`N_MAC+5 *`PRODUCT_WIDTH+:16],eff_dat_1[`N_MAC+4 *`PRODUCT_WIDTH+:16],
-        eff_dat_1[`N_MAC+3 *`PRODUCT_WIDTH+:16],eff_dat_1[`N_MAC+2 *`PRODUCT_WIDTH+:16],
-        eff_dat_1[`N_MAC+1 *`PRODUCT_WIDTH+:16],eff_dat_1[`N_MAC+0 *`PRODUCT_WIDTH+:16]};
+    wire [`N_MAC-1:0]    alv0 = eff_dat_0[`N_MAC-1:0];
+    wire [`N_MAC-1:0]    alv1 = eff_dat_1[`N_MAC-1:0];
+    wire [`N_MAC*9-1:0]  alc0, alc1;
+    wire [`N_MAC*16-1:0] alp0, alp1;
+    genvar al;
+    generate for (al=0; al<`N_MAC; al=al+1) begin: g_acc_lane
+        assign alc0[al*9 +: 9] = eff_dat_0[`N_MAC + al*`PRODUCT_WIDTH + 16 +: 9];
+        assign alp0[al*16+:16] = eff_dat_0[`N_MAC + al*`PRODUCT_WIDTH +: 16];
+        assign alc1[al*9 +: 9] = eff_dat_1[`N_MAC + al*`PRODUCT_WIDTH + 16 +: 9];
+        assign alp1[al*16+:16] = eff_dat_1[`N_MAC + al*`PRODUCT_WIDTH +: 16];
+    end endgenerate
 
     // Per-bank scatter FIFO depth is the `BANK_FIFO_DEPTH knob (LUT vs throughput;
     // see defines.vh).  LOG is derived so only the one define needs setting.
-    row_accumulator_16bank #(
-        .OUT_COLS(512),.COL_W(9),.PROD_W(16),.ACC_W(16),.EPOCH_W(16),
+    // Accumulator bank-count follows N_MAC (8 or 16): row_accumulator_<N_MAC>bank.
+    // Same block name (g_acc) in both arms keeps the u_row_acc_* hierarchy stable.
+    `define ACC_PARAMS .OUT_COLS(512),.COL_W(9),.PROD_W(16),.ACC_W(16),.EPOCH_W(16), \
         .BANK_FIFO_DEPTH(`BANK_FIFO_DEPTH),.BANK_FIFO_LOG($clog2(`BANK_FIFO_DEPTH)),.ROW_W(`A_ROW_ADDR_BITS)
-    ) u_row_acc_0 (
-        .clk(aclk),.rst_n(aresetn),
-        .row_start((state==PE_CLEAR_ACC)&&!comp_sel),.row_id_in(row_idx),.drain_cols(N),
-        .row_input_done(acc_inp_done_0),.busy(acc_busy_0),.row_done(acc_row_done_0),
-        .issue_valid(eff_valid_0),.issue_ready(acc_issue_ready_0),
-        .lane_valid(alv0),.lane_col_id(alc0),.lane_product(alp0),
-        .drain_valid(drain_valid_0),.drain_gaddr(drain_gaddr_0),
-        .drain_row_id(drain_row_id_0),.drain_values(drain_values_0),
+    `define ACC0_PORTS \
+        .clk(aclk),.rst_n(aresetn), \
+        .row_start((state==PE_CLEAR_ACC)&&!comp_sel),.row_id_in(row_idx),.drain_cols(N), \
+        .row_input_done(acc_inp_done_0),.busy(acc_busy_0),.row_done(acc_row_done_0), \
+        .issue_valid(eff_valid_0),.issue_ready(acc_issue_ready_0), \
+        .lane_valid(alv0),.lane_col_id(alc0),.lane_product(alp0), \
+        .drain_valid(drain_valid_0),.drain_gaddr(drain_gaddr_0), \
+        .drain_row_id(drain_row_id_0),.drain_values(drain_values_0), \
         .drain_ready(1'b1),.drain_active(drain_active_0)
-    );
-
-    row_accumulator_16bank #(
-        .OUT_COLS(512),.COL_W(9),.PROD_W(16),.ACC_W(16),.EPOCH_W(16),
-        .BANK_FIFO_DEPTH(`BANK_FIFO_DEPTH),.BANK_FIFO_LOG($clog2(`BANK_FIFO_DEPTH)),.ROW_W(`A_ROW_ADDR_BITS)
-    ) u_row_acc_1 (
-        .clk(aclk),.rst_n(aresetn),
-        .row_start((state==PE_CLEAR_ACC)&&comp_sel),.row_id_in(row_idx),.drain_cols(N),
-        .row_input_done(acc_inp_done_1),.busy(acc_busy_1),.row_done(acc_row_done_1),
-        .issue_valid(eff_valid_1),.issue_ready(acc_issue_ready_1),
-        .lane_valid(alv1),.lane_col_id(alc1),.lane_product(alp1),
-        .drain_valid(drain_valid_1),.drain_gaddr(drain_gaddr_1),
-        .drain_row_id(drain_row_id_1),.drain_values(drain_values_1),
+    `define ACC1_PORTS \
+        .clk(aclk),.rst_n(aresetn), \
+        .row_start((state==PE_CLEAR_ACC)&&comp_sel),.row_id_in(row_idx),.drain_cols(N), \
+        .row_input_done(acc_inp_done_1),.busy(acc_busy_1),.row_done(acc_row_done_1), \
+        .issue_valid(eff_valid_1),.issue_ready(acc_issue_ready_1), \
+        .lane_valid(alv1),.lane_col_id(alc1),.lane_product(alp1), \
+        .drain_valid(drain_valid_1),.drain_gaddr(drain_gaddr_1), \
+        .drain_row_id(drain_row_id_1),.drain_values(drain_values_1), \
         .drain_ready(1'b1),.drain_active(drain_active_1)
-    );
+    // `ifdef (not generate) so u_row_acc_* stay directly under pe_top (stable
+    // hierarchy for testbench probes).  ACC_8BANK is set in defines.vh when N_MAC==8.
+`ifdef ACC_8BANK
+    row_accumulator_8bank  #(`ACC_PARAMS) u_row_acc_0 (`ACC0_PORTS);
+    row_accumulator_8bank  #(`ACC_PARAMS) u_row_acc_1 (`ACC1_PORTS);
+`else
+    row_accumulator_16bank #(`ACC_PARAMS) u_row_acc_0 (`ACC0_PORTS);
+    row_accumulator_16bank #(`ACC_PARAMS) u_row_acc_1 (`ACC1_PORTS);
+`endif
 
     //=========================================================================
     // C bank — independent on-chip C storage (separate from A/B buffers).
@@ -1358,7 +922,7 @@ module pe_top #(
     //   The two ping-pong accumulators drain serially (guarded by
     //   other_acc_busy), so a priority mux on drain_active is race-free.
     //=========================================================================
-    localparam C_BANK_ADDR_W = `C_ROW_ADDR_BITS + 5;     // local_row + gaddr
+    localparam C_BANK_ADDR_W = `C_ROW_ADDR_BITS + GADDR_W;     // local_row + gaddr
     localparam C_BANK_DEPTH  = 1 << C_BANK_ADDR_W;
 
     // C_bank is declared per-sub-bank INSIDE the generate loop below so each is
@@ -1377,20 +941,20 @@ module pe_top #(
     wire                        c_wr_sel0 = drain_active_0;
     wire [`C_ROW_ADDR_BITS-1:0] c_wr_row  = c_wr_sel0 ? drain_row_id_0[`C_ROW_ADDR_BITS-1:0]
                                                       : drain_row_id_1[`C_ROW_ADDR_BITS-1:0];
-    wire [4:0]                  c_wr_gaddr = c_wr_sel0 ? drain_gaddr_0  : drain_gaddr_1;
-    wire [15:0]                 c_wr_dv    = c_wr_sel0 ? drain_valid_0  : drain_valid_1;
-    wire [16*16-1:0]            c_wr_dat   = c_wr_sel0 ? drain_values_0 : drain_values_1;
+    wire [GADDR_W-1:0]          c_wr_gaddr = c_wr_sel0 ? drain_gaddr_0  : drain_gaddr_1;
+    wire [`N_MAC-1:0]           c_wr_dv    = c_wr_sel0 ? drain_valid_0  : drain_valid_1;
+    wire [`N_MAC*16-1:0]        c_wr_dat   = c_wr_sel0 ? drain_values_0 : drain_values_1;
     wire [C_BANK_ADDR_W-1:0]    c_wr_addr  = {c_wr_row, c_wr_gaddr};
 
     // Registered map read (same address timing as the C bank data read).
     always @(posedge aclk) begin
         if (c_rd_en)
-            c_rd_row <= C_row_map[c_rd_addr[C_BANK_ADDR_W-1:5]];
+            c_rd_row <= C_row_map[c_rd_addr[C_BANK_ADDR_W-1:GADDR_W]];
     end
 
     genvar cb;
     generate
-        for (cb = 0; cb < 16; cb = cb + 1) begin : gen_c_bank
+        for (cb = 0; cb < `N_MAC; cb = cb + 1) begin : gen_c_bank
             reg [15:0] mem [0:C_BANK_DEPTH-1];   // one sub-bank (own variable)
             always @(posedge aclk) begin
                 if (c_wr_en)
@@ -1460,6 +1024,49 @@ module pe_top #(
             PE_DONE:               state_next=PE_DONE;
         endcase
     end
+
+    //=========================================================================
+    // A banks: per-bank BRAM (val 16b / col 9b), col%N_MAC banked.  Write demux
+    // by load address; single registered read into packed a_*_bank_r.
+    //=========================================================================
+    genvar ab;
+    generate for (ab=0; ab<`N_MAC; ab=ab+1) begin: gen_a_bank
+        (* ram_style="block" *) reg [`DATA_WIDTH-1:0] vmem [0:A_BANK_DEPTH-1];
+        (* ram_style="block" *) reg [8:0]             cmem [0:A_BANK_DEPTH-1];
+        always @(posedge aclk) begin
+            if (a_val_we && a_val_waddr[`N_MAC_BITS-1:0]==ab)
+                vmem[a_val_waddr[`A_NNZ_ADDR_BITS-1:`N_MAC_BITS]] <= a_val_wdata;
+            if (a_col_we && a_col_waddr[`N_MAC_BITS-1:0]==ab)
+                cmem[a_col_waddr[`A_NNZ_ADDR_BITS-1:`N_MAC_BITS]] <= a_col_wdata;
+            a_val_bank_r[ab*16 +: 16] <= vmem[a_rd_baddr];
+            a_col_bank_r[ab*16 +: 16] <= cmem[a_rd_baddr];
+        end
+    end endgenerate
+
+    //=========================================================================
+    // B banks: per-bank BRAM.  Port A = write(load) OR gen-prefetch read(compute)
+    // at ONE muxed address -> single RW BRAM port (they never overlap, no dup).
+    // Port B = executor / elementwise read.
+    //=========================================================================
+    genvar bb;
+    generate for (bb=0; bb<`N_MAC; bb=bb+1) begin: gen_b_bank
+        (* ram_style="block" *) reg [8:0]             cmem [0:B_BANK_DEPTH-1];
+        (* ram_style="block" *) reg [`DATA_WIDTH-1:0] vmem [0:B_BANK_DEPTH-1];
+        wire [13:0] colA = (b_col_we && b_col_waddr[`N_MAC_BITS-1:0]==bb)
+                         ? b_col_waddr[`B_NNZ_ADDR_BITS-1:`N_MAC_BITS] : gen_bg_pf[bb];
+        wire [13:0] valA = (b_val_we && b_val_waddr[`N_MAC_BITS-1:0]==bb)
+                         ? b_val_waddr[`B_NNZ_ADDR_BITS-1:`N_MAC_BITS] : gen_bg_pf[bb];
+        always @(posedge aclk) begin
+            if (b_col_we && b_col_waddr[`N_MAC_BITS-1:0]==bb) cmem[colA] <= b_col_wdata;
+            else if (gen_b_read_en) bc[bb] <= cmem[colA];
+            if (b_val_we && b_val_waddr[`N_MAC_BITS-1:0]==bb) vmem[valA] <= b_val_wdata;
+            else if (gen_b_read_en) bv[bb] <= vmem[valA];
+        end
+        always @(posedge aclk) begin
+            ebc[bb] <= cmem[op_mode ? elem_b_addr : exec_bg[bb]];
+            ebv[bb] <= vmem[op_mode ? elem_b_addr : exec_bg[bb]];
+        end
+    end endgenerate
 
 `ifdef SIMULATION
     // MAC-idle profiler: categorize why no group is issued in STREAM_INSTRS.

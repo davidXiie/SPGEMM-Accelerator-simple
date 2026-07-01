@@ -43,7 +43,9 @@ module row_accumulator_8bank #(
     output wire [7:0]             drain_valid,
     output wire [COL_W-4:0]       drain_gaddr,   // group_addr (BANK_ADDR_W bits)
     output wire [ROW_W-1:0]       drain_row_id,
-    output wire [8*ACC_W-1:0]     drain_values   // {bank7,..,bank0}
+    output wire [8*ACC_W-1:0]     drain_values,  // {bank7,..,bank0}
+    input  wire                   drain_ready,   // consumer backpressure (tie 1 = always ready)
+    output wire                   drain_active
 );
 
     localparam BANK_DEPTH  = OUT_COLS / 8;
@@ -65,6 +67,9 @@ module row_accumulator_8bank #(
     reg               clr_triggered;
 
     reg [BANK_ADDR_W-1:0] group_addr;
+    reg                   start_pending;
+    reg [ROW_W-1:0]       pending_row_id;
+    assign drain_active = (state == S_DRAIN);
 
     //=========================================================================
     // Bundle routing — bank = col_id[2:0]
@@ -344,26 +349,36 @@ module row_accumulator_8bank #(
     //=========================================================================
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
-            state            <= S_IDLE;
+            state            <= S_CLEAR_TAGS;   // scrub tag arrays on every reset
             cur_row_id       <= {ROW_W{1'b0}};
             row_epoch        <= {{(EPOCH_W-1){1'b0}}, 1'b1};
             input_done_latch <= 1'b0;
             clr_triggered    <= 1'b0;
             group_addr       <= {BANK_ADDR_W{1'b0}};
-            busy             <= 1'b0;
+            busy             <= 1'b1;            // stay busy until the scrub finishes (->S_IDLE)
             row_done         <= 1'b0;
+            start_pending    <= 1'b0;
+            pending_row_id   <= {ROW_W{1'b0}};
         end else begin
             row_done <= 1'b0;
+
+            // Capture a row_start arriving while not in S_IDLE (e.g. during the
+            // post-reset tag-clear walk) so the first row is never dropped.
+            if (row_start && state != S_IDLE) begin
+                start_pending  <= 1'b1;
+                pending_row_id <= row_id_in;
+            end
 
             case (state)
                 S_IDLE: begin
                     busy             <= 1'b0;
                     input_done_latch <= 1'b0;
-                    if (row_start) begin
-                        cur_row_id <= row_id_in;
-                        group_addr <= {BANK_ADDR_W{1'b0}};
-                        busy       <= 1'b1;
-                        state      <= S_ACCUM;
+                    if (row_start || start_pending) begin
+                        cur_row_id    <= row_start ? row_id_in : pending_row_id;
+                        group_addr    <= {BANK_ADDR_W{1'b0}};
+                        busy          <= 1'b1;
+                        start_pending <= 1'b0;
+                        state         <= S_ACCUM;
                     end
                 end
 
@@ -380,10 +395,12 @@ module row_accumulator_8bank #(
                 end
 
                 S_DRAIN: begin
-                    if (last_group)
-                        state <= S_DONE;
-                    else
-                        group_addr <= group_addr + {{(BANK_ADDR_W-1){1'b0}}, 1'b1};
+                    if (drain_ready) begin
+                        if (last_group)
+                            state <= S_DONE;
+                        else
+                            group_addr <= group_addr + {{(BANK_ADDR_W-1){1'b0}}, 1'b1};
+                    end
                 end
 
                 S_DONE: begin

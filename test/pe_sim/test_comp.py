@@ -405,7 +405,7 @@ async def run_pe(dut, rc, Ad, N, to=10000000):
     dut.row_count.value = rc
     dut.c_rd_en.value = 0; dut.c_rd_addr.value = 0
     dut.start.value=1; await RisingEdge(dut.aclk); dut.start.value=0
-    dc=0; lane_busy=[0]*16; rmw_busy=[0]*16
+    dc=0; _NM=len(dut.u_pe.mac_lane_valid); lane_busy=[0]*_NM; rmw_busy=[0]*_NM
     # PE state names (indices match pe_top.v localparams)
     PE_STATE_NAMES = ['IDLE','LOAD_ROW_DESC','CLEAR_ACC','STREAM_INSTRS',
                       'WAIT_TASK_DRAIN','WAIT_PRODUCT_DRAIN','NEXT_ROW','DONE']
@@ -427,38 +427,9 @@ async def run_pe(dut, rc, Ad, N, to=10000000):
     exec_state_sig  = dut.u_pe.exec_state
     exec_safe_sig   = dut.u_pe.exec_prod_safe
     ptr_empty_sig   = dut.u_pe.ptr_fifo_empty
-    rmw_sigs_0 = [dut.u_pe.u_row_acc_0.u_bank0.rmw_busy,
-                  dut.u_pe.u_row_acc_0.u_bank1.rmw_busy,
-                  dut.u_pe.u_row_acc_0.u_bank2.rmw_busy,
-                  dut.u_pe.u_row_acc_0.u_bank3.rmw_busy,
-                  dut.u_pe.u_row_acc_0.u_bank4.rmw_busy,
-                  dut.u_pe.u_row_acc_0.u_bank5.rmw_busy,
-                  dut.u_pe.u_row_acc_0.u_bank6.rmw_busy,
-                  dut.u_pe.u_row_acc_0.u_bank7.rmw_busy,
-                  dut.u_pe.u_row_acc_0.u_bank8.rmw_busy,
-                  dut.u_pe.u_row_acc_0.u_bank9.rmw_busy,
-                  dut.u_pe.u_row_acc_0.u_bank10.rmw_busy,
-                  dut.u_pe.u_row_acc_0.u_bank11.rmw_busy,
-                  dut.u_pe.u_row_acc_0.u_bank12.rmw_busy,
-                  dut.u_pe.u_row_acc_0.u_bank13.rmw_busy,
-                  dut.u_pe.u_row_acc_0.u_bank14.rmw_busy,
-                  dut.u_pe.u_row_acc_0.u_bank15.rmw_busy]
-    rmw_sigs_1 = [dut.u_pe.u_row_acc_1.u_bank0.rmw_busy,
-                  dut.u_pe.u_row_acc_1.u_bank1.rmw_busy,
-                  dut.u_pe.u_row_acc_1.u_bank2.rmw_busy,
-                  dut.u_pe.u_row_acc_1.u_bank3.rmw_busy,
-                  dut.u_pe.u_row_acc_1.u_bank4.rmw_busy,
-                  dut.u_pe.u_row_acc_1.u_bank5.rmw_busy,
-                  dut.u_pe.u_row_acc_1.u_bank6.rmw_busy,
-                  dut.u_pe.u_row_acc_1.u_bank7.rmw_busy,
-                  dut.u_pe.u_row_acc_1.u_bank8.rmw_busy,
-                  dut.u_pe.u_row_acc_1.u_bank9.rmw_busy,
-                  dut.u_pe.u_row_acc_1.u_bank10.rmw_busy,
-                  dut.u_pe.u_row_acc_1.u_bank11.rmw_busy,
-                  dut.u_pe.u_row_acc_1.u_bank12.rmw_busy,
-                  dut.u_pe.u_row_acc_1.u_bank13.rmw_busy,
-                  dut.u_pe.u_row_acc_1.u_bank14.rmw_busy,
-                  dut.u_pe.u_row_acc_1.u_bank15.rmw_busy]
+    NBANK = len(dut.u_pe.u_row_acc_0.drain_valid)   # accumulator banks (= N_MAC)
+    rmw_sigs_0 = [getattr(dut.u_pe.u_row_acc_0, f"u_bank{i}").rmw_busy for i in range(NBANK)]
+    rmw_sigs_1 = [getattr(dut.u_pe.u_row_acc_1, f"u_bank{i}").rmw_busy for i in range(NBANK)]
     cp = {}
     prev_gs = -1; prev_s = -1
     task_cnt_at_row_done = []; wait_task_drain_cyc = []
@@ -475,7 +446,7 @@ async def run_pe(dut, rc, Ad, N, to=10000000):
         gs  = int(gen_state.value)
         state_cycles[s] += 1
         if gs < 5: gen_state_cyc[gs] += 1
-        for i in range(16):
+        for i in range(NBANK):
             if (mlv >> i) & 1: lane_busy[i] += 1
             if int(rmw_sigs_0[i].value) or int(rmw_sigs_1[i].value): rmw_busy[i] += 1
         # MAC idle within STREAM_INSTRS
@@ -548,20 +519,22 @@ async def read_c_bank(c_rd_en, c_rd_addr, c_rd_data, c_rd_row, clk, rc, N):
     them as 0.  The host learns row placement from c_rd_row, not the partition.
     """
     cp = {}
-    ngroups = (N + 15) // 16
+    NB      = len(c_rd_data) // 16                      # drain lanes/group (= N_MAC)
+    GADDR_W = (MAX_N.bit_length() - 1) - (NB.bit_length() - 1)   # = log2(MAX_N/NB)
+    ngroups = (N + NB - 1) // NB
     c_rd_en.value = 1
     for local in range(rc):
         for g in range(ngroups):
-            c_rd_addr.value = (local << 5) | g
+            c_rd_addr.value = (local << GADDR_W) | g
             await RisingEdge(clk)          # latch address
             await RisingEdge(clk)          # registered data now valid
             r    = int(c_rd_row.value)     # global C row for this local slot
             vals = int(c_rd_data.value)
-            for b in range(16):
+            for b in range(NB):
                 fp16_bits = (vals >> (b * 16)) & 0xFFFF
                 if fp16_bits == 0:
                     continue
-                j = g * 16 + b
+                j = g * NB + b
                 if j < N:
                     cp[r * C_ROW_STRIDE + j] = fp16_from_bits(fp16_bits)
     c_rd_en.value = 0
@@ -656,13 +629,13 @@ async def test_comp_case1_p0(dut):
     dut._log.info("  Total cycles:      %d", cyc)
     dut._log.info("  Total MAC ops:     %d  (exact)", total_macs)
     dut._log.info("  Per-lane MAC utilization (mac_lane_valid):")
-    for i in range(16):
+    for i in range(len(lane_busy)):
         dut._log.info("    Lane %d: %6d busy cycles  →  %.2f%%", i, lane_busy[i], lane_utils[i])
-    dut._log.info("  Average MAC util:  %.2f%%", sum(lane_utils) / 16)
+    dut._log.info("  Average MAC util:  %.2f%%", sum(lane_utils) / len(lane_utils))
     dut._log.info("  Per-bank accumulator RMW utilization (rmw_busy):")
-    for i in range(16):
+    for i in range(len(lane_busy)):
         dut._log.info("    Bank %d: %6d RMW cycles   →  %.2f%%", i, rmw_busy[i], rmw_utils[i])
-    dut._log.info("  Average RMW util:  %.2f%%", sum(rmw_utils) / 16)
+    dut._log.info("  Average RMW util:  %.2f%%", sum(rmw_utils) / len(rmw_utils))
     dut._log.info("=" * 70)
     dut._log.info("COMPETITION TEST PASSED")
 
@@ -756,13 +729,13 @@ async def test_comp_case1_p1(dut):
     dut._log.info("  Total cycles:      %d", cyc)
     dut._log.info("  Total MAC ops:     %d  (exact)", total_macs)
     dut._log.info("  Per-lane MAC utilization (mac_lane_valid):")
-    for i in range(16):
+    for i in range(len(lane_busy)):
         dut._log.info("    Lane %d: %6d busy cycles  →  %.2f%%", i, lane_busy[i], lane_utils[i])
-    dut._log.info("  Average MAC util:  %.2f%%", sum(lane_utils) / 16)
+    dut._log.info("  Average MAC util:  %.2f%%", sum(lane_utils) / len(lane_utils))
     dut._log.info("  Per-bank accumulator RMW utilization (rmw_busy):")
-    for i in range(16):
+    for i in range(len(lane_busy)):
         dut._log.info("    Bank %d: %6d RMW cycles   →  %.2f%%", i, rmw_busy[i], rmw_utils[i])
-    dut._log.info("  Average RMW util:  %.2f%%", sum(rmw_utils) / 16)
+    dut._log.info("  Average RMW util:  %.2f%%", sum(rmw_utils) / len(rmw_utils))
     dut._log.info("=" * 70)
     dut._log.info("COMPETITION TEST PASSED")
 
@@ -926,40 +899,11 @@ async def run_cluster(dut, row_counts, n_pe, pe_desc, N, to=50000000):
     dc = 0
 
     mac_sigs = [dut.u_cluster.gen_pe[pid].u_pe.mac_lane_valid for pid in range(n_pe)]
-    rmw_acc0 = [[dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank0.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank1.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank2.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank3.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank4.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank5.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank6.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank7.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank8.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank9.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank10.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank11.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank12.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank13.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank14.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0.u_bank15.rmw_busy]
-                for pid in range(n_pe)]
-    rmw_acc1 = [[dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank0.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank1.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank2.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank3.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank4.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank5.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank6.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank7.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank8.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank9.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank10.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank11.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank12.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank13.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank14.rmw_busy,
-                 dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1.u_bank15.rmw_busy]
-                for pid in range(n_pe)]
+    NBANK = len(dut.u_cluster.gen_pe[0].u_pe.u_row_acc_0.drain_valid)   # = N_MAC
+    rmw_acc0 = [[getattr(dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_0, f"u_bank{i}").rmw_busy
+                 for i in range(NBANK)] for pid in range(n_pe)]
+    rmw_acc1 = [[getattr(dut.u_cluster.gen_pe[pid].u_pe.u_row_acc_1, f"u_bank{i}").rmw_busy
+                 for i in range(NBANK)] for pid in range(n_pe)]
 
     drain_sigs = []
     for pid in range(n_pe):
@@ -969,16 +913,16 @@ async def run_cluster(dut, row_counts, n_pe, pe_desc, N, to=50000000):
             pe.drain_valid_1, pe.drain_gaddr_1, pe.drain_row_id_1, pe.drain_values_1,
         ))
     cp = {}
-    lane_busy = [0] * 16
-    rmw_busy  = [0] * 16
+    lane_busy = [0] * NBANK
+    rmw_busy  = [0] * NBANK
 
     for cy in range(to):
         await RisingEdge(dut.aclk)
         for pid in range(n_pe):
             mlv = int(mac_sigs[pid].value)
-            for i in range(16):
+            for i in range(NBANK):
                 if (mlv >> i) & 1: lane_busy[i] += 1
-            for i in range(16):
+            for i in range(NBANK):
                 if int(rmw_acc0[pid][i].value) or int(rmw_acc1[pid][i].value):
                     rmw_busy[i] += 1
         if int(dut.done.value): dc=cy; break
@@ -991,22 +935,24 @@ async def run_cluster(dut, row_counts, n_pe, pe_desc, N, to=50000000):
     # correct regardless of the build's C_ROW_ADDR_BITS override.
     C_RD_ADDR_W  = len(dut.c_rd_addr) // n_pe
     MAX_DIM_BITS = len(dut.c_rd_row)  // n_pe
-    ngroups = (N + 15) // 16
+    NB      = (len(dut.c_rd_data) // n_pe) // 16          # drain lanes/group (= N_MAC)
+    GADDR_W = (MAX_N.bit_length() - 1) - (NB.bit_length() - 1)   # = log2(MAX_N/NB)
+    ngroups = (N + NB - 1) // NB
     for pid in range(n_pe):
         for local in range(row_counts[pid]):
             for g in range(ngroups):
                 dut.c_rd_en.value   = 1 << pid
-                dut.c_rd_addr.value = ((local << 5) | g) << (pid * C_RD_ADDR_W)
+                dut.c_rd_addr.value = ((local << GADDR_W) | g) << (pid * C_RD_ADDR_W)
                 await RisingEdge(dut.aclk)   # latch address
                 await RisingEdge(dut.aclk)   # registered data valid
                 # Only PE pid's slice is driven; others may be X → x/z resolve to 0.
                 r    = slice_bits(dut.c_rd_row.value,  pid * MAX_DIM_BITS, MAX_DIM_BITS)
-                vals = slice_bits(dut.c_rd_data.value, pid * 16 * 16, 16 * 16)
-                for b in range(16):
+                vals = slice_bits(dut.c_rd_data.value, pid * NB * 16, NB * 16)
+                for b in range(NB):
                     fp16_bits = (vals >> (b * 16)) & 0xFFFF
                     if fp16_bits == 0:
                         continue
-                    j = g * 16 + b
+                    j = g * NB + b
                     if j < N:
                         cp[r * C_ROW_STRIDE + j] = fp16_from_bits(fp16_bits)
     dut.c_rd_en.value = 0
@@ -1063,13 +1009,13 @@ async def test_comp_case1_cluster(dut):
     dut._log.info("  Cluster wall-time cycles:  %d", cyc)
     dut._log.info("  Total MAC ops:             %d", total_macs)
     dut._log.info("  Per-lane MAC utilization (summed across %d PEs):", n_pe)
-    for i in range(16):
+    for i in range(len(lane_busy)):
         dut._log.info("    Lane %d: %7d PE-cycles  →  %.2f%%", i, lane_busy[i], lane_utils[i])
-    dut._log.info("  Average MAC util:          %.2f%%", sum(lane_utils) / 16)
+    dut._log.info("  Average MAC util:          %.2f%%", sum(lane_utils) / len(lane_utils))
     dut._log.info("  Per-bank RMW utilization (summed across %d PEs):", n_pe)
-    for i in range(16):
+    for i in range(len(lane_busy)):
         dut._log.info("    Bank %d: %7d PE-cycles  →  %.2f%%", i, rmw_busy[i], rmw_utils[i])
-    dut._log.info("  Average RMW util:          %.2f%%", sum(rmw_utils) / 16)
+    dut._log.info("  Average RMW util:          %.2f%%", sum(rmw_utils) / len(rmw_utils))
     dut._log.info("=" * 70)
     dut._log.info("%d-PE CLUSTER TEST PASSED", n_pe)
 
@@ -1115,8 +1061,9 @@ async def test_comp_tiled_cluster(dut):
 
     cp_full = {}
     tot_cyc = 0
-    lane_busy_sum = [0] * 16
-    rmw_busy_sum  = [0] * 16
+    _NM = len(dut.u_cluster.gen_pe[0].u_pe.mac_lane_valid)
+    lane_busy_sum = [0] * _NM
+    rmw_busy_sum  = [0] * _NM
     for t in range(T):
         Bd_t, Bc_t, Bv_t, lo, width = slice_b_columns(Bd, Bc_hw, Bv, K2, N, t, T)
         await reset_pulse_cluster(dut)
@@ -1125,7 +1072,7 @@ async def test_comp_tiled_cluster(dut):
         await LBdesc_cluster(dut, Bd_t)
         cp_t, cyc, lane_busy, rmw_busy = await run_cluster(dut, row_counts, n_pe, pe_desc, width)
         tot_cyc += cyc
-        for i in range(16):
+        for i in range(len(lane_busy)):
             lane_busy_sum[i] += lane_busy[i]
             rmw_busy_sum[i]  += rmw_busy[i]
         for key, val in cp_t.items():
@@ -1151,13 +1098,13 @@ async def test_comp_tiled_cluster(dut):
     dut._log.info("  Total wall-time cycles (sum of %d tiles):  %d", T, tot_cyc)
     dut._log.info("  Total MAC ops:                             %d", total_macs)
     dut._log.info("  Per-lane MAC utilization (summed across %d PEs x %d tiles):", n_pe, T)
-    for i in range(16):
+    for i in range(len(lane_busy)):
         dut._log.info("    Lane %d: %8d PE-cycles  →  %.2f%%", i, lane_busy_sum[i], lane_utils[i])
-    dut._log.info("  Average MAC util:                          %.2f%%", sum(lane_utils) / 16)
+    dut._log.info("  Average MAC util:                          %.2f%%", sum(lane_utils) / len(lane_utils))
     dut._log.info("  Per-bank RMW utilization (summed across %d PEs x %d tiles):", n_pe, T)
-    for i in range(16):
+    for i in range(len(lane_busy)):
         dut._log.info("    Bank %d: %8d PE-cycles  →  %.2f%%", i, rmw_busy_sum[i], rmw_utils[i])
-    dut._log.info("  Average RMW util:                          %.2f%%", sum(rmw_utils) / 16)
+    dut._log.info("  Average RMW util:                          %.2f%%", sum(rmw_utils) / len(rmw_utils))
     dut._log.info("=" * 70)
     dut._log.info("%d-PE TILED CLUSTER TEST PASSED", n_pe)
 
@@ -1211,8 +1158,9 @@ async def test_comp_peak_cluster(dut):
 
     cp_full = {}
     tot_cyc = 0
-    lane_busy_sum = [0] * 16
-    rmw_busy_sum  = [0] * 16
+    _NM = len(dut.u_cluster.gen_pe[0].u_pe.mac_lane_valid)
+    lane_busy_sum = [0] * _NM
+    rmw_busy_sum  = [0] * _NM
     for t in range(T):
         Bd_t, Bc_t, Bv_t, lo, width = slice_b_columns(Bd, Bc_hw, Bv, K2, N, t, T)
         await reset_pulse_cluster(dut)
@@ -1221,7 +1169,7 @@ async def test_comp_peak_cluster(dut):
         await LBdesc_cluster(dut, Bd_t)
         cp_t, cyc, lane_busy, rmw_busy = await run_cluster(dut, row_counts, n_pe, pe_desc, width)
         tot_cyc += cyc
-        for i in range(16):
+        for i in range(len(lane_busy)):
             lane_busy_sum[i] += lane_busy[i]
             rmw_busy_sum[i]  += rmw_busy[i]
         for key, val in cp_t.items():
@@ -1245,8 +1193,8 @@ async def test_comp_peak_cluster(dut):
     dut._log.info("PEAK CLUSTER STATISTICS (T=%d, %d PEs):", T, n_pe)
     dut._log.info("  Total wall-time cycles (sum of %d tiles):  %d", T, tot_cyc)
     dut._log.info("  Total MAC ops:                             %d", total_macs)
-    dut._log.info("  Average MAC util:                          %.2f%%", sum(lane_utils) / 16)
-    dut._log.info("  Average RMW util:                          %.2f%%", sum(rmw_utils) / 16)
+    dut._log.info("  Average MAC util:                          %.2f%%", sum(lane_utils) / len(lane_utils))
+    dut._log.info("  Average RMW util:                          %.2f%%", sum(rmw_utils) / len(rmw_utils))
     dut._log.info("=" * 70)
     dut._log.info("%d-PE PEAK CLUSTER TEST PASSED", n_pe)
 
@@ -1296,8 +1244,8 @@ async def test_elementwise_p0(dut):
                       total_elem_ops, A_nnz, B_nnz)
         dut._log.info("  Throughput:          %.2f ops/cycle", total_elem_ops / cyc if cyc else 0)
         dut._log.info("  Avg MAC utilization: %.2f%%  (1-lane/op, theoretical max=6.25%%)",
-                      sum(lane_utils) / 16)
-        dut._log.info("  Avg RMW utilization: %.2f%%", sum(rmw_utils) / 16)
+                      sum(lane_utils) / len(lane_utils))
+        dut._log.info("  Avg RMW utilization: %.2f%%", sum(rmw_utils) / len(rmw_utils))
 
     dut._log.info("ELEMENTWISE P0 TEST PASSED")
 
@@ -1375,7 +1323,7 @@ async def test_elementwise_cluster(dut):
                       cl_total_elem_ops / cyc if cyc else 0,
                       cl_total_elem_ops / (n_pe * cyc) if cyc else 0)
         dut._log.info("  Avg MAC utilization:  %.2f%%  (1-lane/op, theoretical max=6.25%%)",
-                      sum(lane_utils) / 16)
-        dut._log.info("  Avg RMW utilization:  %.2f%%", sum(rmw_utils) / 16)
+                      sum(lane_utils) / len(lane_utils))
+        dut._log.info("  Avg RMW utilization:  %.2f%%", sum(rmw_utils) / len(rmw_utils))
 
     dut._log.info("CLUSTER ELEMENTWISE TEST PASSED")

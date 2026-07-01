@@ -22,8 +22,11 @@
 // PE & MAC Configuration
 //=============================================================================
 `define N_PE          3      // cluster size — change here to scale
-`define N_MAC         16
-`define N_MAC_BITS    4       // log2(16)
+`define N_MAC         8
+`define N_MAC_BITS    3       // log2(8)
+// Accumulator module = row_accumulator_<N_MAC>bank.  Define ACC_8BANK when N_MAC==8
+// (leave it undefined when N_MAC==16).  `ifdef in pe_top.v selects the instance.
+`define ACC_8BANK
 
 // FP16 multiplier pipeline latency (1 = registered output)
 `define MUL_LAT       1
