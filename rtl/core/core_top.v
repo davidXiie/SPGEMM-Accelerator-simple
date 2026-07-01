@@ -194,6 +194,7 @@ module core_top (
     // A Group Loader → PE A buffers
     //=========================================================================
     wire a_desc_we, a_col_we, a_val_we;
+    wire [`N_PE-1:0] a_pe_sel;          // one-hot: which PE the A load targets now
     wire [`A_ROW_ADDR_BITS-1:0] a_desc_waddr;
     wire [63:0] a_desc_wdata;
     wire [`A_NNZ_ADDR_BITS-1:0] a_col_waddr, a_val_waddr;
@@ -201,6 +202,8 @@ module core_top (
 
     a_group_loader u_a_loader (
         .start         (state == S_LOAD_A),
+        .pe_valid_mask (pe_valid_mask),
+        .pe_sel        (a_pe_sel),
         .done          (load_done_a),
         .pe_a_desc_we  (a_desc_we),
         .pe_a_desc_waddr(a_desc_waddr), .pe_a_desc_wdata(a_desc_wdata),
@@ -235,14 +238,15 @@ module core_top (
                 .row_count     (16'd16),  // TODO: from descriptor
                 .done          (pe_done_int[pe_idx]),
 
-                // A buffer load
-                .a_desc_we     (a_desc_we && pe_valid),
+                // A buffer load — ROW-PARTITIONED: route only to the PE that
+                // a_group_loader is currently loading (one-hot a_pe_sel), NOT broadcast.
+                .a_desc_we     (a_desc_we && a_pe_sel[pe_idx]),
                 .a_desc_waddr  (a_desc_waddr),
                 .a_desc_wdata  (a_desc_wdata),
-                .a_col_we      (a_col_we && pe_valid),
+                .a_col_we      (a_col_we && a_pe_sel[pe_idx]),
                 .a_col_waddr   (a_col_waddr),
                 .a_col_wdata   (a_col_wdata),
-                .a_val_we      (a_val_we && pe_valid),
+                .a_val_we      (a_val_we && a_pe_sel[pe_idx]),
                 .a_val_waddr   (a_val_waddr),
                 .a_val_wdata   (a_val_wdata),
 
