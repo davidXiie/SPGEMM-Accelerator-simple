@@ -1,0 +1,19 @@
+# ---- Simulation (Icarus / cocotb) ----
+sim_build/
+*.vvp
+*.vcd
+results.xml
+
+# ---- Python ----
+__pycache__/
+*.pyc
+
+# ---- Vivado / synthesis outputs ----
+.Xil/
+*.jou
+vivado*.log
+*.dcp
+*.rpt
+syn/*_utilization.rpt
+syn/*_util_hier.rpt
+syn/*_synth.dcp
