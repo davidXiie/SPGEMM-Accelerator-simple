@@ -549,7 +549,7 @@ async def read_c_bank(c_rd_en, c_rd_addr, c_rd_data, c_rd_row, clk, rc, N):
     them as 0.  The host learns row placement from c_rd_row, not the partition.
     """
     cp = {}
-    ngroups = (N + _NB - 1) // _NB
+    ngroups = (N + _NACC - 1) // _NACC
     c_rd_en.value = 1
     for local in range(rc):
         for g in range(ngroups):
@@ -558,11 +558,11 @@ async def read_c_bank(c_rd_en, c_rd_addr, c_rd_data, c_rd_row, clk, rc, N):
             await RisingEdge(clk)          # registered data now valid
             r    = int(c_rd_row.value)     # global C row for this local slot
             vals = int(c_rd_data.value)
-            for b in range(_NB):
+            for b in range(_NACC):
                 fp16_bits = (vals >> (b * 16)) & 0xFFFF
                 if fp16_bits == 0:
                     continue
-                j = g * _NB + b
+                j = g * _NACC + b
                 if j < N:
                     cp[r * C_ROW_STRIDE + j] = fp16_from_bits(fp16_bits)
     c_rd_en.value = 0
@@ -775,8 +775,9 @@ async def test_comp_case1_p1(dut):
 _A_NNZ_ADDR_W  = 17   # A_NNZ_ADDR_BITS (per-PE stride in the packed a_*_waddr bus)
 _DATA_W        = 16   # DATA_WIDTH (FP16 input)
 _COL_W         = 9    # log2(MAX_N=512), matches ACC_COL_W in pe_top.v
-_NB            = 32   # N_MAC: banks/MAC lanes per PE (must match defines.vh)
-_GBITS         = 9 - (_NB.bit_length() - 1)   # C gaddr width = 9 - log2(NB)
+_NB            = 32   # N_MAC: A/B banks / MAC lanes per PE (B storage banking)
+_NACC          = 32   # N_ACC_BANK: accumulator banks / C sub-banks (C read width)
+_GBITS         = 9 - (_NACC.bit_length() - 1)   # C gaddr width = 9 - log2(N_ACC_BANK)
 #=========================================================================
 
 def partition_a(Ad, Ac, Av, M, n_pe, Bd=None):
@@ -994,7 +995,7 @@ async def run_cluster(dut, row_counts, n_pe, pe_desc, N, to=50000000):
     # correct regardless of the build's C_ROW_ADDR_BITS override.
     C_RD_ADDR_W  = len(dut.c_rd_addr) // n_pe
     MAX_DIM_BITS = len(dut.c_rd_row)  // n_pe
-    ngroups = (N + _NB - 1) // _NB
+    ngroups = (N + _NACC - 1) // _NACC
     for pid in range(n_pe):
         for local in range(row_counts[pid]):
             for g in range(ngroups):
@@ -1004,12 +1005,12 @@ async def run_cluster(dut, row_counts, n_pe, pe_desc, N, to=50000000):
                 await RisingEdge(dut.aclk)   # registered data valid
                 # Only PE pid's slice is driven; others may be X → x/z resolve to 0.
                 r    = slice_bits(dut.c_rd_row.value,  pid * MAX_DIM_BITS, MAX_DIM_BITS)
-                vals = slice_bits(dut.c_rd_data.value, pid * _NB * 16, _NB * 16)
-                for b in range(_NB):
+                vals = slice_bits(dut.c_rd_data.value, pid * _NACC * 16, _NACC * 16)
+                for b in range(_NACC):
                     fp16_bits = (vals >> (b * 16)) & 0xFFFF
                     if fp16_bits == 0:
                         continue
-                    j = g * _NB + b
+                    j = g * _NACC + b
                     if j < N:
                         cp[r * C_ROW_STRIDE + j] = fp16_from_bits(fp16_bits)
     dut.c_rd_en.value = 0

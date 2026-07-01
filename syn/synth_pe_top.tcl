@@ -2,12 +2,12 @@
 # Run from repo root:  vivado -mode batch -source syn/synth_pe_top.tcl
 
 # ---- read sources (pe_top deps) ----
-read_verilog rtl/core/fp16_mul.v
-read_verilog rtl/core/fp16_add.v
-read_verilog rtl/core/accum_bank_16.v
-read_verilog rtl/core/row_accumulator_16bank.v
-read_verilog rtl/core/pe_mul_array.v
-read_verilog rtl/core/pe_top.v
+read_verilog /home/yin/github/SPGEMM-Accelerator-simple/rtl/core/fp16_mul.v
+read_verilog /home/yin/github/SPGEMM-Accelerator-simple/rtl/core/fp16_add.v
+read_verilog /home/yin/github/SPGEMM-Accelerator-simple/rtl/core/accum_bank_16.v
+read_verilog /home/yin/github/SPGEMM-Accelerator-simple/rtl/core/row_accumulator.v
+read_verilog /home/yin/github/SPGEMM-Accelerator-simple/rtl/core/pe_mul_array.v
+read_verilog /home/yin/github/SPGEMM-Accelerator-simple/rtl/core/pe_top.v
 
 # ---- synth ----
 synth_design -top pe_top -part xcku035-sfva784-1LV-i \

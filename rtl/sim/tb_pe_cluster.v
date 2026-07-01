@@ -101,7 +101,7 @@ module tb_pe_cluster;
     localparam C_RD_ADDR_W = `C_ROW_ADDR_BITS + `C_GROUP_BITS;
     reg  [N_PE-1:0]                  c_rd_en;
     reg  [N_PE*C_RD_ADDR_W-1:0]     c_rd_addr;
-    wire [N_PE*`N_MAC*16-1:0]       c_rd_data;
+    wire [N_PE*`N_ACC_BANK*16-1:0]       c_rd_data;
     wire [N_PE*`MAX_DIM_BITS-1:0]   c_rd_row;
 
 `ifndef COCOTB_SIM

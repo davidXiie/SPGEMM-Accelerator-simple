@@ -61,7 +61,7 @@ module pe_top #(
     // c_rd_row returns the global C row id of this local slot (from C_row_map).
     input  wire                                  c_rd_en,
     input  wire [`C_ROW_ADDR_BITS+`C_GROUP_BITS-1:0] c_rd_addr,
-    output reg  [`N_MAC*16-1:0]                  c_rd_data,
+    output reg  [`N_ACC_BANK*16-1:0]             c_rd_data,
     output reg  [`MAX_DIM_BITS-1:0]              c_rd_row
 );
 
@@ -76,8 +76,9 @@ module pe_top #(
     // *_val banks are 16-bit (FP16); *_col banks are 9-bit (col <= 511), zero-
     // extended to a 16-bit lane stride in the packed read so downstream slicing
     // is uniform.
-    localparam NB   = `N_MAC;        // banks / MAC lanes (16 or 32)
+    localparam NB   = `N_MAC;        // A/B banks / MAC lanes (16 or 32)
     localparam BIDX = `N_MAC_BITS;   // log2(NB)
+    localparam NACC = `N_ACC_BANK;   // accumulator banks / C sub-banks (drain width)
 
     localparam A_BANK_DEPTH = `A_NNZ_SLOT_PER_PE / NB;
     localparam A_BADDR_W    = `A_NNZ_ADDR_BITS - BIDX;   // bank-local address bits
@@ -781,10 +782,10 @@ module pe_top #(
 
     wire acc_busy_0,acc_busy_1,acc_row_done_0,acc_row_done_1;
     wire acc_issue_ready_0,acc_issue_ready_1;
-    wire [NB-1:0] drain_valid_0,drain_valid_1;
+    wire [NACC-1:0] drain_valid_0,drain_valid_1;
     wire [`C_GROUP_BITS-1:0] drain_gaddr_0,drain_gaddr_1;
     wire [`A_ROW_ADDR_BITS-1:0] drain_row_id_0,drain_row_id_1;
-    wire [NB*16-1:0] drain_values_0,drain_values_1;
+    wire [NACC*16-1:0] drain_values_0,drain_values_1;
     wire drain_active_0,drain_active_1;
 
     wire other_acc_busy = comp_sel ? acc_busy_0 : acc_busy_1;
@@ -906,7 +907,7 @@ module pe_top #(
     // Per-bank scatter FIFO depth is the `BANK_FIFO_DEPTH knob (LUT vs throughput;
     // see defines.vh).  LOG is derived so only the one define needs setting.
     row_accumulator #(
-        .OUT_COLS(512),.COL_W(9),.N_BANK(`N_MAC),.BIDX_W(`N_MAC_BITS),
+        .OUT_COLS(512),.COL_W(9),.N_BANK(`N_ACC_BANK),.BIDX_W(`N_ACC_BANK_BITS),.N_LANE(`N_MAC),
         .PROD_W(16),.ACC_W(16),.EPOCH_W(16),
         .BANK_FIFO_DEPTH(`BANK_FIFO_DEPTH),.BANK_FIFO_LOG($clog2(`BANK_FIFO_DEPTH)),.ROW_W(`A_ROW_ADDR_BITS)
     ) u_row_acc_0 (
@@ -921,7 +922,7 @@ module pe_top #(
     );
 
     row_accumulator #(
-        .OUT_COLS(512),.COL_W(9),.N_BANK(`N_MAC),.BIDX_W(`N_MAC_BITS),
+        .OUT_COLS(512),.COL_W(9),.N_BANK(`N_ACC_BANK),.BIDX_W(`N_ACC_BANK_BITS),.N_LANE(`N_MAC),
         .PROD_W(16),.ACC_W(16),.EPOCH_W(16),
         .BANK_FIFO_DEPTH(`BANK_FIFO_DEPTH),.BANK_FIFO_LOG($clog2(`BANK_FIFO_DEPTH)),.ROW_W(`A_ROW_ADDR_BITS)
     ) u_row_acc_1 (
@@ -974,8 +975,8 @@ module pe_top #(
     wire [`C_ROW_ADDR_BITS-1:0] c_wr_row  = c_wr_sel0 ? drain_row_id_0[`C_ROW_ADDR_BITS-1:0]
                                                       : drain_row_id_1[`C_ROW_ADDR_BITS-1:0];
     wire [`C_GROUP_BITS-1:0]    c_wr_gaddr = c_wr_sel0 ? drain_gaddr_0  : drain_gaddr_1;
-    wire [NB-1:0]               c_wr_dv    = c_wr_sel0 ? drain_valid_0  : drain_valid_1;
-    wire [NB*16-1:0]            c_wr_dat   = c_wr_sel0 ? drain_values_0 : drain_values_1;
+    wire [NACC-1:0]             c_wr_dv    = c_wr_sel0 ? drain_valid_0  : drain_valid_1;
+    wire [NACC*16-1:0]          c_wr_dat   = c_wr_sel0 ? drain_values_0 : drain_values_1;
     wire [C_BANK_ADDR_W-1:0]    c_wr_addr  = {c_wr_row, c_wr_gaddr};
 
     // Registered map read (same address timing as the C bank data read).
@@ -986,7 +987,7 @@ module pe_top #(
 
     genvar cb;
     generate
-        for (cb = 0; cb < NB; cb = cb + 1) begin : gen_c_bank
+        for (cb = 0; cb < NACC; cb = cb + 1) begin : gen_c_bank
             reg [15:0] mem [0:C_BANK_DEPTH-1];   // one sub-bank (own variable)
             always @(posedge aclk) begin
                 if (c_wr_en)

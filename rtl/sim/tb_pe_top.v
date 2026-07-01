@@ -52,7 +52,7 @@ module tb_pe_top;
     // C buffer read port (independent C bank, local-row indexed)
     reg                          c_rd_en;
     reg  [`C_ROW_ADDR_BITS+`C_GROUP_BITS-1:0]  c_rd_addr;  // {local_row, gaddr}
-    wire [`N_MAC*16-1:0]            c_rd_data;   // N_MAC FP16 lanes per group
+    wire [`N_ACC_BANK*16-1:0]            c_rd_data;   // N_MAC FP16 lanes per group
     wire [`MAX_DIM_BITS-1:0]     c_rd_row;    // global C row of this local slot
 
 

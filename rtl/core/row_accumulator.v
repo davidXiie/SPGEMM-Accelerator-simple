@@ -16,7 +16,9 @@ module row_accumulator #(
     parameter OUT_COLS        = 512,
     parameter COL_W           = 9,
     parameter N_BANK          = 16,
-    parameter BIDX_W          = $clog2(N_BANK),   // bank-index bits (4 @16, 5 @32)
+    parameter BIDX_W          = $clog2(N_BANK),   // bank-index bits = log2(N_BANK)
+    parameter N_LANE          = N_BANK,            // # product lanes IN (>= N_BANK; default = N_BANK)
+    parameter WR_PORTS        = 4,                 // same-bank lanes absorbed per cycle (2 or 4)
     parameter PROD_W          = 16,
     parameter ACC_W           = 32,
     parameter EPOCH_W         = 16,
@@ -36,9 +38,9 @@ module row_accumulator #(
 
     input  wire                    issue_valid,
     output wire                    issue_ready,
-    input  wire [N_BANK-1:0]       lane_valid,
-    input  wire [N_BANK*COL_W-1:0] lane_col_id,
-    input  wire [N_BANK*PROD_W-1:0] lane_product,
+    input  wire [N_LANE-1:0]       lane_valid,
+    input  wire [N_LANE*COL_W-1:0] lane_col_id,
+    input  wire [N_LANE*PROD_W-1:0] lane_product,
 
     output wire [N_BANK-1:0]       drain_valid,
     output wire [COL_W-BIDX_W-1:0] drain_gaddr,
@@ -76,13 +78,15 @@ module row_accumulator #(
     reg [BANK_ADDR_W-1:0] group_addr;
 
     //=========================================================================
-    // Per-lane fields: bank = col[BIDX_W-1:0], in-bank addr = col[COL_W-1:BIDX_W]
+    // Per-lane fields (N_LANE lanes IN): bank = col%N_BANK = col[BIDX_W-1:0],
+    // in-bank addr = col[COL_W-1:BIDX_W].  N_LANE may exceed N_BANK -> several
+    // lanes share a bank and the scatter spreads them over WR_PORTS/cycle.
     //=========================================================================
-    wire [BIDX_W-1:0]      lbid  [0:N_BANK-1];
-    wire [BANK_ADDR_W-1:0] laddr [0:N_BANK-1];
-    wire [PROD_W-1:0]      lprod [0:N_BANK-1];
+    wire [BIDX_W-1:0]      lbid  [0:N_LANE-1];
+    wire [BANK_ADDR_W-1:0] laddr [0:N_LANE-1];
+    wire [PROD_W-1:0]      lprod [0:N_LANE-1];
     genvar gi;
-    generate for (gi = 0; gi < N_BANK; gi = gi + 1) begin : g_lane
+    generate for (gi = 0; gi < N_LANE; gi = gi + 1) begin : g_lane
         assign lbid [gi] = lane_col_id[gi*COL_W        +: BIDX_W];
         assign laddr[gi] = lane_col_id[gi*COL_W+BIDX_W +: BANK_ADDR_W];
         assign lprod[gi] = lane_product[gi*PROD_W +: PROD_W];
@@ -99,7 +103,7 @@ module row_accumulator #(
     // the upstream holds issue_valid (issue_ready stays low until done).
     // done_mask records which lanes of the current group are already enqueued.
     //=========================================================================
-    reg [N_BANK-1:0] done_mask;
+    reg [N_LANE-1:0] done_mask;
 
     // `accepting` does NOT depend on issue_valid: the upstream (pe_top) gates
     // its product-FIFO read on issue_ready and only then presents the data one
@@ -108,13 +112,13 @@ module row_accumulator #(
     wire accepting = (state == S_ACCUM) && !input_done_latch;
     wire active    = accepting && issue_valid;
 
-    reg  [N_BANK-1:0]     eligible;
-    reg  [5:0]            lt [0:N_BANK-1];  // # of lower-index eligible same-bank lanes
-    reg  [N_BANK-1:0]     win0;       // lowest    eligible lane targeting its bank
-    reg  [N_BANK-1:0]     win1;       // 2nd-lowest
-    reg  [N_BANK-1:0]     win2;       // 3rd-lowest
-    reg  [N_BANK-1:0]     win3;       // 4th-lowest
-    reg  [N_BANK-1:0]     lane_enq;   // lane enqueued this cycle (gated by free)
+    reg  [N_LANE-1:0]     eligible;
+    reg  [5:0]            lt [0:N_LANE-1];  // # of lower-index eligible same-bank lanes
+    reg  [N_LANE-1:0]     win0;       // lowest    eligible lane targeting its bank
+    reg  [N_LANE-1:0]     win1;       // 2nd-lowest
+    reg  [N_LANE-1:0]     win2;       // 3rd-lowest
+    reg  [N_LANE-1:0]     win3;       // 4th-lowest
+    reg  [N_LANE-1:0]     lane_enq;   // lane enqueued this cycle (gated by free)
     reg  [N_BANK-1:0]     bank_wr_en0,  bank_wr_en1,  bank_wr_en2,  bank_wr_en3;
     reg  [BANK_ADDR_W-1:0] bank_wr_addr0 [0:N_BANK-1];
     reg  [BANK_ADDR_W-1:0] bank_wr_addr1 [0:N_BANK-1];
@@ -127,18 +131,18 @@ module row_accumulator #(
 
     integer ji, ki, ni;
     always @(*) begin
-        for (ji = 0; ji < N_BANK; ji = ji + 1)
+        for (ji = 0; ji < N_LANE; ji = ji + 1)
             eligible[ji] = active && lane_valid[ji] && !done_mask[ji];
 
         // lt[j] = number of lower-index eligible lanes targeting the same bank;
         // lt==k -> this lane is the bank's (k+1)-th lane -> write port k.
-        for (ji = 0; ji < N_BANK; ji = ji + 1) begin
+        for (ji = 0; ji < N_LANE; ji = ji + 1) begin
             lt[ji] = 6'd0;
-            for (ki = 0; ki < N_BANK; ki = ki + 1)
+            for (ki = 0; ki < N_LANE; ki = ki + 1)
                 if ((ki < ji) && eligible[ki] && (lbid[ki] == lbid[ji]))
                     lt[ji] = lt[ji] + 6'd1;
         end
-        for (ji = 0; ji < N_BANK; ji = ji + 1) begin
+        for (ji = 0; ji < N_LANE; ji = ji + 1) begin
             win0[ji] = eligible[ji] && (lt[ji] == 6'd0);
             win1[ji] = eligible[ji] && (lt[ji] == 6'd1);
             win2[ji] = eligible[ji] && (lt[ji] == 6'd2);
@@ -146,11 +150,12 @@ module row_accumulator #(
         end
 
         // port k lane needs >=(k+1) free slots (shares the cycle with ports 0..k-1).
-        for (ji = 0; ji < N_BANK; ji = ji + 1)
+        // Ports 2,3 are compiled out when WR_PORTS<3/<4 (those ranks then wait a cycle).
+        for (ji = 0; ji < N_LANE; ji = ji + 1)
             lane_enq[ji] = (win0[ji] && (free_arr[lbid[ji]] >= 1)) ||
                            (win1[ji] && (free_arr[lbid[ji]] >= 2)) ||
-                           (win2[ji] && (free_arr[lbid[ji]] >= 3)) ||
-                           (win3[ji] && (free_arr[lbid[ji]] >= 4));
+                           ((WR_PORTS >= 3) && win2[ji] && (free_arr[lbid[ji]] >= 3)) ||
+                           ((WR_PORTS >= 4) && win3[ji] && (free_arr[lbid[ji]] >= 4));
 
         // per-bank four write ports (<=1 lane per win-rank per bank)
         for (ni = 0; ni < N_BANK; ni = ni + 1) begin
@@ -166,7 +171,7 @@ module row_accumulator #(
             bank_wr_en3[ni]   = 1'b0;
             bank_wr_addr3[ni] = {BANK_ADDR_W{1'b0}};
             bank_wr_data3[ni] = {PROD_W{1'b0}};
-            for (ji = 0; ji < N_BANK; ji = ji + 1) begin
+            for (ji = 0; ji < N_LANE; ji = ji + 1) begin
                 if (win0[ji] && (lbid[ji] == ni[BIDX_W-1:0]) && (free_arr[ni] >= 1)) begin
                     bank_wr_en0[ni]   = 1'b1;
                     bank_wr_addr0[ni] = laddr[ji];
@@ -177,12 +182,12 @@ module row_accumulator #(
                     bank_wr_addr1[ni] = laddr[ji];
                     bank_wr_data1[ni] = lprod[ji];
                 end
-                if (win2[ji] && (lbid[ji] == ni[BIDX_W-1:0]) && (free_arr[ni] >= 3)) begin
+                if ((WR_PORTS >= 3) && win2[ji] && (lbid[ji] == ni[BIDX_W-1:0]) && (free_arr[ni] >= 3)) begin
                     bank_wr_en2[ni]   = 1'b1;
                     bank_wr_addr2[ni] = laddr[ji];
                     bank_wr_data2[ni] = lprod[ji];
                 end
-                if (win3[ji] && (lbid[ji] == ni[BIDX_W-1:0]) && (free_arr[ni] >= 4)) begin
+                if ((WR_PORTS >= 4) && win3[ji] && (lbid[ji] == ni[BIDX_W-1:0]) && (free_arr[ni] >= 4)) begin
                     bank_wr_en3[ni]   = 1'b1;
                     bank_wr_addr3[ni] = laddr[ji];
                     bank_wr_data3[ni] = lprod[ji];
@@ -191,19 +196,19 @@ module row_accumulator #(
         end
     end
 
-    wire [N_BANK-1:0] next_done       = done_mask | lane_enq;
+    wire [N_LANE-1:0] next_done       = done_mask | lane_enq;
     // Only a presented group contributes "remaining" lanes; with no group
     // (issue_valid=0) remaining is 0 so issue_ready stays high (ready for next).
-    wire [N_BANK-1:0] grp_lanes       = active ? lane_valid : {N_BANK{1'b0}};
-    wire [N_BANK-1:0] remaining_after = grp_lanes & ~next_done;
+    wire [N_LANE-1:0] grp_lanes       = active ? lane_valid : {N_LANE{1'b0}};
+    wire [N_LANE-1:0] remaining_after = grp_lanes & ~next_done;
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n)
-            done_mask <= {N_BANK{1'b0}};
+            done_mask <= {N_LANE{1'b0}};
         else if (active && !issue_ready)   // partial: remember enqueued lanes
             done_mask <= next_done;
         else                               // group consumed, or no active group
-            done_mask <= {N_BANK{1'b0}};
+            done_mask <= {N_LANE{1'b0}};
     end
 
     //=========================================================================
@@ -237,7 +242,7 @@ module row_accumulator #(
     // issue_ready — high on the cycle that enqueues the LAST remaining lane(s)
     // of the current group, so the upstream advances to the next group.
     //=========================================================================
-    assign issue_ready = accepting && (remaining_after == {N_BANK{1'b0}});
+    assign issue_ready = accepting && (remaining_after == {N_LANE{1'b0}});
 
     wire all_fifos_empty = &emp_vec;
     wire all_rmw_done    = ~|rmw_vec;

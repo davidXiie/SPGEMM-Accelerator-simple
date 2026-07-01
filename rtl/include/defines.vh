@@ -195,9 +195,17 @@
 //=============================================================================
 `define TOTAL_MAC (`N_PE * `N_MAC)
 
-// C bank column-group geometry: a row's MAX_N columns are drained NB at a time,
-// so there are MAX_N/N_MAC groups -> gaddr is C_GROUP_BITS wide (9 - N_MAC_BITS,
-// since COL_W=9 for MAX_N=512).  5 bits @N_MAC=16, 4 bits @N_MAC=32.
-`define C_GROUP_BITS (9 - `N_MAC_BITS)
+// Accumulator bank count, DECOUPLED from the MAC lane count.  The MAC array emits
+// N_MAC products/cycle; they scatter (col%N_ACC_BANK) into N_ACC_BANK accumulator
+// banks.  N_ACC_BANK <= N_MAC trades accumulator LUT (fewer per-bank RMW pipes/
+// FIFOs) for collision throughput (N_MAC products crowd into fewer banks).  The
+// drain / C bank follow N_ACC_BANK (not N_MAC).
+`define N_ACC_BANK       32      // = N_MAC: accumulator banks coupled to lanes (validated)
+`define N_ACC_BANK_BITS  5       // log2(N_ACC_BANK)
+
+// C bank column-group geometry: a row's MAX_N columns are drained N_ACC_BANK at a
+// time, so there are MAX_N/N_ACC_BANK groups -> gaddr is C_GROUP_BITS wide
+// (9 - N_ACC_BANK_BITS, COL_W=9 for MAX_N=512).  5 bits @16 banks, 4 bits @32.
+`define C_GROUP_BITS (9 - `N_ACC_BANK_BITS)
 
 `endif // DEFINES_VH
