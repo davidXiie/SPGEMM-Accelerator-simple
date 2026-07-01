@@ -1,6 +1,6 @@
 //=============================================================================
 // File     : accum_bank.v
-// Brief    : Single accumulator bank for row_accumulator_4bank.
+// Brief    : Single accumulator bank (8-port) for row_accumulator_8bank.
 //
 //   FIFO (circular, FIFO_DEPTH deep, must be power-of-2) supports
 //   up to 4 independent write ports and 1 read port per cycle.
