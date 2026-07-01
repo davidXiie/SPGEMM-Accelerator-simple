@@ -172,42 +172,6 @@ module pe_top #(
             4'd14:A_col_b14[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata; 4'd15:A_col_b15[a_col_waddr[`A_NNZ_ADDR_BITS-1:4]]<=a_col_wdata;
         endcase
         if (b_desc_we) B_desc_buf[b_desc_waddr] <= b_desc_wdata;
-        if (b_col_we) case (b_col_waddr[3:0])
-            4'd0:  B_col_b0 [b_col_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_col_wdata;
-            4'd1:  B_col_b1 [b_col_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_col_wdata;
-            4'd2:  B_col_b2 [b_col_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_col_wdata;
-            4'd3:  B_col_b3 [b_col_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_col_wdata;
-            4'd4:  B_col_b4 [b_col_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_col_wdata;
-            4'd5:  B_col_b5 [b_col_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_col_wdata;
-            4'd6:  B_col_b6 [b_col_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_col_wdata;
-            4'd7:  B_col_b7 [b_col_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_col_wdata;
-            4'd8:  B_col_b8 [b_col_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_col_wdata;
-            4'd9:  B_col_b9 [b_col_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_col_wdata;
-            4'd10: B_col_b10[b_col_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_col_wdata;
-            4'd11: B_col_b11[b_col_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_col_wdata;
-            4'd12: B_col_b12[b_col_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_col_wdata;
-            4'd13: B_col_b13[b_col_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_col_wdata;
-            4'd14: B_col_b14[b_col_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_col_wdata;
-            4'd15: B_col_b15[b_col_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_col_wdata;
-        endcase
-        if (b_val_we) case (b_val_waddr[3:0])
-            4'd0:  B_val_b0 [b_val_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_val_wdata;
-            4'd1:  B_val_b1 [b_val_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_val_wdata;
-            4'd2:  B_val_b2 [b_val_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_val_wdata;
-            4'd3:  B_val_b3 [b_val_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_val_wdata;
-            4'd4:  B_val_b4 [b_val_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_val_wdata;
-            4'd5:  B_val_b5 [b_val_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_val_wdata;
-            4'd6:  B_val_b6 [b_val_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_val_wdata;
-            4'd7:  B_val_b7 [b_val_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_val_wdata;
-            4'd8:  B_val_b8 [b_val_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_val_wdata;
-            4'd9:  B_val_b9 [b_val_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_val_wdata;
-            4'd10: B_val_b10[b_val_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_val_wdata;
-            4'd11: B_val_b11[b_val_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_val_wdata;
-            4'd12: B_val_b12[b_val_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_val_wdata;
-            4'd13: B_val_b13[b_val_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_val_wdata;
-            4'd14: B_val_b14[b_val_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_val_wdata;
-            4'd15: B_val_b15[b_val_waddr[`B_NNZ_ADDR_BITS-1:4]] <= b_val_wdata;
-        endcase
     end
 
     //=========================================================================
@@ -321,23 +285,107 @@ module pe_top #(
     // stalled and update exactly when the next A-nnz is loaded into gen_*.
     reg [15:0] bc0,bc1,bc2,bc3,bc4,bc5,bc6,bc7,bc8,bc9,bc10,bc11,bc12,bc13,bc14,bc15;
     reg [15:0] bv0,bv1,bv2,bv3,bv4,bv5,bv6,bv7,bv8,bv9,bv10,bv11,bv12,bv13,bv14,bv15;
-    always @(posedge aclk) if (gen_b_read_en) begin
-        bc0 <=B_col_b0 [gen_bg0_pf];  bv0 <=B_val_b0 [gen_bg0_pf];
-        bc1 <=B_col_b1 [gen_bg1_pf];  bv1 <=B_val_b1 [gen_bg1_pf];
-        bc2 <=B_col_b2 [gen_bg2_pf];  bv2 <=B_val_b2 [gen_bg2_pf];
-        bc3 <=B_col_b3 [gen_bg3_pf];  bv3 <=B_val_b3 [gen_bg3_pf];
-        bc4 <=B_col_b4 [gen_bg4_pf];  bv4 <=B_val_b4 [gen_bg4_pf];
-        bc5 <=B_col_b5 [gen_bg5_pf];  bv5 <=B_val_b5 [gen_bg5_pf];
-        bc6 <=B_col_b6 [gen_bg6_pf];  bv6 <=B_val_b6 [gen_bg6_pf];
-        bc7 <=B_col_b7 [gen_bg7_pf];  bv7 <=B_val_b7 [gen_bg7_pf];
-        bc8 <=B_col_b8 [gen_bg8_pf];  bv8 <=B_val_b8 [gen_bg8_pf];
-        bc9 <=B_col_b9 [gen_bg9_pf];  bv9 <=B_val_b9 [gen_bg9_pf];
-        bc10<=B_col_b10[gen_bg10_pf]; bv10<=B_val_b10[gen_bg10_pf];
-        bc11<=B_col_b11[gen_bg11_pf]; bv11<=B_val_b11[gen_bg11_pf];
-        bc12<=B_col_b12[gen_bg12_pf]; bv12<=B_val_b12[gen_bg12_pf];
-        bc13<=B_col_b13[gen_bg13_pf]; bv13<=B_val_b13[gen_bg13_pf];
-        bc14<=B_col_b14[gen_bg14_pf]; bv14<=B_val_b14[gen_bg14_pf];
-        bc15<=B_col_b15[gen_bg15_pf]; bv15<=B_val_b15[gen_bg15_pf];
+    wire gen_b_read_en;   // declared here (driven below) so the B RW port sees it
+    // Port A of each B bank: WRITE (load) OR gen-prefetch READ (compute) at ONE
+    // muxed address -> a single BRAM RW port (they never overlap in time); the
+    // executor read is port B.  => each B bank = ONE BRAM (no duplication).
+    wire [13:0] b_colA_addr_0 = (b_col_we && b_col_waddr[3:0]==0) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg0_pf;
+    wire [13:0] b_colA_addr_1 = (b_col_we && b_col_waddr[3:0]==1) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg1_pf;
+    wire [13:0] b_colA_addr_2 = (b_col_we && b_col_waddr[3:0]==2) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg2_pf;
+    wire [13:0] b_colA_addr_3 = (b_col_we && b_col_waddr[3:0]==3) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg3_pf;
+    wire [13:0] b_colA_addr_4 = (b_col_we && b_col_waddr[3:0]==4) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg4_pf;
+    wire [13:0] b_colA_addr_5 = (b_col_we && b_col_waddr[3:0]==5) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg5_pf;
+    wire [13:0] b_colA_addr_6 = (b_col_we && b_col_waddr[3:0]==6) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg6_pf;
+    wire [13:0] b_colA_addr_7 = (b_col_we && b_col_waddr[3:0]==7) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg7_pf;
+    wire [13:0] b_colA_addr_8 = (b_col_we && b_col_waddr[3:0]==8) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg8_pf;
+    wire [13:0] b_colA_addr_9 = (b_col_we && b_col_waddr[3:0]==9) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg9_pf;
+    wire [13:0] b_colA_addr_10 = (b_col_we && b_col_waddr[3:0]==10) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg10_pf;
+    wire [13:0] b_colA_addr_11 = (b_col_we && b_col_waddr[3:0]==11) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg11_pf;
+    wire [13:0] b_colA_addr_12 = (b_col_we && b_col_waddr[3:0]==12) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg12_pf;
+    wire [13:0] b_colA_addr_13 = (b_col_we && b_col_waddr[3:0]==13) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg13_pf;
+    wire [13:0] b_colA_addr_14 = (b_col_we && b_col_waddr[3:0]==14) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg14_pf;
+    wire [13:0] b_colA_addr_15 = (b_col_we && b_col_waddr[3:0]==15) ? {1'b0,b_col_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg15_pf;
+    wire [13:0] b_valA_addr_0 = (b_val_we && b_val_waddr[3:0]==0) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg0_pf;
+    wire [13:0] b_valA_addr_1 = (b_val_we && b_val_waddr[3:0]==1) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg1_pf;
+    wire [13:0] b_valA_addr_2 = (b_val_we && b_val_waddr[3:0]==2) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg2_pf;
+    wire [13:0] b_valA_addr_3 = (b_val_we && b_val_waddr[3:0]==3) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg3_pf;
+    wire [13:0] b_valA_addr_4 = (b_val_we && b_val_waddr[3:0]==4) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg4_pf;
+    wire [13:0] b_valA_addr_5 = (b_val_we && b_val_waddr[3:0]==5) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg5_pf;
+    wire [13:0] b_valA_addr_6 = (b_val_we && b_val_waddr[3:0]==6) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg6_pf;
+    wire [13:0] b_valA_addr_7 = (b_val_we && b_val_waddr[3:0]==7) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg7_pf;
+    wire [13:0] b_valA_addr_8 = (b_val_we && b_val_waddr[3:0]==8) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg8_pf;
+    wire [13:0] b_valA_addr_9 = (b_val_we && b_val_waddr[3:0]==9) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg9_pf;
+    wire [13:0] b_valA_addr_10 = (b_val_we && b_val_waddr[3:0]==10) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg10_pf;
+    wire [13:0] b_valA_addr_11 = (b_val_we && b_val_waddr[3:0]==11) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg11_pf;
+    wire [13:0] b_valA_addr_12 = (b_val_we && b_val_waddr[3:0]==12) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg12_pf;
+    wire [13:0] b_valA_addr_13 = (b_val_we && b_val_waddr[3:0]==13) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg13_pf;
+    wire [13:0] b_valA_addr_14 = (b_val_we && b_val_waddr[3:0]==14) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg14_pf;
+    wire [13:0] b_valA_addr_15 = (b_val_we && b_val_waddr[3:0]==15) ? {1'b0,b_val_waddr[`B_NNZ_ADDR_BITS-1:4]} : gen_bg15_pf;
+    always @(posedge aclk) begin
+        if (b_col_we && b_col_waddr[3:0]==0) B_col_b0[b_colA_addr_0] <= b_col_wdata;
+        else if (gen_b_read_en) bc0 <= B_col_b0[b_colA_addr_0];
+        if (b_col_we && b_col_waddr[3:0]==1) B_col_b1[b_colA_addr_1] <= b_col_wdata;
+        else if (gen_b_read_en) bc1 <= B_col_b1[b_colA_addr_1];
+        if (b_col_we && b_col_waddr[3:0]==2) B_col_b2[b_colA_addr_2] <= b_col_wdata;
+        else if (gen_b_read_en) bc2 <= B_col_b2[b_colA_addr_2];
+        if (b_col_we && b_col_waddr[3:0]==3) B_col_b3[b_colA_addr_3] <= b_col_wdata;
+        else if (gen_b_read_en) bc3 <= B_col_b3[b_colA_addr_3];
+        if (b_col_we && b_col_waddr[3:0]==4) B_col_b4[b_colA_addr_4] <= b_col_wdata;
+        else if (gen_b_read_en) bc4 <= B_col_b4[b_colA_addr_4];
+        if (b_col_we && b_col_waddr[3:0]==5) B_col_b5[b_colA_addr_5] <= b_col_wdata;
+        else if (gen_b_read_en) bc5 <= B_col_b5[b_colA_addr_5];
+        if (b_col_we && b_col_waddr[3:0]==6) B_col_b6[b_colA_addr_6] <= b_col_wdata;
+        else if (gen_b_read_en) bc6 <= B_col_b6[b_colA_addr_6];
+        if (b_col_we && b_col_waddr[3:0]==7) B_col_b7[b_colA_addr_7] <= b_col_wdata;
+        else if (gen_b_read_en) bc7 <= B_col_b7[b_colA_addr_7];
+        if (b_col_we && b_col_waddr[3:0]==8) B_col_b8[b_colA_addr_8] <= b_col_wdata;
+        else if (gen_b_read_en) bc8 <= B_col_b8[b_colA_addr_8];
+        if (b_col_we && b_col_waddr[3:0]==9) B_col_b9[b_colA_addr_9] <= b_col_wdata;
+        else if (gen_b_read_en) bc9 <= B_col_b9[b_colA_addr_9];
+        if (b_col_we && b_col_waddr[3:0]==10) B_col_b10[b_colA_addr_10] <= b_col_wdata;
+        else if (gen_b_read_en) bc10 <= B_col_b10[b_colA_addr_10];
+        if (b_col_we && b_col_waddr[3:0]==11) B_col_b11[b_colA_addr_11] <= b_col_wdata;
+        else if (gen_b_read_en) bc11 <= B_col_b11[b_colA_addr_11];
+        if (b_col_we && b_col_waddr[3:0]==12) B_col_b12[b_colA_addr_12] <= b_col_wdata;
+        else if (gen_b_read_en) bc12 <= B_col_b12[b_colA_addr_12];
+        if (b_col_we && b_col_waddr[3:0]==13) B_col_b13[b_colA_addr_13] <= b_col_wdata;
+        else if (gen_b_read_en) bc13 <= B_col_b13[b_colA_addr_13];
+        if (b_col_we && b_col_waddr[3:0]==14) B_col_b14[b_colA_addr_14] <= b_col_wdata;
+        else if (gen_b_read_en) bc14 <= B_col_b14[b_colA_addr_14];
+        if (b_col_we && b_col_waddr[3:0]==15) B_col_b15[b_colA_addr_15] <= b_col_wdata;
+        else if (gen_b_read_en) bc15 <= B_col_b15[b_colA_addr_15];
+        if (b_val_we && b_val_waddr[3:0]==0) B_val_b0[b_valA_addr_0] <= b_val_wdata;
+        else if (gen_b_read_en) bv0 <= B_val_b0[b_valA_addr_0];
+        if (b_val_we && b_val_waddr[3:0]==1) B_val_b1[b_valA_addr_1] <= b_val_wdata;
+        else if (gen_b_read_en) bv1 <= B_val_b1[b_valA_addr_1];
+        if (b_val_we && b_val_waddr[3:0]==2) B_val_b2[b_valA_addr_2] <= b_val_wdata;
+        else if (gen_b_read_en) bv2 <= B_val_b2[b_valA_addr_2];
+        if (b_val_we && b_val_waddr[3:0]==3) B_val_b3[b_valA_addr_3] <= b_val_wdata;
+        else if (gen_b_read_en) bv3 <= B_val_b3[b_valA_addr_3];
+        if (b_val_we && b_val_waddr[3:0]==4) B_val_b4[b_valA_addr_4] <= b_val_wdata;
+        else if (gen_b_read_en) bv4 <= B_val_b4[b_valA_addr_4];
+        if (b_val_we && b_val_waddr[3:0]==5) B_val_b5[b_valA_addr_5] <= b_val_wdata;
+        else if (gen_b_read_en) bv5 <= B_val_b5[b_valA_addr_5];
+        if (b_val_we && b_val_waddr[3:0]==6) B_val_b6[b_valA_addr_6] <= b_val_wdata;
+        else if (gen_b_read_en) bv6 <= B_val_b6[b_valA_addr_6];
+        if (b_val_we && b_val_waddr[3:0]==7) B_val_b7[b_valA_addr_7] <= b_val_wdata;
+        else if (gen_b_read_en) bv7 <= B_val_b7[b_valA_addr_7];
+        if (b_val_we && b_val_waddr[3:0]==8) B_val_b8[b_valA_addr_8] <= b_val_wdata;
+        else if (gen_b_read_en) bv8 <= B_val_b8[b_valA_addr_8];
+        if (b_val_we && b_val_waddr[3:0]==9) B_val_b9[b_valA_addr_9] <= b_val_wdata;
+        else if (gen_b_read_en) bv9 <= B_val_b9[b_valA_addr_9];
+        if (b_val_we && b_val_waddr[3:0]==10) B_val_b10[b_valA_addr_10] <= b_val_wdata;
+        else if (gen_b_read_en) bv10 <= B_val_b10[b_valA_addr_10];
+        if (b_val_we && b_val_waddr[3:0]==11) B_val_b11[b_valA_addr_11] <= b_val_wdata;
+        else if (gen_b_read_en) bv11 <= B_val_b11[b_valA_addr_11];
+        if (b_val_we && b_val_waddr[3:0]==12) B_val_b12[b_valA_addr_12] <= b_val_wdata;
+        else if (gen_b_read_en) bv12 <= B_val_b12[b_valA_addr_12];
+        if (b_val_we && b_val_waddr[3:0]==13) B_val_b13[b_valA_addr_13] <= b_val_wdata;
+        else if (gen_b_read_en) bv13 <= B_val_b13[b_valA_addr_13];
+        if (b_val_we && b_val_waddr[3:0]==14) B_val_b14[b_valA_addr_14] <= b_val_wdata;
+        else if (gen_b_read_en) bv14 <= B_val_b14[b_valA_addr_14];
+        if (b_val_we && b_val_waddr[3:0]==15) B_val_b15[b_valA_addr_15] <= b_val_wdata;
+        else if (gen_b_read_en) bv15 <= B_val_b15[b_valA_addr_15];
     end
 
     // Rotation mux: ne_bv[j] = bv at bank (gen_r+j)%16
@@ -441,7 +489,7 @@ module pe_top #(
     // loaded (GEN_FETCH, and the chaining GEN_EMIT advance).  fetch_b_off is fed by
     // the registered A read (k_idx), which holds the next A-nnz via the gen_t_next
     // addressing, so bcN lands aligned with that A-nnz's GEN_EMIT.
-    wire gen_b_read_en = (gen_state == GEN_FETCH) ||
+    assign gen_b_read_en = (gen_state == GEN_FETCH) ||
                          (gen_state == GEN_EMIT && gen_emit_can_advance);
     wire g1_acc_advances      = gen_emit_can_advance && g1_to_g2_valid;
 
