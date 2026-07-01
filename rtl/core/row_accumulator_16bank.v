@@ -37,6 +37,11 @@ module row_accumulator_16bank #(
     output wire [COL_W-5:0]       drain_gaddr,
     output wire [ROW_W-1:0]       drain_row_id,
     output wire [16*ACC_W-1:0]    drain_values,
+    // Backpressure: when a drain consumer (e.g. a DDR-write FIFO) can't accept a
+    // group this cycle, hold drain_ready low and S_DRAIN stalls on the current
+    // group (values/gaddr/row_id/valid stay put).  Tie high for a always-ready
+    // consumer (e.g. the on-chip C bank) -> original free-running drain.
+    input  wire                    drain_ready,
     // High for every S_DRAIN beat (one per column-group, incl. all-zero groups),
     // so the C bank can be fully written (zero-filled) without a separate clear.
     output wire                    drain_active
@@ -376,10 +381,13 @@ module row_accumulator_16bank #(
                 end
 
                 S_DRAIN: begin
-                    if (last_group)
-                        state <= S_DONE;
-                    else
-                        group_addr <= group_addr + {{(BANK_ADDR_W-1){1'b0}}, 1'b1};
+                    // Advance only when the consumer accepts this group (backpressure).
+                    if (drain_ready) begin
+                        if (last_group)
+                            state <= S_DONE;
+                        else
+                            group_addr <= group_addr + {{(BANK_ADDR_W-1){1'b0}}, 1'b1};
+                    end
                 end
 
                 S_DONE: begin

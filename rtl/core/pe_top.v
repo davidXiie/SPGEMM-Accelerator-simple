@@ -1274,7 +1274,7 @@ module pe_top #(
         .lane_valid(alv0),.lane_col_id(alc0),.lane_product(alp0),
         .drain_valid(drain_valid_0),.drain_gaddr(drain_gaddr_0),
         .drain_row_id(drain_row_id_0),.drain_values(drain_values_0),
-        .drain_active(drain_active_0)
+        .drain_ready(1'b1),.drain_active(drain_active_0)
     );
 
     row_accumulator_16bank #(
@@ -1288,7 +1288,7 @@ module pe_top #(
         .lane_valid(alv1),.lane_col_id(alc1),.lane_product(alp1),
         .drain_valid(drain_valid_1),.drain_gaddr(drain_gaddr_1),
         .drain_row_id(drain_row_id_1),.drain_values(drain_values_1),
-        .drain_active(drain_active_1)
+        .drain_ready(1'b1),.drain_active(drain_active_1)
     );
 
     //=========================================================================
