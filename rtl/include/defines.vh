@@ -21,7 +21,7 @@
 //=============================================================================
 // PE & MAC Configuration
 //=============================================================================
-`define N_PE          3      // cluster size — change here to scale
+`define N_PE          4      // cluster size — change here to scale
 `define N_MAC         8
 `define N_MAC_BITS    3       // log2(8)
 // Accumulator module = row_accumulator_<N_MAC>bank.  Define ACC_8BANK when N_MAC==8
@@ -101,14 +101,16 @@
 `define A_NNZ_ADDR_BITS    15      // addr space 32768 >= 28672
 
 `define B_ROW_SLOT         512     // >= max K
-// OUTPUT-COLUMN TILING (T=2): each pass loads only one column-half of B, so the
-// resident B buffer holds ~1/2 of worst-case B nnz instead of the full 78643.
-// This is the per-PE B-BRAM saving that lets 4 PEs fit (B is broadcast/replicated).
-// 40960 = 16*2560 ≈ 0.52*78643 (small margin over an even column split); bump if
-// the matrices are column-skewed enough that one half exceeds this.
-`define B_NNZ_SLOT         40960   // 16-bank aligned: 2560*16
+// OUTPUT-COLUMN TILING (fixed 64-col tiles): each pass loads only 64 output
+// columns' worth of B, so the resident B buffer holds one 64-col tile instead of
+// the full B.  T = ceil(N/64) passes; A stays resident and is reused every pass.
+// Worst 64-col tile across all reference matrices = 9792 nnz (TC2_PEAK/TC6); the
+// slot below (2048 deep/bank x 8 banks) holds it with margin AND still fits the
+// small non-tiled cases (case1 full B = 4720).  Bump only if a 64-col tile can
+// exceed 16384.
+`define B_NNZ_SLOT         16384   // 8-bank aligned: 2048*8; one 64-col B tile
 `define B_ROW_ADDR_BITS    9       // log2(512)
-`define B_NNZ_ADDR_BITS    17      // addr port width (over-provisioned; depth = SLOT/16)
+`define B_NNZ_ADDR_BITS    17      // addr port width (over-provisioned; depth = SLOT/N_MAC)
 
 `define PE_ACC_DEPTH       512     // >= max N output columns
 `define PE_ACC_ADDR_BITS   9
@@ -131,6 +133,14 @@
 `endif
 `define C_ROW_SLOTS      (1 << `C_ROW_ADDR_BITS)
 
+// On-chip C bank / accumulator column capacity per PASS = the output-column tile
+// width.  With fixed 64-col output tiling every pass makes <=64 columns, so the C
+// bank needs only 64 cols (8x less depth than the full MAX_N=512).  Overridable
+// (-DC_BANK_COLS=512) for non-tiled runs where a single pass has N>64.
+`ifndef C_BANK_COLS
+`define C_BANK_COLS 64
+`endif
+
 // Instruction buffer (pre-computed schedule: b_group + a_val_ptr + lane_valid)
 `define INSTR_SLOT         65536
 `define INSTR_ADDR_BITS    16     // log2(65536)
@@ -144,13 +154,14 @@
 //
 //   col_id is 9-bit because MAX_N=512 needs only log2(512)=9 bits.
 //=============================================================================
-`define TASK_WIDTH        41   // 9 + 16 + 16
+`define COL_ID_W          $clog2(`C_BANK_COLS)   // output-col width: 6 @64-col tiles, 9 @512
+`define TASK_WIDTH        (`COL_ID_W + 32)   // {b_val[15:0], a_val[15:0], col_id}
 // +1 MSB carries comp_sel (which ping-pong accumulator this group belongs to)
 // so rows can be pipelined: the generator tags each group, and the product is
 // routed by that tag instead of a global comp_sel.
 `define TASK_GROUP_WIDTH  (`N_MAC + `N_MAC * `TASK_WIDTH + 1)   // 16+16*41+1 = 673
 
-`define PRODUCT_WIDTH       25   // {col_id[8:0], fp16_val[15:0]}
+`define PRODUCT_WIDTH       (`COL_ID_W + 16)  // {col_id, fp16_val[15:0]}
 `define PRODUCT_GROUP_WIDTH (`N_MAC + `N_MAC * `PRODUCT_WIDTH)  // 16+16*25 = 416
 
 `define TASK_FIFO_DEPTH     512

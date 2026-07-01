@@ -60,7 +60,7 @@ module pe_top #(
     // lanes for column group gaddr (column j = gaddr*16 + lane).  c_rd_row
     // returns the global C row id of this local slot (from C_row_map).
     input  wire                          c_rd_en,
-    input  wire [`C_ROW_ADDR_BITS + $clog2(`MAX_N/`N_MAC) - 1:0]  c_rd_addr,
+    input  wire [`C_ROW_ADDR_BITS + $clog2(`C_BANK_COLS/`N_MAC) - 1:0]  c_rd_addr,
     output reg  [`N_MAC*16-1:0]              c_rd_data,
     output reg  [`MAX_DIM_BITS-1:0]      c_rd_row
 );
@@ -74,7 +74,7 @@ module pe_top #(
     // Same total depth as the old single buffers (A_NNZ_SLOT_PER_PE), 1/16 per bank.
     localparam A_BANK_DEPTH = `A_NNZ_SLOT_PER_PE / `N_MAC;
     localparam A_BADDR_W    = `A_NNZ_ADDR_BITS - `N_MAC_BITS;
-    localparam GADDR_W      = $clog2(`MAX_N / `N_MAC);
+    localparam GADDR_W      = $clog2(`C_BANK_COLS / `N_MAC);
     // A_val/A_col banks are declared per-bank in the gen_a_bank generate (end of module).
 
     localparam B_BANK_DEPTH = `B_NNZ_SLOT / `N_MAC;
@@ -176,13 +176,13 @@ module pe_top #(
     // PREFETCH address (next A-nnz) and clock-enabled only when the generator
     // advances (gen_b_read_en), so bcN/bvN hold the CURRENT A-nnz's data while
     // stalled and update exactly when the next A-nnz is loaded into gen_*.
-    reg [15:0] bc  [0:`N_MAC-1];
+    reg [`COL_ID_W-1:0] bc  [0:`N_MAC-1];
     reg [15:0] bv  [0:`N_MAC-1];
-    reg [15:0] ebc [0:`N_MAC-1];
+    reg [`COL_ID_W-1:0] ebc [0:`N_MAC-1];
     reg [15:0] ebv [0:`N_MAC-1];
     wire gen_b_read_en;   // driven below; consumed by gen_b_bank RW port (end of module)
 
-    wire [15:0] ne_bv [0:`N_MAC-1]; wire [15:0] ne_bc [0:`N_MAC-1];
+    wire [15:0] ne_bv [0:`N_MAC-1]; wire [`COL_ID_W-1:0] ne_bc [0:`N_MAC-1];
     genvar nr;
     generate for (nr=0; nr<`N_MAC; nr=nr+1) begin: g_ne_rot
         assign ne_bv[nr] = bv[(gen_r + nr) & (`N_MAC-1)];
@@ -192,7 +192,7 @@ module pe_top #(
     wire [`TASK_WIDTH-1:0] pack_sg [0:`N_MAC-1];
     genvar ps;
     generate for (ps=0; ps<`N_MAC; ps=ps+1) begin: g_pack_sg
-        assign pack_sg[ps] = {ne_bv[ps], gen_a_val, ne_bc[ps][8:0]};
+        assign pack_sg[ps] = {ne_bv[ps], gen_a_val, ne_bc[ps][`COL_ID_W-1:0]};
     end endgenerate
 
     //=========================================================================
@@ -352,7 +352,7 @@ module pe_top #(
         wire [16:0] eabs  = elem_win0 + ek[16:0];
         assign elem_lv[ek] = (eabs >= elem_base) && (eabs < elem_end);
         wire [15:0] eval  = elem_in_b ? ebv_vec[ek*16+:16] : a_val_bank_r[ek*16+:16];
-        wire [8:0]  ecol  = elem_in_b ? ebc_vec[ek*16+:9]  : a_col_bank_r[ek*16+:9];
+        wire [`COL_ID_W-1:0] ecol = elem_in_b ? ebc_vec[ek*16 +: `COL_ID_W] : a_col_bank_r[ek*16 +: `COL_ID_W];
         wire [15:0] ecoef = (elem_in_b && op_sub) ? 16'hBC00 : 16'h3C00;   // +/-1.0
         assign elem_tasks_flat[ek*`TASK_WIDTH +: `TASK_WIDTH] = {eval, ecoef, ecol};
     end endgenerate
@@ -614,7 +614,7 @@ module pe_top #(
 
     // ebc/ebv (executor + elementwise B reads) are produced by the gen_b_bank generate (end of module).
 
-    wire [15:0] enebv [0:`N_MAC-1]; wire [15:0] enebc [0:`N_MAC-1];
+    wire [15:0] enebv [0:`N_MAC-1]; wire [`COL_ID_W-1:0] enebc [0:`N_MAC-1];
     genvar xr;
     generate for (xr=0; xr<`N_MAC; xr=xr+1) begin: g_eneb_rot
         assign enebv[xr] = ebv[(exec_r + xr) & (`N_MAC-1)];
@@ -624,7 +624,7 @@ module pe_top #(
     wire [`TASK_WIDTH-1:0] exec_sg [0:`N_MAC-1];
     genvar xs;
     generate for (xs=0; xs<`N_MAC; xs=xs+1) begin: g_exec_sg
-        assign exec_sg[xs] = {enebv[xs], exec_a_val_d1, enebc[xs][8:0]};
+        assign exec_sg[xs] = {enebv[xs], exec_a_val_d1, enebc[xs][`COL_ID_W-1:0]};
     end endgenerate
 
     //=========================================================================
@@ -859,13 +859,13 @@ module pe_top #(
     // Extract 16 lane_valid, 16 col_ids, 16 products from effective data
     wire [`N_MAC-1:0]    alv0 = eff_dat_0[`N_MAC-1:0];
     wire [`N_MAC-1:0]    alv1 = eff_dat_1[`N_MAC-1:0];
-    wire [`N_MAC*9-1:0]  alc0, alc1;
+    wire [`N_MAC*`COL_ID_W-1:0]  alc0, alc1;
     wire [`N_MAC*16-1:0] alp0, alp1;
     genvar al;
     generate for (al=0; al<`N_MAC; al=al+1) begin: g_acc_lane
-        assign alc0[al*9 +: 9] = eff_dat_0[`N_MAC + al*`PRODUCT_WIDTH + 16 +: 9];
+        assign alc0[al*`COL_ID_W +: `COL_ID_W] = eff_dat_0[`N_MAC + al*`PRODUCT_WIDTH + 16 +: `COL_ID_W];
         assign alp0[al*16+:16] = eff_dat_0[`N_MAC + al*`PRODUCT_WIDTH +: 16];
-        assign alc1[al*9 +: 9] = eff_dat_1[`N_MAC + al*`PRODUCT_WIDTH + 16 +: 9];
+        assign alc1[al*`COL_ID_W +: `COL_ID_W] = eff_dat_1[`N_MAC + al*`PRODUCT_WIDTH + 16 +: `COL_ID_W];
         assign alp1[al*16+:16] = eff_dat_1[`N_MAC + al*`PRODUCT_WIDTH +: 16];
     end endgenerate
 
@@ -873,7 +873,7 @@ module pe_top #(
     // see defines.vh).  LOG is derived so only the one define needs setting.
     // Accumulator bank-count follows N_MAC (8 or 16): row_accumulator_<N_MAC>bank.
     // Same block name (g_acc) in both arms keeps the u_row_acc_* hierarchy stable.
-    `define ACC_PARAMS .OUT_COLS(512),.COL_W(9),.PROD_W(16),.ACC_W(16),.EPOCH_W(16), \
+    `define ACC_PARAMS .OUT_COLS(`C_BANK_COLS),.COL_W(`COL_ID_W),.PROD_W(16),.ACC_W(16),.EPOCH_W(16), \
         .BANK_FIFO_DEPTH(`BANK_FIFO_DEPTH),.BANK_FIFO_LOG($clog2(`BANK_FIFO_DEPTH)),.ROW_W(`A_ROW_ADDR_BITS)
     `define ACC0_PORTS \
         .clk(aclk),.rst_n(aresetn), \
@@ -1050,7 +1050,7 @@ module pe_top #(
     //=========================================================================
     genvar bb;
     generate for (bb=0; bb<`N_MAC; bb=bb+1) begin: gen_b_bank
-        (* ram_style="block" *) reg [8:0]             cmem [0:B_BANK_DEPTH-1];
+        (* ram_style="block" *) reg [`COL_ID_W-1:0]   cmem [0:B_BANK_DEPTH-1];
         (* ram_style="block" *) reg [`DATA_WIDTH-1:0] vmem [0:B_BANK_DEPTH-1];
         wire [13:0] colA = (b_col_we && b_col_waddr[`N_MAC_BITS-1:0]==bb)
                          ? b_col_waddr[`B_NNZ_ADDR_BITS-1:`N_MAC_BITS] : gen_bg_pf[bb];
