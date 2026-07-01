@@ -348,16 +348,16 @@ module row_accumulator_16bank #(
 
             case (state)
                 S_IDLE: begin
-                    busy             <= 1'b0;
-                    input_done_latch <= 1'b0;
-                    if (row_start || start_pending) begin
-                        cur_row_id    <= row_start ? row_id_in : pending_row_id;
-                        group_addr    <= {BANK_ADDR_W{1'b0}};
-                        busy          <= 1'b1;
-                        start_pending <= 1'b0;
-                        state         <= S_ACCUM;
-                    end
+                busy             <= 1'b0;
+                input_done_latch <= 1'b0;
+                if (row_start || start_pending) begin
+                    cur_row_id    <= row_start ? row_id_in : pending_row_id;
+                    group_addr    <= {BANK_ADDR_W{1'b0}};
+                    busy          <= 1'b1;
+                    start_pending <= 1'b0;
+                    state         <= S_ACCUM;
                 end
+            end
 
                 S_ACCUM: begin
                     if (row_input_done)

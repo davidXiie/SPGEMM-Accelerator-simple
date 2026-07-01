@@ -1,0 +1,456 @@
+========================================
+[1/2] Compiling mmap-DDR accelerator...
+========================================
+../../rtl/core/pe_top.v:1268: warning: Unsized expression (('sd1)<<(C_BANK_ADDR_W)) expanded beyond and was clipped to 65568 bits. Try using sized operands.
+../../rtl/core/pe_top.v:1268: warning: Unsized expression (('sd1)<<(C_BANK_ADDR_W)) expanded beyond and was clipped to 65568 bits. Try using sized operands.
+../../rtl/core/pe_top.v:1268: warning: Unsized expression (('sd1)<<(C_BANK_ADDR_W)) expanded beyond and was clipped to 65568 bits. Try using sized operands.
+[OK] Compile passed.
+
+========================================
+[2/2] Running mmap-DDR test...
+========================================
+     -.--ns INFO     gpi                                ..mbed\gpi_embed.cpp:94   in _embed_init_python              Using Python 3.11.9 interpreter at C:/Users/Administrator/.conda/envs/gcnenv/python.exe
+     -.--ns ERROR    gpi                                ..mbed\gpi_embed.cpp:155  in _embed_init_python              Unexpected sys.executable value (expected 'C:/Users/Administrator/.conda/envs/gcnenv/python.exe', got 'C:\iverilog\bin\vvp.exe')
+     -.--ns INFO     gpi                                ..\gpi\GpiCommon.cpp:79   in gpi_print_registered_impl       VPI registered
+     0.00ns INFO     cocotb                             Running on Icarus Verilog version 12.0 (devel)
+     0.00ns INFO     cocotb                             Seeding Python random module with 1782909310
+     0.00ns INFO     cocotb                             Initialized cocotb v2.0.1 from C:\Users\Administrator\.conda\envs\gcnenv\Lib\site-packages\cocotb
+     0.00ns INFO     cocotb.regression                  pytest not found, install it to enable better AssertionError messages
+     0.00ns WARNING  py.warnings                        C:\Users\Administrator\.conda\envs\gcnenv\Lib\site-packages\cocotb\_init.py:102: DeprecationWarning: COCOTB_TESTCASE is deprecated in favor of COCOTB_TEST_FILTER
+                                                          _setup_regression_manager()
+     0.00ns INFO     cocotb                             Running tests
+     0.00ns INFO     cocotb.regression                  running test.test_mmap (1/1)
+                                                            Main test: mmap DDR → AXI responder → axi_loader → PE → compute → drain C.
+     0.00ns INFO     cocotb.tb_mmap                     ======================================================================
+     0.00ns INFO     cocotb.tb_mmap                     MMAP-DDR: A(251,257) × B(257,121) → C(251,121)
+     0.00ns INFO     cocotb.tb_mmap                     Rows: 87 82 82  NNZ: 3123 3127 3115  Golden nz: 26324
+Header @ 0x0000: rows=[87, 82, 82] nnz=[3123, 3127, 3115]
+PE0 @ 0x0100: 87 rows, 3123 nnz
+PE1 @ 0x12000: 82 rows, 3127 nnz
+PE2 @ 0x24000: 82 rows, 3115 nnz
+B @ 0x36000: 257 rows, 4720 nnz
+   140.00ns INFO     cocotb.tb_mmap                     Writing 8388608 bytes directly to mmap...
+   140.00ns INFO     cocotb.tb_mmap                     DDR dumped: 8388608 bytes → d:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\mmap_sim\sim_build\ddr_dump.bin
+   140.00ns INFO     cocotb.tb_mmap                     DDR loaded: rows=87 82 82 nnz=3123 3127 3115
+   150.00ns WARNING  cocotb.tb_mmap                     [TOP] → IDLE
+   170.00ns INFO     cocotb.tb_mmap                     Launched, waiting for done...
+   180.00ns WARNING  cocotb.tb_mmap                     [TOP] → LOAD
+277190.00ns WARNING  cocotb.tb_mmap                     [TOP] → COMPUTE
+[LOADER] HDR: rows=   87,   82,   82 nnz= 3123, 3127, 3115
+[LOADER] A_DESC pe=0 row=    0 crow=  0 nnz=  33 off=    0
+[LOADER] A_DESC pe=0 row=    1 crow=  1 nnz=  44 off=   33
+[LOADER] A_DESC pe=0 row=    2 crow=  2 nnz=  44 off=   77
+[LOADER] A_COL pe=0 addr=     0 data=   20
+[LOADER] A_COL pe=0 addr=     1 data=   25
+[LOADER] A_COL pe=0 addr=     2 data=   26
+[LOADER] A_COL pe=0 addr=     3 data=   28
+[LOADER] A_COL pe=0 addr=     4 data=   33
+[LOADER] B_DESC row=    0 data=00000010 (nnz=  16 b_off=      0)
+[LOADER] B_DESC row=    1 data=00004017 (nnz=  23 b_off=     16)
+[LOADER] B_DESC row=    2 data=00009c10 (nnz=  16 b_off=     39)
+[LOADER] B_COL addr=     0 data=0x0001 bank=     0
+[LOADER] B_COL addr=     1 data=0x000b bank=     1
+[LOADER] B_COL addr=     2 data=0x000c bank=     2
+[LOADER] B_COL addr=     3 data=0x000d bank=     3
+[LOADER] B_COL addr=     4 data=0x0015 bank=     4
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=1 gen_state=0 row=  0 a_rd=    0 a_val=0x4600 a_col=0x0001 gt_next=    0
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=1 gen_state=0 row=  0 a_rd=    0 a_val=0x4200 a_col=0x0001 gt_next=    0
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=1 gen_state=0 row=  0 a_rd=    0 a_val=0x4200 a_col=0x0014 gt_next=    0
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: LOAD_DESC row=  0 crow=167 nnz=  28 off=    0 raw=0000038a7
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: LOAD_DESC row=  0 crow= 85 nnz=  60 off=    0 raw=000007855
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: LOAD_DESC row=  0 crow=  0 nnz=  33 off=    0 raw=000004200
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=2 gen_state=0 row=  0 a_rd=    0 a_val=0x4200 a_col=0x0014 gt_next=    0
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=2 gen_state=0 row=  0 a_rd=    0 a_val=0x4200 a_col=0x0001 gt_next=    0
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=2 gen_state=0 row=  0 a_rd=    0 a_val=0x4600 a_col=0x0001 gt_next=    0
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: GEN_IDLE row=  0 cur_a_nnz=   33 state_next=     GEN_FETCH
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: GEN_IDLE row=  0 cur_a_nnz=   60 state_next=     GEN_FETCH
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: GEN_IDLE row=  0 cur_a_nnz=   28 state_next=     GEN_FETCH
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=1 row=  0 a_rd=    1 a_val=0x4700 a_col=0x000e gt_next=    1
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=1 row=  0 a_rd=    1 a_val=0x4600 a_col=0x0005 gt_next=    1
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=1 row=  0 a_rd=    1 a_val=0x4500 a_col=0x0019 gt_next=    1
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: GEN_FETCH row=  0 t=    0 a_col=0x0001 k_idx=  1 b_nnz=   23 b_off=        16
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: GEN_FETCH row=  0 t=    0 a_col=0x0001 k_idx=  1 b_nnz=   23 b_off=        16
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: GEN_FETCH row=  0 t=    0 a_col=0x0014 k_idx= 20 b_nnz=   19 b_off=       342
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    2 a_val=0x4400 a_col=0x001a gt_next=    2
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    2 a_val=0x4500 a_col=0x0006 gt_next=    2
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    2 a_val=0x4200 a_col=0x0012 gt_next=    2
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    3 a_val=0x4400 a_col=0x001f gt_next=    3
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    3 a_val=0x4200 a_col=0x0008 gt_next=    3
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    3 a_val=0x4000 a_col=0x001c gt_next=    3
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    4 a_val=0x4400 a_col=0x0021 gt_next=    4
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    4 a_val=0x4200 a_col=0x000f gt_next=    4
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    4 a_val=0x4000 a_col=0x0021 gt_next=    4
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    5 a_val=0x4600 a_col=0x002b gt_next=    5
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    5 a_val=0x3c00 a_col=0x0011 gt_next=    5
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    5 a_val=0x4700 a_col=0x0025 gt_next=    5
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    6 a_val=0x4600 a_col=0x0026 gt_next=    6
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    6 a_val=0x4200 a_col=0x0016 gt_next=    6
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    6 a_val=0x3c00 a_col=0x0030 gt_next=    6
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    7 a_val=0x4500 a_col=0x0033 gt_next=    7
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    7 a_val=0x4000 a_col=0x0017 gt_next=    7
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    7 a_val=0x4700 a_col=0x002c gt_next=    7
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    8 a_val=0x4200 a_col=0x0053 gt_next=    8
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    8 a_val=0x4000 a_col=0x001e gt_next=    8
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    8 a_val=0x4500 a_col=0x003a gt_next=    8
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    9 a_val=0x4000 a_col=0x003d gt_next=    9
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    9 a_val=0x4400 a_col=0x0023 gt_next=    9
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=    9 a_val=0x4500 a_col=0x005f gt_next=    9
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   10 a_val=0x4700 a_col=0x006b gt_next=   10
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   10 a_val=0x4200 a_col=0x002b gt_next=   10
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   10 a_val=0x4600 a_col=0x0040 gt_next=   10
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   11 a_val=0x4000 a_col=0x0044 gt_next=   11
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   11 a_val=0x4200 a_col=0x0032 gt_next=   11
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   11 a_val=0x4400 a_col=0x006e gt_next=   11
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   12 a_val=0x4200 a_col=0x006f gt_next=   12
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   12 a_val=0x4500 a_col=0x0037 gt_next=   12
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   12 a_val=0x3c00 a_col=0x004c gt_next=   12
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   13 a_val=0x4500 a_col=0x005d gt_next=   13
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   13 a_val=0x4200 a_col=0x0039 gt_next=   13
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   13 a_val=0x4700 a_col=0x0072 gt_next=   13
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   14 a_val=0x4700 a_col=0x0079 gt_next=   14
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   14 a_val=0x3c00 a_col=0x003b gt_next=   14
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   14 a_val=0x4200 a_col=0x006d gt_next=   14
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   15 a_val=0x4400 a_col=0x007a gt_next=   15
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   15 a_val=0x4600 a_col=0x0044 gt_next=   15
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   15 a_val=0x4600 a_col=0x007a gt_next=   15
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   16 a_val=0x4600 a_col=0x0096 gt_next=   16
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   16 a_val=0x4500 a_col=0x004c gt_next=   16
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   16 a_val=0x4400 a_col=0x00a4 gt_next=   16
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   17 a_val=0x4500 a_col=0x00aa gt_next=   17
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   17 a_val=0x4000 a_col=0x004f gt_next=   17
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   17 a_val=0x4200 a_col=0x0099 gt_next=   17
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   18 a_val=0x3c00 a_col=0x009b gt_next=   18
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   18 a_val=0x4200 a_col=0x005c gt_next=   18
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   18 a_val=0x4600 a_col=0x00b0 gt_next=   18
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   19 a_val=0x4400 a_col=0x00b2 gt_next=   19
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   19 a_val=0x4200 a_col=0x0063 gt_next=   19
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   19 a_val=0x3c00 a_col=0x00a2 gt_next=   19
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   20 a_val=0x4700 a_col=0x00b8 gt_next=   20
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   20 a_val=0x4000 a_col=0x0064 gt_next=   20
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   20 a_val=0x3c00 a_col=0x00b5 gt_next=   20
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   21 a_val=0x4400 a_col=0x00c0 gt_next=   21
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   21 a_val=0x4700 a_col=0x0066 gt_next=   21
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   21 a_val=0x4500 a_col=0x00ba gt_next=   21
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   22 a_val=0x4000 a_col=0x00bd gt_next=   22
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   22 a_val=0x4600 a_col=0x0067 gt_next=   22
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   22 a_val=0x3c00 a_col=0x00ca gt_next=   22
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   23 a_val=0x3c00 a_col=0x00d8 gt_next=   23
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   23 a_val=0x3c00 a_col=0x006c gt_next=   23
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   23 a_val=0x3c00 a_col=0x00be gt_next=   23
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   24 a_val=0x4600 a_col=0x00c0 gt_next=   24
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   24 a_val=0x4700 a_col=0x006d gt_next=   24
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   24 a_val=0x4700 a_col=0x00e0 gt_next=   24
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   25 a_val=0x4000 a_col=0x00e5 gt_next=   25
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   25 a_val=0x4600 a_col=0x006e gt_next=   25
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   25 a_val=0x4500 a_col=0x00c1 gt_next=   25
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   26 a_val=0x4600 a_col=0x00ce gt_next=   26
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   26 a_val=0x4400 a_col=0x0077 gt_next=   26
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   26 a_val=0x4000 a_col=0x00ec gt_next=   26
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   27 a_val=0x4400 a_col=0x00f8 gt_next=   27
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   27 a_val=0x4000 a_col=0x0079 gt_next=   27
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   27 a_val=0x3c00 a_col=0x00d3 gt_next=   27
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   28 a_val=0x4000 a_col=0x00d9 gt_next=   28
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   28 a_val=0x3c00 a_col=0x007a gt_next=   28
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   28 a_val=0x3c00 a_col=0x0001 gt_next=   28
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   28 a_val=0x3c00 a_col=0x0001 gt_next=   28
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   29 a_val=0x3c00 a_col=0x0081 gt_next=   29
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   29 a_val=0x4700 a_col=0x00db gt_next=   29
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   30 a_val=0x3c00 a_col=0x00e8 gt_next=   30
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   30 a_val=0x4000 a_col=0x0087 gt_next=   30
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=3 row=  0 a_rd=   28 a_val=0x3c00 a_col=0x0001 gt_next=   28
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=3 row=  0 a_rd=   28 a_val=0x3c00 a_col=0x0001 gt_next=   28
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   31 a_val=0x4500 a_col=0x008b gt_next=   31
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   31 a_val=0x4200 a_col=0x00ed gt_next=   31
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   32 a_val=0x4200 a_col=0x00f4 gt_next=   32
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   32 a_val=0x3c00 a_col=0x008f gt_next=   32
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: NEXT_ROW row=  0 →          1 comp_sel=0→1 row_count=   82
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=1 gen_state=0 row=  1 a_rd=   28 a_val=0x3c00 a_col=0x0001 gt_next=   28
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   33 a_val=0x4700 a_col=0x0090 gt_next=   33
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   33 a_val=0x4000 a_col=0x0002 gt_next=   33
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: LOAD_DESC row=  1 crow=168 nnz=  75 off=   28 raw=000e096a8
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   33 a_val=0x4000 a_col=0x0002 gt_next=   33
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   34 a_val=0x4600 a_col=0x0091 gt_next=   34
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=2 gen_state=0 row=  1 a_rd=   28 a_val=0x3c00 a_col=0x0001 gt_next=    0
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: GEN_IDLE row=  1 cur_a_nnz=   75 state_next=     GEN_FETCH
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=1 row=  1 a_rd=   29 a_val=0x4400 a_col=0x000c gt_next=    1
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   35 a_val=0x4200 a_col=0x0094 gt_next=   35
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=3 row=  0 a_rd=   33 a_val=0x4000 a_col=0x0002 gt_next=   33
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: GEN_FETCH row=  1 t=    0 a_col=0x0001 k_idx=  1 b_nnz=   23 b_off=        16
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=3 row=  0 a_rd=   33 a_val=0x4000 a_col=0x0002 gt_next=   33
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   36 a_val=0x4000 a_col=0x0095 gt_next=   36
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   30 a_val=0x3c00 a_col=0x000f gt_next=    2
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   31 a_val=0x4600 a_col=0x0011 gt_next=    3
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   37 a_val=0x3c00 a_col=0x0096 gt_next=   37
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: NEXT_ROW row=  0 →          1 comp_sel=0→1 row_count=   87
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=1 gen_state=0 row=  1 a_rd=   33 a_val=0x4000 a_col=0x0002 gt_next=   33
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   38 a_val=0x4700 a_col=0x0097 gt_next=   38
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   32 a_val=0x4400 a_col=0x0013 gt_next=    4
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: LOAD_DESC row=  1 crow=  1 nnz=  44 off=   33 raw=001085801
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   33 a_val=0x4500 a_col=0x0019 gt_next=    5
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   39 a_val=0x4600 a_col=0x0098 gt_next=   39
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=2 gen_state=0 row=  1 a_rd=   33 a_val=0x4000 a_col=0x0002 gt_next=    0
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: GEN_IDLE row=  1 cur_a_nnz=   44 state_next=     GEN_FETCH
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=1 row=  1 a_rd=   34 a_val=0x4400 a_col=0x0007 gt_next=    1
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   40 a_val=0x4000 a_col=0x009c gt_next=   40
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   34 a_val=0x4600 a_col=0x001f gt_next=    6
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: GEN_FETCH row=  1 t=    0 a_col=0x0002 k_idx=  2 b_nnz=   16 b_off=        39
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   35 a_val=0x4000 a_col=0x0023 gt_next=    7
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   41 a_val=0x4500 a_col=0x00a0 gt_next=   41
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   35 a_val=0x4700 a_col=0x000b gt_next=    2
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   36 a_val=0x4700 a_col=0x0019 gt_next=    3
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   42 a_val=0x4700 a_col=0x00a5 gt_next=   42
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   36 a_val=0x4700 a_col=0x0025 gt_next=    8
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   37 a_val=0x4400 a_col=0x0028 gt_next=    9
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   43 a_val=0x4500 a_col=0x00a7 gt_next=   43
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   37 a_val=0x3c00 a_col=0x0026 gt_next=    4
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   38 a_val=0x3c00 a_col=0x002d gt_next=    5
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   44 a_val=0x4200 a_col=0x00a9 gt_next=   44
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   38 a_val=0x4200 a_col=0x0029 gt_next=   10
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   39 a_val=0x3c00 a_col=0x002b gt_next=   11
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   45 a_val=0x4700 a_col=0x00ac gt_next=   45
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   39 a_val=0x4600 a_col=0x0036 gt_next=    6
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   40 a_val=0x4500 a_col=0x0037 gt_next=    7
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   46 a_val=0x4600 a_col=0x00bb gt_next=   46
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   40 a_val=0x4200 a_col=0x0030 gt_next=   12
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   41 a_val=0x3c00 a_col=0x0032 gt_next=   13
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   47 a_val=0x4500 a_col=0x00c3 gt_next=   47
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   41 a_val=0x4400 a_col=0x0038 gt_next=    8
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   42 a_val=0x4200 a_col=0x0039 gt_next=    9
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   48 a_val=0x4400 a_col=0x00c4 gt_next=   48
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   42 a_val=0x4500 a_col=0x0035 gt_next=   14
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   43 a_val=0x4400 a_col=0x0036 gt_next=   15
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   49 a_val=0x3c00 a_col=0x00c7 gt_next=   49
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   43 a_val=0x4700 a_col=0x003c gt_next=   10
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   44 a_val=0x4000 a_col=0x0041 gt_next=   11
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   50 a_val=0x4700 a_col=0x00c8 gt_next=   50
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   44 a_val=0x3c00 a_col=0x0039 gt_next=   16
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   45 a_val=0x4400 a_col=0x003d gt_next=   17
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   51 a_val=0x4200 a_col=0x00d3 gt_next=   51
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   45 a_val=0x3c00 a_col=0x0049 gt_next=   12
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   46 a_val=0x4600 a_col=0x004b gt_next=   13
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   52 a_val=0x3c00 a_col=0x00d5 gt_next=   52
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   46 a_val=0x4200 a_col=0x003e gt_next=   18
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   47 a_val=0x4700 a_col=0x0041 gt_next=   19
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   53 a_val=0x4700 a_col=0x00d6 gt_next=   53
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   47 a_val=0x4200 a_col=0x004e gt_next=   14
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   48 a_val=0x4600 a_col=0x0052 gt_next=   15
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   54 a_val=0x4400 a_col=0x00d9 gt_next=   54
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   48 a_val=0x4000 a_col=0x0046 gt_next=   20
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   49 a_val=0x4700 a_col=0x0048 gt_next=   21
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   55 a_val=0x4200 a_col=0x00e8 gt_next=   55
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   49 a_val=0x4500 a_col=0x0053 gt_next=   16
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   50 a_val=0x3c00 a_col=0x0057 gt_next=   17
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   56 a_val=0x4700 a_col=0x00f2 gt_next=   56
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   50 a_val=0x4500 a_col=0x0051 gt_next=   22
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   51 a_val=0x3c00 a_col=0x0055 gt_next=   23
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   57 a_val=0x4500 a_col=0x00f4 gt_next=   57
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   51 a_val=0x4400 a_col=0x005b gt_next=   18
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   52 a_val=0x3c00 a_col=0x005e gt_next=   19
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   58 a_val=0x4400 a_col=0x00f5 gt_next=   58
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   52 a_val=0x4000 a_col=0x005b gt_next=   24
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   53 a_val=0x4700 a_col=0x005d gt_next=   25
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   0 global_row=  0 gaddr= 0 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   59 a_val=0x4700 a_col=0x00f9 gt_next=   59
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   53 a_val=0x3c00 a_col=0x0073 gt_next=   20
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   54 a_val=0x4500 a_col=0x007d gt_next=   21
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   60 a_val=0x4700 a_col=0x000d gt_next=   60
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   1 global_row=  0 gaddr= 1 bank0=0x0000 dv=0
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   54 a_val=0x4200 a_col=0x0061 gt_next=   26
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   55 a_val=0x4000 a_col=0x0062 gt_next=   27
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   2 global_row=  0 gaddr= 2 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  0 a_rd=   60 a_val=0x4700 a_col=0x000d gt_next=   60
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   55 a_val=0x4000 a_col=0x0080 gt_next=   22
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   56 a_val=0x3c00 a_col=0x0081 gt_next=   23
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=3 row=  0 a_rd=   60 a_val=0x4700 a_col=0x000d gt_next=   60
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   3 global_row=  0 gaddr= 3 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   56 a_val=0x4500 a_col=0x006d gt_next=   28
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   57 a_val=0x3c00 a_col=0x0071 gt_next=   29
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   4 global_row=  0 gaddr= 4 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=3 row=  0 a_rd=   60 a_val=0x4700 a_col=0x000d gt_next=   60
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   57 a_val=0x3c00 a_col=0x008f gt_next=   24
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   58 a_val=0x4400 a_col=0x009a gt_next=   25
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   5 global_row=  0 gaddr= 5 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   58 a_val=0x4700 a_col=0x0072 gt_next=   30
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: NEXT_ROW row=  0 →          1 comp_sel=0→1 row_count=   82
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   59 a_val=0x4200 a_col=0x0076 gt_next=   31
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   6 global_row=  0 gaddr= 6 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=1 gen_state=0 row=  1 a_rd=   60 a_val=0x4700 a_col=0x000d gt_next=   60
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   59 a_val=0x4700 a_col=0x009e gt_next=   26
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: LOAD_DESC row=  1 crow= 86 nnz=  67 off=   60 raw=001e08656
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   60 a_val=0x4400 a_col=0x00a8 gt_next=   27
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=2 gen_state=0 row=  1 a_rd=   60 a_val=0x4700 a_col=0x000d gt_next=    0
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   7 global_row=  0 gaddr= 7 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   60 a_val=0x4400 a_col=0x007c gt_next=   32
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: GEN_IDLE row=  1 cur_a_nnz=   67 state_next=     GEN_FETCH
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   61 a_val=0x4000 a_col=0x007e gt_next=   33
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=1 row=  1 a_rd=   61 a_val=0x4200 a_col=0x0011 gt_next=    1
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   61 a_val=0x4600 a_col=0x00b4 gt_next=   28
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: GEN_FETCH row=  1 t=    0 a_col=0x000d k_idx= 13 b_nnz=   14 b_off=       240
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   62 a_val=0x4200 a_col=0x00b7 gt_next=   29
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   62 a_val=0x3c00 a_col=0x001a gt_next=    2
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   62 a_val=0x4600 a_col=0x0081 gt_next=   34
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   63 a_val=0x4200 a_col=0x0084 gt_next=   35
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   63 a_val=0x4600 a_col=0x001c gt_next=    3
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   63 a_val=0x4400 a_col=0x00bd gt_next=   30
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   0 global_row=  0 gaddr= 0 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   64 a_val=0x4000 a_col=0x00bf gt_next=   31
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   64 a_val=0x4400 a_col=0x001e gt_next=    4
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   64 a_val=0x4700 a_col=0x0087 gt_next=   36
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   65 a_val=0x4600 a_col=0x0088 gt_next=   37
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   65 a_val=0x3c00 a_col=0x0021 gt_next=    5
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   65 a_val=0x4200 a_col=0x00c5 gt_next=   32
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   1 global_row=  0 gaddr= 1 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   2 global_row=  0 gaddr= 2 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   66 a_val=0x4500 a_col=0x00ca gt_next=   33
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   66 a_val=0x4700 a_col=0x0022 gt_next=    6
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   66 a_val=0x4500 a_col=0x0090 gt_next=   38
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   67 a_val=0x4400 a_col=0x0091 gt_next=   39
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   67 a_val=0x3c00 a_col=0x0028 gt_next=    7
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   67 a_val=0x4000 a_col=0x00cd gt_next=   34
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   3 global_row=  0 gaddr= 3 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   4 global_row=  0 gaddr= 4 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   68 a_val=0x4600 a_col=0x00d0 gt_next=   35
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   68 a_val=0x4600 a_col=0x0031 gt_next=    8
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   68 a_val=0x4200 a_col=0x0092 gt_next=   40
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   69 a_val=0x4000 a_col=0x0093 gt_next=   41
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   69 a_val=0x4200 a_col=0x0034 gt_next=    9
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   69 a_val=0x4000 a_col=0x00e2 gt_next=   36
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   5 global_row=  0 gaddr= 5 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   6 global_row=  0 gaddr= 6 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   70 a_val=0x4400 a_col=0x00e7 gt_next=   37
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   70 a_val=0x4700 a_col=0x0037 gt_next=   10
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   70 a_val=0x3c00 a_col=0x0094 gt_next=   42
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   71 a_val=0x4200 a_col=0x0099 gt_next=   43
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   71 a_val=0x4700 a_col=0x003e gt_next=   11
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   71 a_val=0x4500 a_col=0x00ed gt_next=   38
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   7 global_row=  0 gaddr= 7 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   72 a_val=0x3c00 a_col=0x00f1 gt_next=   39
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   72 a_val=0x4600 a_col=0x003f gt_next=   12
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   72 a_val=0x3c00 a_col=0x009b gt_next=   44
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   73 a_val=0x4200 a_col=0x00a0 gt_next=   45
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   73 a_val=0x4700 a_col=0x0045 gt_next=   13
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   73 a_val=0x4600 a_col=0x00f3 gt_next=   40
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   74 a_val=0x4400 a_col=0x00fc gt_next=   41
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   74 a_val=0x4400 a_col=0x0048 gt_next=   14
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   74 a_val=0x4000 a_col=0x00a1 gt_next=   46
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   75 a_val=0x4700 a_col=0x00a3 gt_next=   47
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   75 a_val=0x3c00 a_col=0x004b gt_next=   15
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   75 a_val=0x4200 a_col=0x00fd gt_next=   42
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   76 a_val=0x4000 a_col=0x00fe gt_next=   43
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   76 a_val=0x4600 a_col=0x004d gt_next=   16
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   76 a_val=0x4700 a_col=0x00aa gt_next=   48
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   77 a_val=0x4400 a_col=0x00ad gt_next=   49
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   77 a_val=0x4700 a_col=0x0053 gt_next=   17
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   77 a_val=0x4600 a_col=0x0000 gt_next=   44
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   77 a_val=0x4600 a_col=0x0000 gt_next=   44
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   78 a_val=0x4200 a_col=0x0057 gt_next=   18
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   78 a_val=0x4000 a_col=0x00af gt_next=   50
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   79 a_val=0x3c00 a_col=0x00b0 gt_next=   51
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   79 a_val=0x4700 a_col=0x005a gt_next=   19
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=3 row=  1 a_rd=   77 a_val=0x4600 a_col=0x0000 gt_next=   44
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: TRACE state=3 gen_state=3 row=  1 a_rd=   77 a_val=0x4600 a_col=0x0000 gt_next=   44
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   80 a_val=0x4500 a_col=0x005c gt_next=   20
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   80 a_val=0x4400 a_col=0x00bb gt_next=   52
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   81 a_val=0x4700 a_col=0x00bf gt_next=   53
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   81 a_val=0x4700 a_col=0x0061 gt_next=   21
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: NEXT_ROW row=  1 →          2 comp_sel=1→0 row_count=   87
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   82 a_val=0x3c00 a_col=0x0067 gt_next=   22
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   82 a_val=0x4500 a_col=0x00c1 gt_next=   54
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: LOAD_DESC row=  2 crow=  2 nnz=  44 off=   77 raw=002685802
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   83 a_val=0x4200 a_col=0x00c3 gt_next=   55
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   83 a_val=0x4600 a_col=0x0069 gt_next=   23
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: GEN_IDLE row=  2 cur_a_nnz=   44 state_next=     GEN_FETCH
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   84 a_val=0x4600 a_col=0x0070 gt_next=   24
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   84 a_val=0x4600 a_col=0x00c7 gt_next=   56
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: GEN_FETCH row=  2 t=    0 a_col=0x0000 k_idx=  0 b_nnz=   16 b_off=         0
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   85 a_val=0x4500 a_col=0x00c8 gt_next=   57
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   85 a_val=0x4500 a_col=0x0071 gt_next=   25
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   86 a_val=0x3c00 a_col=0x0075 gt_next=   26
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   86 a_val=0x3c00 a_col=0x00cc gt_next=   58
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   87 a_val=0x4400 a_col=0x00d0 gt_next=   59
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   87 a_val=0x4600 a_col=0x0077 gt_next=   27
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   88 a_val=0x4000 a_col=0x007b gt_next=   28
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   88 a_val=0x4200 a_col=0x00d1 gt_next=   60
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   89 a_val=0x4500 a_col=0x00d6 gt_next=   61
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   89 a_val=0x3c00 a_col=0x007c gt_next=   29
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   90 a_val=0x4600 a_col=0x007e gt_next=   30
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   90 a_val=0x4400 a_col=0x00d7 gt_next=   62
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   91 a_val=0x4200 a_col=0x00d8 gt_next=   63
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   91 a_val=0x4400 a_col=0x0080 gt_next=   31
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   92 a_val=0x4600 a_col=0x0085 gt_next=   32
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   92 a_val=0x3c00 a_col=0x00da gt_next=   64
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   93 a_val=0x4400 a_col=0x00de gt_next=   65
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   93 a_val=0x4000 a_col=0x0089 gt_next=   33
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   94 a_val=0x3c00 a_col=0x008a gt_next=   34
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   94 a_val=0x4400 a_col=0x00e5 gt_next=   66
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   95 a_val=0x4200 a_col=0x00e6 gt_next=   67
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   95 a_val=0x4700 a_col=0x008b gt_next=   35
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   96 a_val=0x4400 a_col=0x008e gt_next=   36
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   96 a_val=0x4600 a_col=0x00ea gt_next=   68
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   97 a_val=0x4500 a_col=0x00eb gt_next=   69
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   97 a_val=0x4200 a_col=0x008f gt_next=   37
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   98 a_val=0x4400 a_col=0x009c gt_next=   38
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   98 a_val=0x4700 a_col=0x00f0 gt_next=   70
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   99 a_val=0x4500 a_col=0x00f9 gt_next=   71
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=   99 a_val=0x4200 a_col=0x009d gt_next=   39
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  100 a_val=0x3c00 a_col=0x009f gt_next=   40
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  100 a_val=0x4400 a_col=0x00fa gt_next=   72
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  101 a_val=0x4600 a_col=0x00ff gt_next=   73
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  101 a_val=0x4500 a_col=0x00a2 gt_next=   41
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  102 a_val=0x4600 a_col=0x00af gt_next=   42
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  102 a_val=0x4500 a_col=0x0100 gt_next=   74
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  103 a_val=0x4000 a_col=0x0002 gt_next=   75
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  103 a_val=0x4400 a_col=0x00b1 gt_next=   43
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  104 a_val=0x4200 a_col=0x00b2 gt_next=   44
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  103 a_val=0x4000 a_col=0x0002 gt_next=   75
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=3 row=  1 a_rd=  103 a_val=0x4000 a_col=0x0002 gt_next=   75
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  105 a_val=0x4500 a_col=0x00b7 gt_next=   45
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  106 a_val=0x4400 a_col=0x00b8 gt_next=   46
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: TRACE state=3 gen_state=3 row=  1 a_rd=  103 a_val=0x4000 a_col=0x0002 gt_next=   75
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  107 a_val=0x4200 a_col=0x00c0 gt_next=   47
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: NEXT_ROW row=  1 →          2 comp_sel=1→0 row_count=   82
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   0 global_row=  0 gaddr= 0 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  108 a_val=0x4700 a_col=0x00c3 gt_next=   48
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: LOAD_DESC row=  2 crow=169 nnz=  71 off=  103 raw=003388ea9
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  109 a_val=0x3c00 a_col=0x00c9 gt_next=   49
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   1 global_row=  0 gaddr= 1 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: GEN_IDLE row=  2 cur_a_nnz=   71 state_next=     GEN_FETCH
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   2 global_row=  0 gaddr= 2 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  110 a_val=0x4400 a_col=0x00cd gt_next=   50
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: GEN_FETCH row=  2 t=    0 a_col=0x0002 k_idx=  2 b_nnz=   16 b_off=        39
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  111 a_val=0x4200 a_col=0x00ce gt_next=   51
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   3 global_row=  0 gaddr= 3 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   4 global_row=  0 gaddr= 4 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  112 a_val=0x4700 a_col=0x00d1 gt_next=   52
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  113 a_val=0x4600 a_col=0x00d2 gt_next=   53
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   5 global_row=  0 gaddr= 5 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   6 global_row=  0 gaddr= 6 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  114 a_val=0x4400 a_col=0x00d4 gt_next=   54
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  115 a_val=0x4200 a_col=0x00d5 gt_next=   55
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe.gen_c_bank[0].c_wr_dbg: C_WR #   7 global_row=  0 gaddr= 7 bank0=0xxxxx dv=x
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  116 a_val=0x4000 a_col=0x00d6 gt_next=   56
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  117 a_val=0x4600 a_col=0x00d9 gt_next=   57
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  118 a_val=0x4500 a_col=0x00e1 gt_next=   58
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  119 a_val=0x4000 a_col=0x00e4 gt_next=   59
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  120 a_val=0x4700 a_col=0x00e6 gt_next=   60
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  121 a_val=0x4000 a_col=0x00eb gt_next=   61
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  122 a_val=0x4600 a_col=0x00ee gt_next=   62
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  123 a_val=0x4700 a_col=0x00f4 gt_next=   63
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  124 a_val=0x4000 a_col=0x00f9 gt_next=   64
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  125 a_val=0x3c00 a_col=0x00fa gt_next=   65
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  126 a_val=0x4400 a_col=0x00fe gt_next=   66
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  127 a_val=0x4600 a_col=0x0002 gt_next=   67
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=2 row=  1 a_rd=  127 a_val=0x4600 a_col=0x0002 gt_next=   67
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=3 row=  1 a_rd=  127 a_val=0x4600 a_col=0x0002 gt_next=   67
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: TRACE state=3 gen_state=3 row=  1 a_rd=  127 a_val=0x4600 a_col=0x0002 gt_next=   67
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: NEXT_ROW row=  1 →          2 comp_sel=1→0 row_count=   82
+tb_mmap.u_accel.u_cluster.gen_pe[0].u_pe: NEXT_ROW row=  2 →          3 comp_sel=0→1 row_count=   87
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: LOAD_DESC row=  2 crow= 87 nnz=  65 off=  127 raw=003f88257
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: GEN_IDLE row=  2 cur_a_nnz=   65 state_next=     GEN_FETCH
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: GEN_FETCH row=  2 t=    0 a_col=0x0002 k_idx=  2 b_nnz=   16 b_off=        39
+tb_mmap.u_accel.u_cluster.gen_pe[2].u_pe: NEXT_ROW row=  2 →          3 comp_sel=0→1 row_count=   82
+tb_mmap.u_accel.u_cluster.gen_pe[1].u_pe: NEXT_ROW row=  2 →          3 comp_sel=0→1 row_count=   82
+** VVP Stop(0) **
+** Flushing output streams.
+** Current simulation time is 282470000 ticks.
+> ru  

@@ -123,7 +123,7 @@ module tb_pe_cluster;
 `ifdef COCOTB_SIM
     initial begin
         $dumpfile("sim_build/pe_cluster_dump.vcd");
-        $dumpvars(0, tb_pe_cluster.u_cluster.gen_pe[0].u_pe.state);
+        $dumpvars(0, tb_pe_cluster);
     end
 `endif
 

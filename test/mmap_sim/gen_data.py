@@ -23,13 +23,16 @@ import sys, os, struct
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'pe_sim'))
 from test_comp import load_comp_matrix, partition_a
 
-# DDR zone constants (must match axi_loader.v)
-# PE zone = 0x12000 words each: A_desc(1K) + A_col(32K) + A_val(32K)
-DDR_HEADER    = 0x000000
-DDR_PE_BASE   = [0x000100, 0x012000, 0x024000]  # PE0, PE1, PE2
-DDR_PE_STRIDE = 0x012000                     # 73,728 words per PE zone
-DDR_B_BASE    = 0x036000
-DDR_B_SIZE    = 0x010000                    # 64K words for B zone
+# DDR zone constants (word addresses, must match axi_loader.v layout).
+# AXI addresses in hardware use BYTE addressing = word_addr * 2.
+# PE zone = 0x12000 words each = 0x24000 bytes.
+PE_STRIDE_WORDS = 0x012000                     # 73,728 words per PE zone
+DDR_HEADER      = 0x000000
+
+# PE bases computed dynamically in DDRPacker.__init__():
+#   PE0 = 0x000100 (special, leaves room for header padding)
+#   PE_i (i>0) = i * PE_STRIDE_WORDS
+# B base = N_PE * PE_STRIDE_WORDS
 
 TOTAL_SIZE = 1 << 22  # 4M words = 8MB
 
@@ -41,12 +44,21 @@ class DDRPacker:
         self.n_pe = n_pe
         self.mem = bytearray(TOTAL_SIZE * 2)  # 2 bytes per word
 
-        # Load and partition
+        # Compute PE base addresses (word addresses)
+        # PE0 at 0x000100 (header padding); PE_i (i>0) at i * PE_STRIDE_WORDS
+        self.pe_bases = []
+        for i in range(n_pe):
+            if i == 0:
+                self.pe_bases.append(0x000100)
+            else:
+                self.pe_bases.append(i * PE_STRIDE_WORDS)
+        self.b_base = n_pe * PE_STRIDE_WORDS  # B zone starts after all PE zones
         Ad, Ac, Av, An, M, K   = load_comp_matrix(a_file, b_file.replace('B_0', 'A_0'), False)
         Bd, Bc, Bv, Bn, K2, N = load_comp_matrix(a_file.replace('A_0', 'B_0'), b_file, True)
         assert K == K2
         self.M, self.K, self.N, self.n_pe = M, K, N, n_pe
-        self.pe_desc, self.pe_col, self.pe_val = partition_a(Ad, Ac, Av, M, n_pe, Bd)
+        # partition_a returns (pe_desc, pe_val, pe_col) — note val BEFORE col!
+        self.pe_desc, self.pe_val, self.pe_col = partition_a(Ad, Ac, Av, M, n_pe, Bd)
         self.Bd, self.Bc, self.Bv = Bd, Bc, Bv
 
     def w16(self, addr, val):
@@ -70,7 +82,7 @@ class DDRPacker:
 
         # -- Per-PE A data --
         for pid in range(self.n_pe):
-            base = DDR_PE_BASE[pid]
+            base = self.pe_bases[pid]
             desc = self.pe_desc[pid]
             col  = self.pe_col[pid]
             val  = self.pe_val[pid]
@@ -96,24 +108,24 @@ class DDRPacker:
             print(f"PE{pid} @ 0x{base:04X}: {len(desc)} rows, {len(col)} nnz")
 
         # -- B data (broadcast) --
-        b_base = DDR_B_BASE
+        b_base = self.b_base
         # B_desc: 2 words per row
         for k in range(self.K):
             d = self.Bd[k]
             self.w16(b_base + k * 2 + 0, (d >>  0) & 0xFFFF)
             self.w16(b_base + k * 2 + 1, (d >> 16) & 0xFFFF)
 
-        # B_col
+        # B_col at base + 0x400 words
         col_off = b_base + 0x400
         for i, v in enumerate(self.Bc):
             self.w16(col_off + i, v & 0xFFFF)
 
-        # B_val
+        # B_val at base + 0x8000 words
         val_off = b_base + 0x8000
         for i, v in enumerate(self.Bv):
             self.w16(val_off + i, v & 0xFFFF)
 
-        print(f"B @ 0x{DDR_B_BASE:04X}: {self.K} rows, {len(self.Bc)} nnz")
+        print(f"B @ 0x{self.b_base:04X}: {self.K} rows, {len(self.Bc)} nnz")
 
     def write(self, filename='ram.txt'):
         """Write packed binary to file (same format as reference ram.txt)."""

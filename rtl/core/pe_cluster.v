@@ -58,10 +58,10 @@ module pe_cluster #(
     // C bank read ports (per PE, packed).  Each PE owns an independent C bank;
     // addr = {local_row[C_ROW_ADDR_BITS-1:0], gaddr[4:0]}, data = 16 FP16 lanes,
     // c_rd_row = global C row of the addressed local slot.
-    input  wire [N_PE-1:0]                          c_rd_en,
-    input  wire [N_PE*(`C_ROW_ADDR_BITS+5)-1:0]     c_rd_addr,
-    output wire [N_PE*16*16-1:0]                    c_rd_data,
-    output wire [N_PE*`MAX_DIM_BITS-1:0]            c_rd_row
+    input  wire [N_PE-1:0]                          c_rd_en,  //读使能
+    input  wire [N_PE*(`C_ROW_ADDR_BITS+5)-1:0]     c_rd_addr,   //读地址
+    output wire [N_PE*16*16-1:0]                    c_rd_data,  //读数据  16lane
+    output wire [N_PE*`MAX_DIM_BITS-1:0]            c_rd_row  //行号    
 );
 
     localparam C_RD_ADDR_W = `C_ROW_ADDR_BITS + 5;

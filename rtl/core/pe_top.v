@@ -467,6 +467,16 @@ module pe_top #(
         a_val_r <= A_val_buf[a_rd_addr];
         a_col_r <= A_col_buf[a_rd_addr];
     end
+`ifdef COCOTB_SIM
+    // DEBUG: trace a_col_r changes around first few compute cycles (PE0 only)
+    always @(posedge aclk) begin
+        if (state == PE_CLEAR_ACC || state == PE_STREAM_INSTRS || state == PE_LOAD_ROW_DESC)
+            if (row_idx <= 1)
+                $display("%m: TRACE state=%d gen_state=%d row=%d a_rd=%d a_val=0x%04x a_col=0x%04x gt_next=%d",
+                    state, gen_state, row_idx, a_rd_addr,
+                    A_val_buf[a_rd_addr], A_col_buf[a_rd_addr], gen_t_next);
+    end
+`endif
 
     // Phase B element: abs index = elem_b_off + elem_j; bank = abs%16, addr = abs/16
     wire [16:0] elem_b_abs  = elem_b_off + {1'b0, elem_j};
@@ -570,11 +580,21 @@ module pe_top #(
                 if (state == PE_CLEAR_ACC && !op_mode) begin
                     gen_t <= 0;
                     gen_state <= (cur_a_nnz==0) ? GEN_ROW_DONE : GEN_FETCH;
+                    // DEBUG
+                    if (row_idx < 3)
+                        $display("%m: GEN_IDLE row=%d cur_a_nnz=%d state_next=%s",
+                            row_idx, cur_a_nnz,
+                            (cur_a_nnz==0) ? "ROW_DONE(SKIP)" : "GEN_FETCH");
                 end
             end
             GEN_FETCH: begin
                 gen_a_val<=fetch_a_val; gen_b_off<=fetch_b_off; gen_b_nnz<=fetch_b_nnz;
                 gen_t<=gen_t+16'd1;
+                // DEBUG: first A-nnz of first 3 rows
+                if (row_idx < 3 && gen_t == 0)
+                    $display("%m: GEN_FETCH row=%d t=%d a_col=0x%04x k_idx=%d b_nnz=%d b_off=%d",
+                        row_idx, gen_t, a_col_r, fetch_k_idx[`B_ROW_ADDR_BITS-1:0],
+                        fetch_b_nnz, fetch_b_off);
                 if (fetch_b_nnz==0) begin
                     if (gen_t+16'd1 >= cur_a_nnz) gen_state<=GEN_ROW_DONE;
                 end else gen_state<=GEN_EMIT;
@@ -1282,6 +1302,21 @@ module pe_top #(
                     mem[c_wr_addr] <= c_wr_dv[cb] ? c_wr_dat[cb*16 +: 16]
                                                   : 16'h0000;
             end
+`ifdef COCOTB_SIM
+            // DEBUG: log first few C writes globally (limit total per PE)
+            if (cb == 0) begin : c_wr_dbg
+                reg [9:0] wr_cnt;
+                always @(posedge aclk) begin
+                    if (!aresetn) wr_cnt <= 0;
+                    else if (c_wr_en && wr_cnt < 8) begin
+                        $display("%m: C_WR #%d global_row=%d gaddr=%d bank0=0x%04x dv=%d",
+                            wr_cnt, c_wr_row, c_wr_gaddr,
+                            c_wr_dat[15:0], c_wr_dv[0]);
+                        wr_cnt <= wr_cnt + 1;
+                    end
+                end
+            end
+`endif
             always @(posedge aclk) begin
                 if (c_rd_en)
                     c_rd_data[cb*16 +: 16] <= mem[c_rd_addr];
@@ -1308,6 +1343,13 @@ module pe_top #(
                     cur_c_row <= { {( `MAX_DIM_BITS-9){1'b0}}, A_desc_buf[row_idx][8:0]};
                     cur_a_off <= {18'b0, A_desc_buf[row_idx][32:19]};
                     cur_a_nnz <= {6'b0,  A_desc_buf[row_idx][18:9]};
+                    // DEBUG
+                    if (row_idx < 3)
+                        $display("%m: LOAD_DESC row=%d crow=%d nnz=%d off=%d raw=%h",
+                            row_idx, A_desc_buf[row_idx][8:0],
+                            A_desc_buf[row_idx][18:9],
+                            A_desc_buf[row_idx][32:19],
+                            A_desc_buf[row_idx]);
                 end
                 // New row starting on this acc -> its generation is not done yet.
                 PE_CLEAR_ACC: if (!comp_sel) gen_done_acc_0<=0; else gen_done_acc_1<=0;
@@ -1317,6 +1359,10 @@ module pe_top #(
                 PE_NEXT_ROW: begin
                     row_idx<=row_idx+1; comp_sel<=~comp_sel;
                     if (!comp_sel) gen_done_acc_0<=1; else gen_done_acc_1<=1;
+                    // DEBUG
+                    if (row_idx < 3)
+                        $display("%m: NEXT_ROW row=%d → %d comp_sel=%d→%d row_count=%d",
+                            row_idx, row_idx+1, comp_sel, ~comp_sel, row_count);
                 end
                 PE_DONE: if (!acc_busy_0&&!acc_busy_1) done<=1;
             endcase

@@ -555,6 +555,40 @@ def fp16_ulp_diff(a, b):
         return b ^ 0x8000 if b & 0x8000 else b  # signed-magnitude → biased
     return abs(bits(a) - bits(b))
 
+def _dump_c_results(M, N, Ad, gf, cp, n_pe, row_counts):
+    """Dump golden and hardware C matrices to text files for manual comparison."""
+    import os
+    out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sim_build')
+    os.makedirs(out_dir, exist_ok=True)
+    fgold = os.path.join(out_dir, 'results_golden.txt')
+    fhw   = os.path.join(out_dir, 'results_hardware.txt')
+
+    # Helper: write a matrix to file as [row][col] = value
+    def _write_matrix(fname, M, N, Ad, gf, accessor, label):
+        lines = []
+        lines.append(f"# {label} C matrix: {M} rows × {N} cols")
+        lines.append(f"# format: row col value (non-zero only)")
+        lines.append(f"# PE distribution: {' '.join(f'PE{p}={row_counts[p]}' for p in range(n_pe))}")
+        cnt = 0
+        for ri in range(M):
+            gid = a_desc_crow(Ad[ri])
+            for j in range(N):
+                v = accessor(gid, j)
+                if v != 0.0:
+                    lines.append(f"{gid:4d} {j:4d} {v:12.6f}")
+                    cnt += 1
+        with open(fname, 'w') as f:
+            f.write('\n'.join(lines))
+        return cnt
+
+    def _golden_get(gid, j): return float(gf[gid][j])
+    def _hw_get(gid, j): return float(cp.get(gid * C_ROW_STRIDE + j, 0.0))
+
+    ng = _write_matrix(fgold, M, N, Ad, gf, _golden_get, "Golden")
+    nh = _write_matrix(fhw,   M, N, Ad, gf, _hw_get,     "Hardware")
+    print(f"[DUMP] Golden: {ng} entries → {fgold}")
+    print(f"[DUMP] Hardware: {nh} entries → {fhw}")
+
 def verify(dut, M, N, Ad, gf, cp):
     """Compare FP16 C buffer against golden, tolerating ±4 ULP rounding differences.
 
@@ -714,6 +748,10 @@ async def test_comp_case1_p1(dut):
     dut._log.info("PE done at cycle %d, C buffer entries=%d", cyc, len(cp))
 
     e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp)
+
+    # --- Dump golden and hardware C to text files for manual inspection ---
+    _dump_c_results(M, N, Ad, gf, cp, n_pe, row_counts)
+
     if e == 0:
         dut._log.info("Verification: PASSED (%d nz correct, %d z correct)", nz_ok, z_ok)
     else:
@@ -1011,6 +1049,10 @@ async def test_comp_case1_cluster(dut):
     dut._log.info("Cluster done at cycle %d, C buffer entries=%d", cyc, len(cp))
 
     e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp)
+
+    # --- Dump golden and hardware C to text files for manual inspection ---
+    _dump_c_results(M, N, Ad, gf, cp, n_pe, row_counts)
+
     if e == 0:
         dut._log.info("Verification: PASSED (%d nz correct, %d z correct)", nz_ok, z_ok)
     else:

@@ -22,7 +22,8 @@ set PATH=%LIBPYTHON_DIR%;%PATH%
 echo ========================================
 echo [1/2] Compiling mmap-DDR accelerator...
 echo ========================================
-if not exist sim_build mkdir sim_build
+if exist sim_build rmdir /s /q sim_build
+mkdir sim_build
 
 iverilog -g2012 ^
     -DCOCOTB_SIM=1 ^
@@ -33,6 +34,7 @@ iverilog -g2012 ^
     tb_mmap.v ^
     ../../rtl/core/accelerator_axi_top.v ^
     ../../rtl/core/axi_loader.v ^
+	    ../../rtl/core/axi_c_drain.v ^
     ../../rtl/core/pe_cluster.v ^
     ../../rtl/core/pe_top.v ^
     ../../rtl/core/pe_mul_array.v ^
