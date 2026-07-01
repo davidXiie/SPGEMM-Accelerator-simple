@@ -10,7 +10,10 @@ cd "$SCRIPT_DIR"
 PROJ_ROOT="${PROJ_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 
 export COCOTB_TEST_MODULES="${COCOTB_TEST_MODULES:-test_comp}"
-export COCOTB_TESTCASE="${COCOTB_TESTCASE:-test_comp_case1_cluster}"
+# Default = the TILED cluster flow (matches the real 64-col output tiling; works
+# with the default C_BANK_COLS=64).  Non-tiled tests (e.g. case1_cluster, N=121 in
+# one pass) need the full-width C bank: prepend C_BANK_COLS=512.
+export COCOTB_TESTCASE="${COCOTB_TESTCASE:-test_comp_tiled_cluster}"
 export COCOTB_TOPLEVEL="${COCOTB_TOPLEVEL:-tb_pe_cluster}"
 export COCOTB_LOG_LEVEL="${COCOTB_LOG_LEVEL:-INFO}"
 export COCOTB_SIM=1
@@ -38,6 +41,7 @@ iverilog -g2012 \
     -DCOCOTB_SIM=1 \
     -DSIMULATION \
     -DC_ROW_ADDR_BITS="${C_ROW_ADDR_BITS:-7}" \
+    -DC_BANK_COLS="${C_BANK_COLS:-64}" \
     -I"$PROJ_ROOT/rtl/include" \
     -s "$COCOTB_TOPLEVEL" \
     -o sim_build/sim_cluster.vvp \

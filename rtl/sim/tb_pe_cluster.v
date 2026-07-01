@@ -98,7 +98,7 @@ module tb_pe_cluster;
     // C bank read ports (per PE, packed).  Cocotb drives the whole bus,
     // setting only the target PE's field per read.
     //=========================================================================
-    localparam C_RD_ADDR_W = `C_ROW_ADDR_BITS + $clog2(`MAX_N/`N_MAC);
+    localparam C_RD_ADDR_W = `C_ROW_ADDR_BITS + $clog2(`C_BANK_COLS/`N_MAC);
     reg  [N_PE-1:0]                  c_rd_en;
     reg  [N_PE*C_RD_ADDR_W-1:0]     c_rd_addr;
     wire [N_PE*`N_MAC*16-1:0]           c_rd_data;

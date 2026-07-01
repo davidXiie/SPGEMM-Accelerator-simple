@@ -146,7 +146,7 @@ def align_b_16wide(Bd, Bc, Bv):
         new_off += nnz
     return new_Bd, new_Bc, new_Bv
 
-def slice_b_columns(Bd, Bc, Bv, K, N, t, T):
+def slice_b_columns(Bd, Bc, Bv, K, N, t, tw):
     """Column-tile of B for output-column tiling.
 
     Tile t covers GLOBAL columns [t*tw, t*tw+width).  Returns a CSR of B
@@ -156,7 +156,6 @@ def slice_b_columns(Bd, Bc, Bv, K, N, t, T):
     the PE once per tile (with N=width) and re-basing the output columns by lo
     reconstructs the full C while only 1/T of B need be resident at a time.
     """
-    tw  = (N + T - 1) // T
     lo  = t * tw
     hi  = min(lo + tw, N)
     width = hi - lo
@@ -520,7 +519,8 @@ async def read_c_bank(c_rd_en, c_rd_addr, c_rd_data, c_rd_row, clk, rc, N):
     """
     cp = {}
     NB      = len(c_rd_data) // 16                      # drain lanes/group (= N_MAC)
-    GADDR_W = (MAX_N.bit_length() - 1) - (NB.bit_length() - 1)   # = log2(MAX_N/NB)
+    C_ROW_BITS = int(os.environ.get('C_ROW_ADDR_BITS', 8))       # matches run_comp.sh -D
+    GADDR_W = len(c_rd_addr) - C_ROW_BITS                        # = log2(C_BANK_COLS/NB)
     ngroups = (N + NB - 1) // NB
     c_rd_en.value = 1
     for local in range(rc):
@@ -646,10 +646,11 @@ async def test_comp_tiled_p0(dut):
     once per tile (N=tile width, tile-local columns), and reassemble the full C.
     Proves only 1/T of B needs to be resident at a time — the basis for cutting
     the per-PE B BRAM in the cluster."""
-    T = 2
+    TILE_W = 64
     Ad, Ac, Av, An, M, K  = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False)
     Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True)
     assert K == K2
+    T = (N + TILE_W - 1) // TILE_W
     Bc_hw = [int(c) & 0xFFFF for c in Bc]
     gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc_hw, Bv, M, N, K)
 
@@ -662,7 +663,7 @@ async def test_comp_tiled_p0(dut):
 
     cp_full = {}
     for t in range(T):
-        Bd_t, Bc_t, Bv_t, lo, width = slice_b_columns(Bd, Bc_hw, Bv, K2, N, t, T)
+        Bd_t, Bc_t, Bv_t, lo, width = slice_b_columns(Bd, Bc_hw, Bv, K2, N, t, TILE_W)
         await reset_pulse(dut)
         dut.N.value = width
         await LBdata(dut, Bc_t, Bv_t)
@@ -936,7 +937,8 @@ async def run_cluster(dut, row_counts, n_pe, pe_desc, N, to=50000000):
     C_RD_ADDR_W  = len(dut.c_rd_addr) // n_pe
     MAX_DIM_BITS = len(dut.c_rd_row)  // n_pe
     NB      = (len(dut.c_rd_data) // n_pe) // 16          # drain lanes/group (= N_MAC)
-    GADDR_W = (MAX_N.bit_length() - 1) - (NB.bit_length() - 1)   # = log2(MAX_N/NB)
+    C_ROW_BITS = int(os.environ.get('C_ROW_ADDR_BITS', 7))       # matches run_cluster.sh -D
+    GADDR_W = C_RD_ADDR_W - C_ROW_BITS                           # = log2(C_BANK_COLS/NB)
     ngroups = (N + NB - 1) // NB
     for pid in range(n_pe):
         for local in range(row_counts[pid]):
@@ -963,7 +965,11 @@ async def run_cluster(dut, row_counts, n_pe, pe_desc, N, to=50000000):
 #=========================================================================
 @cocotb.test()
 async def test_comp_case1_cluster(dut):
-    """N_PE-wide cluster: A(251,257) x B(257,121), rows distributed round-robin."""
+    """N_PE-wide cluster: A(251,257) x B(257,121), rows distributed round-robin.
+
+    NON-TILED (full N=121 in one pass) -> needs the full-width on-chip C bank:
+    run with  C_BANK_COLS=512  (the default 64 only fits one 64-col output tile).
+    """
     Ad, Ac, Av, An, M, K  = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False)
     Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True)
     assert K == K2
@@ -1027,10 +1033,11 @@ async def test_comp_tiled_cluster(dut):
     B column-tiled and broadcast ONE tile at a time so each PE only ever holds
     1/T of B.  This is the configuration that lets more PEs fit under the BRAM
     cap (B is replicated per PE)."""
-    T = 2
+    TILE_W = 64
     Ad, Ac, Av, An, M, K  = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False)
     Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True)
     assert K == K2
+    T = (N + TILE_W - 1) // TILE_W
     Bc_hw = [int(c) & 0xFFFF for c in Bc]
     gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc_hw, Bv, M, N, K)
 
@@ -1065,7 +1072,7 @@ async def test_comp_tiled_cluster(dut):
     lane_busy_sum = [0] * _NM
     rmw_busy_sum  = [0] * _NM
     for t in range(T):
-        Bd_t, Bc_t, Bv_t, lo, width = slice_b_columns(Bd, Bc_hw, Bv, K2, N, t, T)
+        Bd_t, Bc_t, Bv_t, lo, width = slice_b_columns(Bd, Bc_hw, Bv, K2, N, t, TILE_W)
         await reset_pulse_cluster(dut)
         dut.N.value = width
         await LBdata_cluster(dut, Bc_t, Bv_t)
@@ -1121,11 +1128,12 @@ async def test_comp_peak_cluster(dut):
     C_ROW_ADDR_BITS=8 (M=512 over 3 PEs = 171 rows/PE > 128).  Run with:
         C_ROW_ADDR_BITS=8 COCOTB_TESTCASE=test_comp_peak_cluster bash run_cluster.sh
     """
-    T = 2
+    TILE_W = 64
     sub = os.environ.get('PEAK_SUBDIR', 'TC2_PEAK')   # override for smaller dense repros
     Ad, Ac, Av, An, M, K  = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False, subdir=sub)
     Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True,  subdir=sub)
     assert K == K2
+    T = (N + TILE_W - 1) // TILE_W
     Bc_hw = [int(c) & 0xFFFF for c in Bc]
     gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc_hw, Bv, M, N, K)
 
@@ -1154,7 +1162,7 @@ async def test_comp_peak_cluster(dut):
     dut._log.info("=" * 70)
     dut._log.info("%d-PE PEAK CLUSTER: A(%d,%d)xB(%d,%d) -> C(%d,%d), T=%d", n_pe, M, K, K2, N, M, N, T)
     dut._log.info("  A rows/PE=%s  A nnz/PE=%s (slot %d)  B nnz=%d (tile~%d, slot %d)",
-                  row_counts, a_nnz_pe, 28672, Bn, Bn // T, 40960)
+                  row_counts, a_nnz_pe, 28672, Bn, Bn // T, 16384)
 
     cp_full = {}
     tot_cyc = 0
@@ -1162,7 +1170,7 @@ async def test_comp_peak_cluster(dut):
     lane_busy_sum = [0] * _NM
     rmw_busy_sum  = [0] * _NM
     for t in range(T):
-        Bd_t, Bc_t, Bv_t, lo, width = slice_b_columns(Bd, Bc_hw, Bv, K2, N, t, T)
+        Bd_t, Bc_t, Bv_t, lo, width = slice_b_columns(Bd, Bc_hw, Bv, K2, N, t, TILE_W)
         await reset_pulse_cluster(dut)
         dut.N.value = width
         await LBdata_cluster(dut, Bc_t, Bv_t)
