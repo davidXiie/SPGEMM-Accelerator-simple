@@ -104,7 +104,7 @@ async def test_mmap(dut):
     n_pe = 3
 
     gv, gf = compute_golden_c(Ad, Ac, Av, Bd, Bc, Bv, M, N, K)
-    pe_desc, pe_col, pe_val = partition_a(Ad, Ac, Av, M, n_pe, Bd)
+    pe_desc, pe_val, pe_col = partition_a(Ad, Ac, Av, M, n_pe, Bd)
     row_counts = [len(pe_desc[p]) for p in range(n_pe)]
     nnz_counts  = [len(pe_col[p])  for p in range(n_pe)]
 
@@ -223,7 +223,6 @@ async def test_mmap(dut):
     e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp_mmap)
 
     # --- Dump C results to text files in sim_build/ ---
-    import os as _os
     out_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'sim_build')
     _os.makedirs(out_dir, exist_ok=True)
     fgold     = _os.path.join(out_dir, 'results_golden.txt')

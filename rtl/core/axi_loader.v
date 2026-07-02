@@ -150,7 +150,6 @@ module axi_loader #(
     // Single-beat element counters (for COL/VAL single-beat reads)
     reg [4:0]   ecnt;                     // element counter within a beat (0..31)
     reg [31:0]  a_col_off;                // running byte offset for A col/val reads
-    reg [31:0]  b_col_off;                // running byte offset for B col/val reads
 
     //=========================================================================
     // Per-PE DDR byte-base address function

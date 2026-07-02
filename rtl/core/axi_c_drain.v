@@ -80,7 +80,7 @@ module axi_c_drain #(
     reg [15:0]         gpair;            // group-pair index (0, 1, 2, ...)
     reg [MAX_DIM_BITS-1:0] global_r;     // global C row
     reg [4:0]          ngroups;          // ceil(N/32) — groups of 32 cols per beat
-    reg [4:0]          npairs;           // ceil(ngroups/2)
+    reg [4:0]          npairs;           // = ngroups = ceil(N/32), one AXI beat per group
 
     // Data pipeline
     reg [255:0]        g0_data;          // latched first group data

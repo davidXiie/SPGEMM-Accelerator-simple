@@ -1,5 +1,5 @@
 //=============================================================================
-// accelerator_axi_top.v — AXI-direct accelerator, 5-state FSM.
+// accelerator_axi_top.v — AXI-direct accelerator, 6-state FSM.
 //   S_IDLE → S_LOAD → S_COMPUTE → S_DRAIN → S_DONE
 //
 // axi_loader reads A+B from DDR via AXI4 Read → PE cluster computes →
@@ -74,10 +74,16 @@ module accelerator_axi_top #(
 
     wire load_done, cluster_done, drain_done;
     reg  prev_load, prev_comp, prev_drain;
-    always @(posedge clk) begin
-        prev_load  <= (state == S_LOAD);
-        prev_comp  <= (state == S_COMPUTE);
-        prev_drain <= (state == S_DRAIN);
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            prev_load  <= 1'b0;
+            prev_comp  <= 1'b0;
+            prev_drain <= 1'b0;
+        end else begin
+            prev_load  <= (state == S_LOAD);
+            prev_comp  <= (state == S_COMPUTE);
+            prev_drain <= (state == S_DRAIN);
+        end
     end
     wire load_rise  = (state == S_LOAD)    && !prev_load;
     wire comp_rise  = (state == S_COMPUTE) && !prev_comp;
