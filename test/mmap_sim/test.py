@@ -220,8 +220,12 @@ async def test_mmap(dut):
     cp_pe = await drain_c_from_pe(dut, n_pe, row_counts, N)
     dut._log.info("C entries (from PE): %d", len(cp_pe))
 
-    # --- Verify hardware drain results ---
-    e, nz_ok, z_ok = verify(dut, M, N, Ad, gf, cp_mmap)
+    # --- Verify: DDR drain output vs golden ---
+    dut._log.info("Verifying DDR drain output...")
+    e_ddr, nz_ddr, z_ddr = verify(dut, M, N, Ad, gf, cp_mmap)
+    # --- Verify: PE C bank output vs golden ---
+    dut._log.info("Verifying PE C bank output...")
+    e_pe, nz_pe, z_pe = verify(dut, M, N, Ad, gf, cp_pe)
 
     # --- Dump C results to text files in sim_build/ ---
     out_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'sim_build')
@@ -247,11 +251,14 @@ async def test_mmap(dut):
                         f.write(f"{gid:4d} {j:4d} {v:12.6f}\n")
         dut._log.info("Dumped %s → %s", label, fname)
 
-    if e == 0:
-        dut._log.warning("PASSED (%d nz, %d z)", nz_ok, z_ok)
+    if e_ddr == 0 and e_pe == 0:
+        dut._log.warning("PASSED — DDR: %d nz %d z | PE: %d nz %d z",
+                         nz_ddr, z_ddr, nz_pe, z_pe)
     else:
-        dut._log.error("FAILED (%d mismatches)", e)
-    assert e == 0, f"{e} mismatches"
+        if e_ddr: dut._log.error("DDR FAILED (%d mismatches)", e_ddr)
+        if e_pe:  dut._log.error("PE  FAILED (%d mismatches)", e_pe)
+    assert e_ddr == 0, f"DDR: {e_ddr} mismatches"
+    assert e_pe  == 0, f"PE:  {e_pe} mismatches"
 
     total_macs = count_total_macs(Ad, Ac, Bd, M)
     dut._log.info("STATS: cycles=%d MAC=%d ops/cyc=%.2f",

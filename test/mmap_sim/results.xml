@@ -1,6 +1,6 @@
 <testsuites name="results">
   <testsuite name="all" package="all">
-    <property name="random_seed" value="1782958497" />
-    <testcase name="test_mmap" classname="test" file="D:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\mmap_sim\test.py" lineno="97" time="111.09383964538574" sim_time_ns="844780.0" ratio_time="7604.202021431237" />
+    <property name="random_seed" value="1782963393" />
+    <testcase name="test_mmap" classname="test" file="D:\BaiduSyncdisk\PROJECT\SPGEMM-Accelerator-simple\test\mmap_sim\test.py" lineno="97" time="122.63518476486206" sim_time_ns="844780.0" ratio_time="6888.561399567034" />
   </testsuite>
 </testsuites>

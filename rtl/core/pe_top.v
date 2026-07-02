@@ -580,21 +580,23 @@ module pe_top #(
                 if (state == PE_CLEAR_ACC && !op_mode) begin
                     gen_t <= 0;
                     gen_state <= (cur_a_nnz==0) ? GEN_ROW_DONE : GEN_FETCH;
-                    // DEBUG
+`ifdef COCOTB_SIM
                     if (row_idx < 3)
                         $display("%m: GEN_IDLE row=%d cur_a_nnz=%d state_next=%s",
                             row_idx, cur_a_nnz,
                             (cur_a_nnz==0) ? "ROW_DONE(SKIP)" : "GEN_FETCH");
+`endif
                 end
             end
             GEN_FETCH: begin
                 gen_a_val<=fetch_a_val; gen_b_off<=fetch_b_off; gen_b_nnz<=fetch_b_nnz;
                 gen_t<=gen_t+16'd1;
-                // DEBUG: first A-nnz of first 3 rows
+`ifdef COCOTB_SIM
                 if (row_idx < 3 && gen_t == 0)
                     $display("%m: GEN_FETCH row=%d t=%d a_col=0x%04x k_idx=%d b_nnz=%d b_off=%d",
                         row_idx, gen_t, a_col_r, fetch_k_idx[`B_ROW_ADDR_BITS-1:0],
                         fetch_b_nnz, fetch_b_off);
+`endif
                 if (fetch_b_nnz==0) begin
                     if (gen_t+16'd1 >= cur_a_nnz) gen_state<=GEN_ROW_DONE;
                 end else gen_state<=GEN_EMIT;
@@ -1343,13 +1345,14 @@ module pe_top #(
                     cur_c_row <= { {( `MAX_DIM_BITS-9){1'b0}}, A_desc_buf[row_idx][8:0]};
                     cur_a_off <= {18'b0, A_desc_buf[row_idx][32:19]};
                     cur_a_nnz <= {6'b0,  A_desc_buf[row_idx][18:9]};
-                    // DEBUG
+`ifdef COCOTB_SIM
                     if (row_idx < 3)
                         $display("%m: LOAD_DESC row=%d crow=%d nnz=%d off=%d raw=%h",
                             row_idx, A_desc_buf[row_idx][8:0],
                             A_desc_buf[row_idx][18:9],
                             A_desc_buf[row_idx][32:19],
                             A_desc_buf[row_idx]);
+`endif
                 end
                 // New row starting on this acc -> its generation is not done yet.
                 PE_CLEAR_ACC: if (!comp_sel) gen_done_acc_0<=0; else gen_done_acc_1<=0;
@@ -1359,10 +1362,11 @@ module pe_top #(
                 PE_NEXT_ROW: begin
                     row_idx<=row_idx+1; comp_sel<=~comp_sel;
                     if (!comp_sel) gen_done_acc_0<=1; else gen_done_acc_1<=1;
-                    // DEBUG
+`ifdef COCOTB_SIM
                     if (row_idx < 3)
                         $display("%m: NEXT_ROW row=%d → %d comp_sel=%d→%d row_count=%d",
                             row_idx, row_idx+1, comp_sel, ~comp_sel, row_count);
+`endif
                 end
                 PE_DONE: if (!acc_busy_0&&!acc_busy_1) done<=1;
             endcase
