@@ -150,17 +150,17 @@
 `define PRODUCT_WIDTH       25   // {col_id[8:0], fp16_val[15:0]}
 `define PRODUCT_GROUP_WIDTH (`N_MAC + `N_MAC * `PRODUCT_WIDTH)  // 16+16*25 = 416
 
-`define TASK_FIFO_DEPTH     512
-`define TASK_FIFO_DEPTH_LOG 9
+`define TASK_FIFO_DEPTH     128
+`define TASK_FIFO_DEPTH_LOG 7
 
-`define PROD_FIFO_DEPTH     256
-`define PROD_FIFO_DEPTH_LOG  8
+`define PROD_FIFO_DEPTH     128
+`define PROD_FIFO_DEPTH_LOG  7
 
 // Pointer-task FIFO: one entry per A-nonzero (a_val[15:0], b_off[16:0], num_groups[6:0])
 // +1 MSB carries comp_sel (target ping-pong accumulator), see TASK_GROUP_WIDTH.
 `define PTR_TASK_WIDTH      41
-`define PTR_FIFO_DEPTH      512
-`define PTR_FIFO_DEPTH_LOG  9
+`define PTR_FIFO_DEPTH      128
+`define PTR_FIFO_DEPTH_LOG  7
 
 // Per-bank scatter FIFO depth (in the row accumulator).  This FIFO is multi-write-
 // port -> registers+mux, NOT RAM-mappable, so it is a real LUT cost: x16 banks x2

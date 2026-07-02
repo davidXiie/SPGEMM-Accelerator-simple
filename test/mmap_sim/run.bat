@@ -40,7 +40,6 @@ iverilog -g2012 ^
     ../../rtl/core/pe_mul_array.v ^
     ../../rtl/core/fp16_mul.v ^
     ../../rtl/core/fp16_add.v ^
-    ../../rtl/core/accum_bank.v ^
     ../../rtl/core/accum_bank_16.v ^
     ../../rtl/core/row_accumulator_16bank.v ^
     ../../rtl/infrastructure/scratchpad.v
