@@ -40,7 +40,8 @@ TOTAL_SIZE = 1 << 22  # 4M words = 8MB
 class DDRPacker:
     """Packs partitioned A/B into DDR binary layout."""
 
-    def __init__(self, a_file='A_0_Index.txt', b_file='B_0_Matrix.txt', n_pe=3):
+    def __init__(self, a_index='A_0_Index.txt', a_matrix='A_0_Matrix.txt',
+                 b_index='B_0_Index.txt', b_matrix='B_0_Matrix.txt', n_pe=3):
         self.n_pe = n_pe
         self.mem = bytearray(TOTAL_SIZE * 2)  # 2 bytes per word
 
@@ -53,8 +54,8 @@ class DDRPacker:
             else:
                 self.pe_bases.append(i * PE_STRIDE_WORDS)
         self.b_base = n_pe * PE_STRIDE_WORDS  # B zone starts after all PE zones
-        Ad, Ac, Av, An, M, K   = load_comp_matrix(a_file, b_file.replace('B_0', 'A_0'), False)
-        Bd, Bc, Bv, Bn, K2, N = load_comp_matrix(a_file.replace('A_0', 'B_0'), b_file, True)
+        Ad, Ac, Av, An, M, K   = load_comp_matrix(a_index, a_matrix, False)
+        Bd, Bc, Bv, Bn, K2, N = load_comp_matrix(b_index, b_matrix, True)
         assert K == K2
         self.M, self.K, self.N, self.n_pe = M, K, N, n_pe
         # partition_a returns (pe_desc, pe_val, pe_col) — note val BEFORE col!

@@ -169,6 +169,21 @@ class AXIWriteResponder:
         except ValueError:
             return 0
 
+    def _val_wdata(self, wdata_signal):
+        """Extract 512-bit WDATA as 32 x 16-bit words, each X→0 safe."""
+        s = str(wdata_signal.value)
+        n = len(s)
+        val = 0
+        for w in range(32):
+            hi = n - w * 16
+            lo = max(0, n - (w + 1) * 16)
+            word_str = s[lo:hi] if hi > 0 else ''
+            wv = 0
+            for ch in word_str:
+                wv = (wv << 1) | (1 if ch == '1' else 0)
+            val |= wv << (w * 16)
+        return val
+
     async def run(self):
         """Main responder loop. Run as a background coroutine."""
         self.reset()
@@ -191,7 +206,7 @@ class AXIWriteResponder:
 
             # --- W handshake ---
             if aw_pending and self._val(self.wvalid) and self._val(self.wready):
-                data      = self._val(self.wdata)
+                data      = self._val_wdata(self.wdata)
                 wstrb_val = self._val(self.wstrb)
                 beat_addr = aw_addr + w_count * 64
                 self._write_beat(beat_addr, data, wstrb_val)

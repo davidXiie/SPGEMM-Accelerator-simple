@@ -98,8 +98,8 @@ async def drain_c_from_pe(dut, n_pe, row_counts, N):
 async def test_mmap(dut):
     """Main test: mmap DDR → AXI responder → axi_loader → PE → compute → drain C."""
     # --- Step 1: Load matrix & compute golden ---
-    Ad, Ac, Av, An, M, K  = load_comp_matrix('A_0_Index.txt', 'A_0_Matrix.txt', False)
-    Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_0_Index.txt', 'B_0_Matrix.txt', True)
+    Ad, Ac, Av, An, M, K  = load_comp_matrix('A_2_Index.txt', 'A_2_Matrix.txt', False)
+    Bd, Bc, Bv, Bn, K2, N = load_comp_matrix('B_2_Index.txt', 'B_2_Matrix.txt', True)
     assert K == K2
     n_pe = 3
 
@@ -131,7 +131,8 @@ async def test_mmap(dut):
     memory = mmap.mmap(-1, 1 << 23)  # 8MB anonymous memory
 
     from gen_data import DDRPacker
-    packer = DDRPacker()
+    packer = DDRPacker(a_index='A_2_Index.txt', a_matrix='A_2_Matrix.txt',
+                        b_index='B_2_Index.txt', b_matrix='B_2_Matrix.txt')
     packer.pack()
     row_counts, nnz_counts = packer.get_counts()
 
