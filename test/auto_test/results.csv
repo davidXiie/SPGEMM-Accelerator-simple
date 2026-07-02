@@ -1,0 +1,13 @@
+name,M,K,N,density,ddr_pass,pe_pass,mismatches_ddr,mismatches_pe,cycles,mac,ops_cyc,elapsed_s
+N33_small,32,32,33,0.15,True,True,,,,,,2.0
+N32_align,64,64,32,0.15,True,True,,,,,,3.9
+N121_rect,64,128,121,0.15,True,True,,,,,,12.4
+N64_rrect,128,64,64,0.1,True,True,,,,,,5.8
+N257_big,128,128,257,0.1,True,True,,,,,,24.8
+N335_large,256,256,335,0.1,True,True,,,,,,95.9
+M16_thin,16,512,64,0.05,True,True,,,,,,4.4
+K16_flat,512,16,256,0.05,True,True,,,,,,31.3
+N512_max,512,512,512,0.05,True,True,,,,,,176.3
+N512_dense,256,256,512,0.3,False,False,mismatches,mismatches,,,,719.2
+N97_mid,48,256,97,0.2,True,True,,,,,,20.0
+irregular,300,200,150,0.2,True,True,,,,,,127.5

@@ -1,0 +1,14 @@
+[
+    {"name": "N33_small",   "M": 32,  "K": 32,  "N": 33,  "density": 0.15, "desc": "N not multiple of 32 (smallest)"},
+    {"name": "N32_align",   "M": 64,  "K": 64,  "N": 32,  "density": 0.15, "desc": "N=32 exact alignment"},
+    {"name": "N121_rect",   "M": 64,  "K": 128, "N": 121, "density": 0.15, "desc": "rectangular + N unaligned"},
+    {"name": "N64_rrect",   "M": 128, "K": 64,  "N": 64,  "density": 0.10, "desc": "rectangular reverse"},
+    {"name": "N257_big",    "M": 128, "K": 128, "N": 257, "density": 0.10, "desc": "N unaligned (large)"},
+    {"name": "N335_large",  "M": 256, "K": 256, "N": 335, "density": 0.10, "desc": "N unaligned + large matrix"},
+    {"name": "M16_thin",    "M": 16,  "K": 512, "N": 64,  "density": 0.05, "desc": "very thin A (M min)"},
+    {"name": "K16_flat",    "M": 512, "K": 16,  "N": 256, "density": 0.05, "desc": "very flat A (K min)"},
+    {"name": "N512_max",    "M": 512, "K": 512, "N": 512, "density": 0.05, "desc": "max dimensions + N aligned"},
+    {"name": "N512_dense",  "M": 256, "K": 256, "N": 512, "density": 0.30, "desc": "max density (boundary)"},
+    {"name": "N97_mid",     "M": 48,  "K": 256, "N": 97,  "density": 0.20, "desc": "mid-size + N unaligned"},
+    {"name": "irregular",   "M": 300, "K": 200, "N": 150, "density": 0.20, "desc": "typical irregular dims"}
+]
