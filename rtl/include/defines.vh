@@ -124,7 +124,7 @@
 //     single PE (processes all M rows, up to 256):     8 → 256 slots (override)
 //=============================================================================
 `ifndef C_ROW_ADDR_BITS
-`define C_ROW_ADDR_BITS  7
+`define C_ROW_ADDR_BITS  8
 `endif
 `define C_ROW_SLOTS      (1 << `C_ROW_ADDR_BITS)
 
